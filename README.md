@@ -81,7 +81,8 @@ on the lines: you navigate with the arrow keys and type.
   level: out of a sub-task, then out of the project as a new project line beside it (so a top-level project is
   one Enter away from any list). Tab / Shift+Tab nest and un-nest, including a new line at a project's root,
   which Shift+Tab turns into a project line. Cmd+B makes a task bold, i.e. a project, and a sub-project back
-  into a task. The "+ Project" button at the top ("+ Sub-project" inside an opened project) adds one too.
+  into a task. The "+ Project" button at the top ("+ Sub-project" inside an opened project) adds one at the
+  top of the list. Whatever you have typed in a line is kept when you click away; a split line undoes in one step.
 - Up / Down move between lines (and move the editor while typing). Cmd+Up / Cmd+Down collapse and expand,
   Left / Right do the same on a selected line. Cmd+Shift+Up / Down move a line among its siblings.
 - Cmd+Enter completes a task, Shift+Enter opens its notes and, pressed again on the line or inside the box,
