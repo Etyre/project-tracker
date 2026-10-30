@@ -1,0 +1,11 @@
+anthropic>=1.0
+fastapi
+uvicorn[standard]
+pydantic>=2
+icalendar>=6
+recurring-ical-events>=3
+python-dateutil
+pytest
+rumps
+pyobjc-framework-Cocoa
+pyobjc-framework-WebKit

@@ -1,0 +1,1198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Task Tracker</title>
+<style>
+:root{--box:#fff;--box2:#f3f5f8;--bg:#f6f7f9;--card:#fff;--ink:#1b1f24;--muted:#6b7280;--line:#e5e7eb;--accent:#2563eb;--accent-ink:#fff;--ok:#16a34a;--warn:#d97706;--bad:#dc2626;--chip:#eef2ff;--chip-ink:#3730a3;--hover:#f1f5f9}
+@media (prefers-color-scheme:dark){:root{--box:#171a21;--box2:#0f1115;--bg:#0f1115;--card:#171a21;--ink:#e6e8ec;--muted:#9aa3b2;--line:#2a2f3a;--accent:#60a5fa;--accent-ink:#0b1220;--chip:#1e2740;--chip-ink:#c7d2fe;--hover:#1e2330}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+body{display:flex;min-height:100vh}
+#side{width:190px;flex:none;background:var(--card);border-right:1px solid var(--line);padding:14px 10px;display:flex;flex-direction:column;gap:6px;position:sticky;top:0;height:100vh}
+#side .brand{font-weight:700;padding:4px 10px 12px;font-size:15px}
+#side nav{display:flex;flex-direction:column;gap:2px}
+#side nav button{background:none;border:0;text-align:left;padding:8px 12px;border-radius:8px;color:var(--muted);font-weight:600;cursor:pointer;font-size:15px;display:flex;gap:8px;align-items:center}
+#side nav button .ic{width:16px;display:inline-block;text-align:center;font-size:12px}
+#side nav button:hover{background:var(--hover)}
+#side nav button.on{background:var(--chip);color:var(--chip-ink)}
+#timer{margin-top:auto;font-variant-numeric:tabular-nums;color:var(--muted);font-size:13px;display:flex;flex-direction:column;gap:6px;padding:8px 10px;border-top:1px solid var(--line)}
+#content{flex:1;min-width:0;display:flex;flex-direction:column}
+body.nosidebar #side{display:none}
+#sideToggle{font-size:18px;line-height:1;padding:4px 9px;color:var(--muted)}
+header{position:sticky;top:0;z-index:5;background:var(--card);border-bottom:1px solid var(--line);padding:10px 16px;display:flex;gap:12px;align-items:center}
+#quick{flex:1;display:flex;gap:6px}
+#quick input{flex:1;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)}
+@media (max-width:640px){body{flex-direction:column}#side{width:auto;height:auto;position:static;flex-direction:row;align-items:center}#side nav{flex-direction:row}#side .brand{display:none}#timer{margin:0 0 0 auto;border:0;padding:0}}
+main{max-width:1100px;margin:0 auto;padding:16px;width:100%}
+button{font:inherit;cursor:pointer}
+.btn{padding:7px 12px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--ink)}
+.btn:hover{background:var(--hover)}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.btn.ok{background:var(--ok);color:#fff;border-color:var(--ok)}
+.btn.small{padding:3px 8px;font-size:13px}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--muted)}
+.btn:disabled{opacity:.5;cursor:default}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px}
+.muted{color:var(--muted)}
+.chip{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;background:var(--chip);color:var(--chip-ink);margin-right:4px;white-space:nowrap}
+.chip.bad{background:#fee2e2;color:#991b1b}.chip.warn{background:#fef3c7;color:#92400e}.chip.ok{background:#dcfce7;color:#166534}
+@media (prefers-color-scheme:dark){.chip.bad{background:#3b1111;color:#fca5a5}.chip.warn{background:#3a2a07;color:#fcd34d}.chip.ok{background:#0f2e1a;color:#86efac}}
+.dots{letter-spacing:1px;font-size:11px}
+/* projects */
+.proj{margin:8px 0 8px 22px;border:1px solid var(--line);border-radius:3px;padding:4px 8px 6px;background:var(--box)}
+.proj.root{margin:12px 0 14px}
+.proj .proj{background:var(--box2)}.proj .proj .proj{background:var(--box)}.proj .proj .proj .proj{background:var(--box2)}
+.children:empty{display:none}
+.phead{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:8px}
+.phead:hover{background:var(--hover)}
+.phead:focus{outline:none;background:var(--hover);box-shadow:inset 2px 0 0 var(--accent)}
+.phead h3 .name{cursor:text}
+.phead h3{margin:0;font-size:16px;flex:1;cursor:default}
+.proj.root>.phead h3{font-size:19px}
+.phead .tools{display:flex;gap:4px;opacity:.25}
+.phead:hover .tools{opacity:1}
+.handle{cursor:grab;color:var(--muted);user-select:none;padding:0 4px}
+.task{display:flex;align-items:flex-start;gap:8px;padding:5px 6px;border-radius:8px;margin-left:0}
+.task:hover{background:var(--hover)}
+.task:focus{outline:none;background:var(--hover);box-shadow:inset 2px 0 0 var(--accent)}
+.task.sel,.phead.sel{background:var(--hover);box-shadow:inset 2px 0 0 var(--accent)}
+.tasks{padding:2px 0 6px 22px;min-height:10px;cursor:text}
+.tasks.sub{margin:0;padding:0 0 0 26px;min-height:0}
+.tasks.sub:empty{display:none}
+.task.dragging,.tasks.dragging,.proj.dragging{opacity:.35}
+textarea.inline{display:block;width:100%;padding:2px 4px;margin:0;border:0;border-bottom:1px solid var(--accent);background:transparent;color:var(--ink);font:inherit;line-height:inherit;outline:none;resize:none;overflow:hidden;min-height:1.45em}
+.caret{cursor:pointer;color:var(--muted);width:14px;text-align:center;font-size:12px}
+.task .notes{margin:6px 0 2px;padding:8px 10px;background:var(--card);border:1px solid var(--line);border-radius:3px;white-space:pre-wrap;font-size:14px;cursor:text;min-height:20px;line-height:1.45;color:var(--ink)}
+.task .notes .more{margin-top:6px;font-size:12px;color:var(--muted)}
+.task .notes .more a{color:var(--muted);cursor:pointer;text-decoration:none}.task .notes .more a:hover{color:var(--ink)}
+.task .notes textarea{width:100%;min-height:90px;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit;resize:vertical}
+.tasks.sub.collapsed{display:none}
+.task>.caret{margin-top:4px}
+.pdetails{margin:4px 0 14px;padding:14px 18px;background:var(--card);border:1px solid var(--line);border-radius:4px}
+.pdetails h2{margin:0 0 4px;font-size:22px;cursor:text}
+.pdetails .notes{margin-top:10px;white-space:pre-wrap;font-size:14px;cursor:text;min-height:20px;line-height:1.45}
+.pdetails textarea{width:100%;min-height:120px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit;resize:vertical}
+.hint{color:var(--muted);opacity:.6;padding:24px 10px;cursor:text;pointer-events:none}
+.tasks.zoomroot{min-height:60px;padding-bottom:24px}
+#tree{min-height:120px;padding-bottom:40px}
+.crumb{font-size:14px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.crumb a{cursor:pointer;color:var(--muted);text-decoration:none}.crumb a:hover{color:var(--ink)}
+.task input[type=checkbox]{margin-top:4px;width:16px;height:16px}
+.task .body{flex:1;min-width:0}
+.task .body{cursor:default}
+.task .title{cursor:text}
+.md-h1{font-size:24px;font-weight:700;line-height:1.25}.md-h2{font-size:20px;font-weight:700;line-height:1.3}.md-h3{font-size:17px;font-weight:650}
+.md-h4{font-size:15px;font-weight:650}.md-h5{font-size:14px;font-weight:650}.md-h6{font-size:13px;font-weight:650;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.phead h3.md-h1{font-size:24px}.phead h3.md-h2{font-size:20px}.phead h3.md-h3{font-size:17px}.phead h3.md-h4{font-size:15px}.phead h3.md-h5{font-size:14px}.phead h3.md-h6{font-size:13px}
+.pdetails h2.md-h1{font-size:28px}.pdetails h2.md-h2{font-size:24px}.pdetails h2.md-h3{font-size:20px}.pdetails h2.md-h4,.pdetails h2.md-h5,.pdetails h2.md-h6{font-size:17px}
+code{font-size:.9em;padding:1px 4px;border-radius:3px;background:var(--hover)}
+.proj.editing>.phead:hover{background:transparent}
+.task .title.lin::after{content:" ↗";color:var(--muted);font-size:12px}
+.task .meta{font-size:12px;color:var(--muted);margin-top:2px}
+.task .desc{margin:6px 0 2px;white-space:pre-wrap;font-size:14px;border-left:2px solid var(--line);padding-left:8px}
+.task .tools{display:flex;gap:2px;opacity:.25}
+.task:hover .tools{opacity:1}
+.task.done .title{text-decoration:line-through;color:var(--muted)}
+.proj.archived>.phead h3{color:var(--muted);font-style:italic}
+.filters{display:flex;gap:14px;align-items:center;font-size:14px}
+.filterwrap{position:relative}
+.filterwrap .filters{position:absolute;right:0;top:calc(100% - 1px);margin:0;padding:10px 14px;background:var(--card);border:1px solid var(--line);border-radius:10px;border-top-right-radius:0;box-shadow:0 6px 18px rgba(0,0,0,.08);z-index:5;white-space:nowrap}
+.btn.ghost.on{background:var(--card);color:var(--ink);border-color:var(--line);border-bottom-color:var(--card);border-bottom-left-radius:0;border-bottom-right-radius:0;position:relative;z-index:6}
+.filters label{display:flex;gap:5px;align-items:center;cursor:pointer}
+.dropzone{height:4px}
+.dropzone.over{height:4px;background:var(--accent);border-radius:2px}
+a{color:var(--accent)}
+/* feed: one centered card, like a tear-off calendar page */
+.feed{display:flex;flex-direction:column;align-items:center;gap:14px;padding-top:24px}
+.page{width:min(900px,100%);min-height:min(640px,calc(100vh - 150px));background:var(--card);border:1px solid var(--line);border-radius:6px;padding:24px 0 28px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.06);display:flex;flex-direction:column}
+.page .main{flex:1;display:flex;flex-direction:column;justify-content:space-evenly;padding:8px 0}
+.page .date{background:var(--ink);color:var(--bg);padding:10px;font-size:13px;letter-spacing:.14em;text-transform:uppercase;border-radius:5px 5px 0 0}
+.page .kind{margin-top:0;font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);min-height:18px}
+.page .path{color:var(--muted);font-size:14px;margin-top:10px}
+.page .big{font-size:40px;font-weight:700;line-height:1.2;margin:14px 40px 0}
+.page .tags{margin:4px 0 8px}
+.page .meta{font-size:13px;color:var(--muted);margin:0 28px}
+.page .desc{text-align:left;white-space:pre-wrap;margin:16px 36px 4px;font-size:14px;color:var(--ink);max-height:220px;overflow:auto;border-top:1px solid var(--line);padding-top:12px}
+.page .actions{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin:6px 20px 0}
+.page .actions{gap:16px;margin-top:0}
+.page .actions .btn{padding:14px 36px;font-size:18px;min-width:200px;justify-content:center;border-radius:10px}
+.page .actions input[type=checkbox]{width:18px;height:18px}
+.page .alts{margin:32px 48px 0;padding-top:18px;border-top:1px solid var(--line);display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+.btn.alt{background:#ea7a1a;color:#fff;border-color:#ea7a1a;padding:6px 14px;font-size:13px}
+.btn.alt:hover{background:#d66c10}
+.btn.alt:disabled{opacity:.45}
+.page .clist{display:inline-block;text-align:left;margin:14px auto 0}
+.page .clist label{display:flex;gap:8px;align-items:center;padding:4px 0;font-size:15px}
+.page .kbd{font-size:12px;color:var(--muted);margin-top:10px}
+.page .more{margin-top:18px}
+.page .more button{background:none;border:0;color:var(--muted);font-size:12px;cursor:pointer;text-decoration:underline}
+.page .details{margin-top:6px;padding-top:12px;border-top:1px solid var(--line)}
+.page .clist{margin-bottom:18px}
+.feed .foot{font-size:12px;color:var(--muted);display:flex;gap:12px;align-items:center}
+.feed .foot button{background:none;border:0;color:var(--muted);text-decoration:underline;cursor:pointer;font-size:12px}
+.meeting{font-size:13px;color:var(--muted)}
+.timeline li{display:grid;grid-template-columns:110px 90px 1fr auto;gap:10px;padding:6px 0;border-bottom:1px solid var(--line);align-items:center}
+.timeline li.done{opacity:.55;text-decoration:line-through}
+.timeline li.skipped{opacity:.4}
+.timeline li.active{background:var(--chip)}
+.timeline .k{font-size:12px;color:var(--muted)}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+/* modal */
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;z-index:20}
+.modal .card{width:min(640px,94vw);max-height:90vh;overflow:auto}
+.form{display:grid;grid-template-columns:140px 1fr;gap:8px 12px;align-items:center}
+.form input,.form select,.form textarea{width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit}
+.form textarea{min-height:110px}
+.form .full{grid-column:1/-1}
+#toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 14px;border-radius:10px;font-size:14px;max-width:90vw;display:none;z-index:30}
+table{border-collapse:collapse;width:100%}td,th{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;font-size:14px}
+.kbd{font-size:12px;color:var(--muted)}
+</style>
+</head>
+<body>
+<aside id="side">
+  <div class="brand">Task Tracker</div>
+  <nav>
+    <button data-view="projects">Projects</button>
+    <button data-view="feed">Feed</button>
+    <button data-view="stats">Stats</button>
+  </nav>
+  <div id="timer"></div>
+</aside>
+<div id="content">
+<header>
+  <button id="sideToggle" class="btn ghost" title="Show or hide the sidebar (⌘\\)" onclick="toggleSidebar()">≡</button>
+  <form id="quick" onsubmit="return quickAdd(event)">
+    <input id="quickText" placeholder="Quick add… (Claude files it in the right project)  ⌘K" autocomplete="off">
+    <button class="btn primary" type="submit">Add</button>
+  </form>
+</header>
+<main id="main"></main>
+</div>
+<div id="toast"></div>
+
+<script>
+// ------------------------------------------------------------------ utils
+const $ = s => document.querySelector(s);
+const api = async (path, method = 'GET', body) => {
+  const r = await fetch('/api' + path, {method, headers: {'Content-Type': 'application/json'}, body: body ? JSON.stringify(body) : undefined});
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.detail || r.statusText);
+  return j;
+};
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+// Markdown, the useful subset. Text is escaped first; the raw source shows only while a line is being edited.
+const mdInline = s => esc(s)
+  .replace(/`([^`]+)`/g, '<code>$1</code>')
+  .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+  .replace(/(^|[^"(>])(https?:\/\/[^\s<]+)/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>')
+  .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/__(.+?)__/g, '<b>$1</b>')
+  .replace(/(^|[\s(])\*(?!\s)([^*]+?)\*(?=[\s.,;:!?)]|$)/g, '$1<i>$2</i>').replace(/(^|[\s(])_(?!\s)([^_]+?)_(?=[\s.,;:!?)]|$)/g, '$1<i>$2</i>')
+  .replace(/~~(.+?)~~/g, '<s>$1</s>');
+const mdHeading = s => {const m = String(s ?? '').match(/^(#{1,6})\s+(.*)$/); return m ? {level: m[1].length, text: m[2]} : {level: 0, text: String(s ?? '')};};
+// one line of the outline (a title or a project name): leading hashes set the heading size
+const mdLine = s => {const h = mdHeading(s); return {level: h.level, html: mdInline(h.text)};};
+// a notes box: headings, bullets and checkboxes line by line, inline formatting throughout (pre-wrap keeps the lines)
+const mdBlock = s => String(s ?? '').split('\n').map(line => {
+  const h = mdHeading(line); if (h.level) return `<span class="md-h${h.level}">${mdInline(h.text)}</span>`;
+  const b = line.match(/^(\s*)(?:[-*+•]|\d+[.)])\s+(?:\[([ xX])\]\s*)?(.*)$/);
+  if (b) return `${b[1].replace(/ /g, '\u00a0')}${b[2] === undefined ? '•' : b[2] === ' ' ? '☐' : '☑'} ${mdInline(b[3])}`;
+  return mdInline(line);
+}).join('\n');
+const linkify = mdBlock;
+const fmtDate = ts => ts ? new Date(ts * 1000).toLocaleString([], {dateStyle: 'medium', timeStyle: 'short'}) : '';
+const fmtDay = ts => ts ? new Date(ts * 1000).toLocaleDateString([], {dateStyle: 'medium'}) : '';
+const hms = s => {const h = Math.floor(s / 3600), m = Math.floor(s % 60 / 1) && Math.floor((s % 3600) / 60), sec = s % 60; return (h ? h + ':' : '') + String(Math.floor((s % 3600) / 60)).padStart(2, '0') + ':' + String(sec).padStart(2, '0');};
+let toastT; const toast = (m, ms = 3500) => {const t = $('#toast'); t.innerHTML = m; t.style.display = 'block'; clearTimeout(toastT); toastT = setTimeout(() => t.style.display = 'none', ms);};
+const todayISO = () => new Date().toISOString().slice(0, 10);
+function deadlineChip(d) {
+  if (!d) return '';
+  const days = Math.round((new Date(d.slice(0, 10)) - new Date(todayISO())) / 86400000);
+  const cls = days < 0 ? 'bad' : days <= 1 ? 'warn' : '';
+  const label = days < 0 ? `overdue ${-days}d` : days === 0 ? 'due today' : days === 1 ? 'due tomorrow' : `due ${d.slice(0, 10)}`;
+  return `<span class="chip ${cls}">${label}</span>`;
+}
+const impDots = n => n ? `<span class="dots" title="importance ${n}/5">${'●'.repeat(n)}${'○'.repeat(5 - n)}</span>` : '';
+const chips = t => `${deadlineChip(t.deadline)}${t.blocking ? `<span class="chip bad">blocking${t.blocking_for ? ': ' + esc(t.blocking_for) : ''}</span>` : ''}${impDots(t.importance)}`;
+
+// ------------------------------------------------------------------ state / routing
+let view = location.hash.slice(1) || 'projects';
+let status = {};
+const expanded = new Set(JSON.parse(localStorage.getItem('expanded') || '[]'));
+const collapsedProjects = new Set(JSON.parse(localStorage.getItem('collapsed') || '[]'));
+const collapsedTasks = new Set(JSON.parse(localStorage.getItem('collapsedTasks') || '[]'));
+const saveFold = () => localStorage.setItem('collapsedTasks', JSON.stringify([...collapsedTasks]));
+// undo: every mutation from the projects page pushes its inverse; Cmd/Ctrl+Z (outside a text field that has
+// been typed in) pops and runs it.
+const undoStack = [];
+function pushUndo(label, fn) {undoStack.push({label, fn}); if (undoStack.length > 100) undoStack.shift();}
+async function undo() {
+  const u = undoStack.pop(); if (!u) {toast('Nothing to undo'); return;}
+  await new Promise(r => setTimeout(r, 150));   // let a blurred editor finish its own save first
+  try {await u.fn(); toast('Undid ' + esc(u.label));} catch (e) {toast('Could not undo ' + esc(u.label) + ': ' + esc(e.message), 6000);}
+  render();
+}
+function go(v) {view = v; location.hash = v; render();}
+document.querySelectorAll('#side nav button').forEach(b => b.onclick = () => go(b.dataset.view));
+window.addEventListener('keydown', e => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {e.preventDefault(); $('#quickText').focus();}
+  if ((e.metaKey || e.ctrlKey) && e.key === '\\') {e.preventDefault(); toggleSidebar();}
+  if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'z') {
+    const a = document.activeElement; const field = a && (a.tagName === 'TEXTAREA' || (a.tagName === 'INPUT' && !['checkbox', 'radio'].includes(a.type)));
+    if (field && a.value !== a.defaultValue) return;   // the field has its own typing history: native undo
+    if (document.querySelector('.modal')) return;
+    e.preventDefault(); if (field) a.blur(); undo();
+  }
+});
+function toggleSidebar(force) {
+  const hide = force === undefined ? !document.body.classList.contains('nosidebar') : force;
+  document.body.classList.toggle('nosidebar', hide);
+  try {localStorage.setItem('nosidebar', hide ? '1' : '');} catch {}
+}
+try {if (localStorage.getItem('nosidebar')) document.body.classList.add('nosidebar');} catch {}
+
+async function render() {
+  document.querySelectorAll('#side nav button').forEach(b => b.classList.toggle('on', b.dataset.view === view));
+  try {
+    if (view === 'feed') await renderFeed();
+    else if (view === 'projects') await renderProjects();
+    else if (view === 'plan') await renderPlan();
+    else if (view === 'stats') await renderStats();
+  } catch (e) {$('#main').innerHTML = `<div class="card">Error: ${esc(e.message)}</div>`;}
+}
+
+// ------------------------------------------------------------------ timer in header
+let timerState = {running: false};
+async function refreshStatus() {
+  try {status = await api('/status'); timerState = status.timer;} catch {}
+  drawTimer();
+}
+function drawTimer() {
+  const el = $('#timer');
+  if (!timerState.running) {el.innerHTML = `<span>no timer running</span>${status.toggl ? '' : '<span class="chip warn" style="align-self:flex-start">Toggl off</span>'}`; return;}
+  const el2 = Math.floor(Date.now() / 1000 - timerState.started_at);
+  el.innerHTML = `<span>${esc(timerState.label)}</span><b style="font-size:18px;color:var(--ink)">${hms(el2)}</b><button class="btn small" onclick="stopTimer()">Stop timer</button>`;
+}
+setInterval(drawTimer, 1000);
+setInterval(refreshStatus, 30000);
+async function stopTimer() {await api('/timer/stop', 'POST'); await refreshStatus(); if (view === 'feed') renderFeed();}
+
+// ------------------------------------------------------------------ quick add
+async function quickAdd(e) {
+  e.preventDefault();
+  const inp = $('#quickText'); const text = inp.value.trim(); if (!text) return false;
+  inp.disabled = true;
+  try {
+    const r = await api('/quick_add', 'POST', {text});
+    inp.value = '';
+    toast(r.created.map(t => `Filed <b>${esc(t.title)}</b> in ${esc(t.path.join(' / '))}`).join('<br>') + (r.note ? `<br><span class="muted">${esc(r.note)}</span>` : ''), 6000);
+    if (view === 'projects') renderProjects();
+  } catch (err) {toast('Quick add failed: ' + esc(err.message), 6000);}
+  inp.disabled = false; inp.focus();
+  return false;
+}
+
+// ------------------------------------------------------------------ FEED
+const dayLine = () => new Date().toLocaleDateString([], {weekday: 'long', month: 'long', day: 'numeric'});
+async function renderFeed() {
+  const f = await api('/feed');
+  timerState = f.timer; drawTimer();
+  const m = $('#main');
+  const page = (inner, actions, extra) => `<div class="page"><div class="main">${inner}${actions || ''}${extra || ''}</div>${altButtons(f)}</div>`;
+  if (!f.plan) {
+    m.innerHTML = `<div class="feed">${page(`<div class="head"><div class="big">No plan yet</div></div>`,
+      `<div class="actions"><button class="btn primary" onclick="rebuild(${f.outside_hours ? 'true' : 'false'})">${f.outside_hours === 'after' ? 'Work late' : 'Build the plan'}</button></div>`)}</div>`;
+    return;
+  }
+  const c = f.current;
+  let card;
+  if (!c) {
+    const late = f.outside_hours === 'after';
+    const head = late ? 'The work day is over' : f.outside_hours === 'before' ? `The day starts at ${f.work_window[0]}` : 'All done';
+    card = page(`<div class="head"><div class="big">${head}</div></div>`,
+      `<div class="actions"><button class="btn" onclick="rebuild(true)">${late ? 'Work late' : f.outside_hours === 'before' ? 'Start early' : 'Re-plan'}</button></div>`);
+  } else {
+    const isActive = c.status === 'active';
+    const t = c.task;
+    const project = c.kind === 'task' && c.path ? c.path.join(' / ') : '';
+    let body = `<div class="head"><div class="kind">${esc(project) || '&nbsp;'}</div><div class="big">${c.kind === 'checklist' ? 'Daily checklist' : mdLine(c.title).html}</div>`;
+    if (c.kind === 'checklist') {
+      const cl = c.checklist;
+      body += cl.items.length ? `<div class="clist">${cl.items.map(i => `<label><input type="checkbox" ${i.done ? 'checked' : ''} onchange="checkItem(this, ${JSON.stringify(i.item).replace(/"/g, '&quot;')})"> <span>${esc(i.item)}</span></label>`).join('')}</div>` : `<div class="meta">No checklist sheet configured.</div>`;
+    }
+    body += '</div>';
+    const actions = `<div class="actions">
+        ${isActive ? `<button class="btn" onclick="stopTimer()">Stop</button>` : `<button class="btn primary" onclick="startItem(${c.id})">Start</button>`}
+        <label class="btn" style="display:flex;gap:6px;align-items:center"><input type="checkbox" onchange="completeItem(${c.id})"> ${c.kind === 'task' ? 'Complete' : 'Done'}</label>
+      </div>`;
+    card = page(body, actions);
+  }
+  const meeting = f.meeting_now ? `<div class="meeting">In a meeting until ${f.meeting_now.end}: ${esc(f.meeting_now.title)}</div>` : '';
+  const note = f.replanning.active ? `<div class="foot"><span>re-planning…</span></div>` : f.plan.off_track ? `<div class="foot"><span>off track, re-plan pending</span></div>` : '';
+  m.innerHTML = `<div class="feed">${meeting}${card}${note}</div>`;
+  if (f.replanning.active) setTimeout(() => {if (view === 'feed') renderFeed().catch(() => {});}, 5000);
+}
+function altButtons(f) {
+  const ex = f.exercise_item;
+  const exDone = ex && ex.status === 'done';
+  return `<div class="alts">
+    <button class="btn alt" ${exDone ? 'disabled' : ''} onclick="startExercise()">${exDone ? esc(ex.title) + ' (done)' : 'Exercise: ' + esc(f.exercise)}</button>
+    <button class="btn alt" onclick="startJournal()">Journal</button></div>`;
+}
+async function rebuild(fromNow) {
+  toast(fromNow ? 'Re-planning the rest of the day…' : 'Building the plan…', 60000);
+  try {await api('/plan/rebuild', 'POST', {from_now: fromNow}); toast('Plan ready'); render();}
+  catch (e) {toast('Plan failed: ' + esc(e.message), 8000);}
+}
+async function startItem(id) {const r = await api('/feed/start', 'POST', {item_id: id}); if (r.toggl_error) toast('Toggl: ' + esc(r.toggl_error), 6000); await refreshStatus(); renderFeed();}
+async function completeItem(id) {const r = await api('/feed/complete', 'POST', {item_id: id}); if (r.linear_error) toast('Linear: ' + esc(r.linear_error), 6000); await refreshStatus(); renderFeed();}
+async function finishBlock(id) {await api('/feed/finish_block', 'POST', {item_id: id}); await refreshStatus(); renderFeed();}
+async function skipItem(id) {await api('/feed/skip', 'POST', {item_id: id}); await refreshStatus(); renderFeed();}
+async function startExercise() {const r = await api('/exercise/start', 'POST'); if (r.toggl_error) toast('Toggl: ' + esc(r.toggl_error), 6000); else toast(`Exercise timer started: ${esc(r.kind)}`); await refreshStatus(); renderFeed();}
+async function startJournal() {const r = await api('/journal/start', 'POST'); toast(r.open_error ? 'Journal timer started; ' + esc(r.open_error) : 'Journal timer started', 5000); await refreshStatus(); renderFeed();}
+async function checkItem(box, item) {
+  box.disabled = true;
+  try {const r = await api('/checklist/done', 'POST', {item, undo: !box.checked});
+    if (r.sheet && !r.sheet.ok) toast('Logged locally; sheet: ' + esc(r.sheet.error), 6000);}
+  catch (e) {toast(esc(e.message)); box.checked = !box.checked;}
+  box.disabled = false;
+}
+
+// in-page replacements for the browser's prompt/confirm dialogs (the native window has none)
+function ask(title, def = '') {
+  return new Promise(res => {
+    const el = document.createElement('div'); el.className = 'modal';
+    el.innerHTML = `<div class="card" style="width:min(420px,94vw)"><h3 style="margin-top:0">${esc(title)}</h3>
+      <form class="form" style="grid-template-columns:1fr"><input name="v" value="${esc(def)}">
+      <div class="row" style="justify-content:flex-end"><button class="btn" type="button" id="c">Cancel</button><button class="btn primary" type="submit">OK</button></div></form></div>`;
+    document.body.appendChild(el);
+    const done = v => {el.remove(); res(v);};
+    el.querySelector('#c').onclick = () => done(null);
+    el.addEventListener('click', e => {if (e.target === el) done(null);});
+    el.querySelector('form').onsubmit = e => {e.preventDefault(); done(el.querySelector('[name=v]').value.trim() || null);};
+    setTimeout(() => {const i = el.querySelector('[name=v]'); i.focus(); i.select();}, 0);
+  });
+}
+function confirmBox(msg) {
+  return new Promise(res => {
+    const el = document.createElement('div'); el.className = 'modal';
+    el.innerHTML = `<div class="card" style="width:min(420px,94vw)"><p style="margin-top:0">${esc(msg)}</p>
+      <div class="row" style="justify-content:flex-end"><button class="btn" id="c">Cancel</button><button class="btn primary" id="o">OK</button></div></div>`;
+    document.body.appendChild(el);
+    const done = v => {el.remove(); res(v);};
+    el.querySelector('#c').onclick = () => done(false); el.querySelector('#o').onclick = () => done(true);
+    el.addEventListener('click', e => {if (e.target === el) done(false);});
+    setTimeout(() => el.querySelector('#o').focus(), 0);
+  });
+}
+
+// ------------------------------------------------------------------ PROJECTS
+let tree = [];
+const showFilter = Object.assign({active: true, completed: false, archived: false}, JSON.parse(localStorage.getItem('showFilter') || '{}'));
+let filtersOpen = !!localStorage.getItem('filtersOpen');
+let focusProject = +(localStorage.getItem('focusProject') || 0) || null;   // zoomed-in project, if any
+let pendingAdd = null;      // inline editor to open after the next render: {project_id, parent_id, after_id}
+let pendingFocus = null;    // task row to focus after the next render
+let inlineAdd = null;       // the open inline editor: {project_id, parent_id, after_id, row}
+let pendingEdit = null;     // task whose title editor should open after the next render
+let pendingProjectAdd;      // parent id (or null) for an inline new-project line to open after the next render
+let pendingFocusProject = null, pendingProjectEdit = null;   // project row to select / name to edit after the next render
+let pendingNotesEdit = null, pendingProjectNotes = false;      // notes box to open for editing after the next render
+let titleEdit = null;       // open title editor: {tid, row, span, orig, inp}
+let projectAdd = null;      // open inline new-project line: {parent_id, row}
+function setFilter(k, v) {showFilter[k] = v; localStorage.setItem('showFilter', JSON.stringify(showFilter)); renderProjects();}
+function toggleFilters() {filtersOpen = !filtersOpen; localStorage.setItem('filtersOpen', filtersOpen ? '1' : ''); renderProjects();}
+function openProject(id) {focusProject = id || null; localStorage.setItem('focusProject', id || ''); renderProjects(); window.scrollTo(0, 0);}
+function findProject(id, nodes = tree) {for (const n of nodes) {if (n.id === id) return n; const r = findProject(id, n.children); if (r) return r;} return null;}
+function projectChain(id, nodes = tree, trail = []) {for (const n of nodes) {const t = [...trail, n]; if (n.id === id) return t; const r = projectChain(id, n.children, t); if (r) return r;} return null;}
+
+async function renderProjects() {
+  tree = await api(`/tree?active=${showFilter.active}&completed=${showFilter.completed}&archived=${showFilter.archived}`);
+  inlineAdd = null; titleEdit = null; projectAdd = null;
+  const m = $('#main');
+  let focus = focusProject ? findProject(focusProject) : null;
+  if (focusProject && !focus) {focusProject = null; localStorage.setItem('focusProject', '');}
+  const nonDefault = !showFilter.active || showFilter.completed || showFilter.archived;
+  const chk = (k, label) => `<label><input type="checkbox" ${showFilter[k] ? 'checked' : ''} onchange="setFilter('${k}', this.checked)"> ${label}</label>`;
+  const chain = focus ? projectChain(focus.id) : [];
+  const crumbs = focus ? `<button class="btn small" onclick="openProject(${chain.length > 1 ? chain[chain.length - 2].id : 'null'})">← Back</button>
+      <span class="crumb"><a onclick="openProject(null)">All projects</a>${chain.slice(0, -1).map(p => ` / <a onclick="openProject(${p.id})">${mdLine(p.name).html}</a>`).join('')}</span>` : '';
+  m.innerHTML = `<div class="row" style="justify-content:space-between;margin-bottom:8px;gap:8px">
+      <div class="row" style="gap:10px;min-width:0">${crumbs}</div>
+      <div class="row" style="gap:6px">
+        <span class="filterwrap"><button class="btn small ghost ${filtersOpen ? 'on' : ''}" onclick="toggleFilters()">${filtersOpen ? 'Hide filters' : nonDefault ? 'Filters (on)' : 'Filters'}</button>
+          ${filtersOpen ? `<div class="filters"><span class="muted">Show:</span>${chk('active', 'Active')}${chk('completed', 'Completed')}${chk('archived', 'Archived')}</div>` : ''}</span>
+        <button class="btn" onclick="openInlineProjectAdd(${focus ? focus.id : 'null'})">${focus ? '+ Sub-project' : '+ Project'}</button></div></div>
+    ${focus ? projectDetailsHTML(focus) : ''}
+    <div id="tree">${focus
+      ? `<div class="tasks zoomroot" data-tasklist="${focus.id}" data-parent="">${focus.tasks.map(taskHTML).join('')}</div>
+         <div class="children" data-childlist="${focus.id}">${focus.children.map(c => projectHTML(c, false)).join('')}</div>`
+      : tree.map(p => projectHTML(p, true)).join('') + (tree.length ? '' : `<div class="hint">Click here, or press Enter, to add your first project.</div>`)}</div>`;
+  if (!focus) $('#tree').addEventListener('click', e => {if (e.target.id === 'tree') openInlineProjectAdd(null, lastRootProjectId());});
+  wireDnD();
+  if (pendingAdd) {const a = pendingAdd; pendingAdd = null; openInlineAdd(a, a.text, a.caret);}
+  if (pendingFocus) {const r = m.querySelector(`.task[data-tid="${pendingFocus}"]`); pendingFocus = null; if (r) r.focus();}
+  if (pendingEdit) {const id = pendingEdit; pendingEdit = null; editTaskTitle(id);}
+  if (pendingProjectAdd !== undefined) {const pa = pendingProjectAdd; pendingProjectAdd = undefined; openInlineProjectAdd(pa);}
+  if (pendingFocusProject) {const h = m.querySelector(`.proj[data-pid="${pendingFocusProject}"] > .phead`); pendingFocusProject = null; if (h) h.focus();}
+  if (pendingProjectEdit) {const id = pendingProjectEdit; pendingProjectEdit = null; editProjectName(id);}
+  if (pendingNotesEdit) {const id = pendingNotesEdit; pendingNotesEdit = null; const n = m.querySelector(`.task[data-tid="${id}"] .notes`); if (n) editTaskNotes(id, n);}
+  if (pendingProjectNotes) {pendingProjectNotes = false; const n = m.querySelector('.pdetails .notes'); if (n && focus) editNotes(focus.id, n);}
+}
+function projectDetailsHTML(p) {
+  const open = countTasks(p), subs = p.children.length;
+  const meta = [`${open} task${open === 1 ? '' : 's'} shown`, subs ? `${subs} sub-project${subs === 1 ? '' : 's'}` : '', `created ${fmtDay(p.created_at)}`,
+    p.archived_at ? `archived ${fmtDay(p.archived_at)}` : '', p.linear_key ? `Linear ${esc(p.linear_key)}` : ''].filter(Boolean).join(' · ');
+  return `<div class="pdetails">
+    <div class="row" style="justify-content:space-between;align-items:flex-start">
+      <h2 class="${mdLine(p.name).level ? 'md-h' + mdLine(p.name).level : ''}" onclick="if (!selecting()) editProjectName(${p.id}, null, caretFromClick(event, this))" title="Click to edit the name">${mdLine(p.name).html}</h2>
+      <span class="tools" style="display:flex;gap:4px">${p.archived_at ? `<button class="btn small ghost" onclick="restoreProject(${p.id})">restore</button>` : `
+        ${p.parent_id ? `<button class="btn small ghost" onclick="projectToTask(${p.id})" title="Turn this project into a task of its parent project">make task</button>` : ''}
+        <button class="btn small ghost" onclick="archiveProject(${p.id})">archive</button>`}</span>
+    </div>
+    <div class="muted" style="font-size:13px">${meta}</div>
+    <div class="notes" onclick="if (!selecting()) editNotes(${p.id}, this)">${p.notes ? linkify(p.notes) : '<span class="muted">Add notes, context, links…</span>'}</div>
+  </div>`;
+}
+function editNotes(pid, el) {
+  if (el.querySelector('textarea')) return;
+  const p = findProject(pid); const orig = p?.notes || ''; const ta = document.createElement('textarea'); ta.value = orig; ta.defaultValue = orig;
+  el.replaceChildren(ta); ta.focus();
+  ta.onblur = async () => {const notes = ta.value; if (notes !== orig) {await api(`/projects/${pid}`, 'PATCH', {notes}); if (p) p.notes = notes; pushUndo('notes change', () => api(`/projects/${pid}`, 'PATCH', {notes: orig}));} el.innerHTML = notes ? linkify(notes) : '<span class="muted">Add notes, context, links…</span>';};
+  ta.onkeydown = e => {if (e.key === 'Escape') {ta.value = p?.notes || ''; ta.blur();}};
+}
+function projectHTML(p, root) {
+  const collapsed = collapsedProjects.has(p.id);
+  const count = countTasks(p);
+  const archived = !!p.archived_at;
+  return `<div class="proj ${root ? 'root' : ''} ${archived ? 'archived' : ''}" data-pid="${p.id}" data-parent="${p.parent_id ?? ''}">
+    <div class="phead" tabindex="0" onmousedown="if (event.shiftKey) event.preventDefault()" onclick="if (event.shiftKey) extendSelTo(this); else if (!event.target.closest('input, textarea')) clearSel()" ondblclick="if (!event.target.closest('input, textarea')) {event.preventDefault(); openProject(${p.id});}">
+      <span class="handle" draggable="true" data-drag-project="${p.id}">≡</span>
+      <span class="caret" onclick="event.stopPropagation(); toggleProject(${p.id})">${collapsed ? '▸' : '▾'}</span>
+      <h3 class="${mdLine(p.name).level ? 'md-h' + mdLine(p.name).level : ''}"><span class="name" onmousedown="this.dataset.was = document.activeElement === this.closest('.phead') ? '1' : ''" onclick="event.stopPropagation(); if (selecting()) return; this.dataset.was ? editProjectName(${p.id}, null, caretFromClick(event, this)) : this.closest('.phead').focus()" title="Click again to edit, double-click the row to open">${mdLine(p.name).html}</span> <span class="muted" style="font-weight:400;font-size:13px">${count}${archived ? ' · archived ' + fmtDay(p.archived_at) : ''}</span></h3>
+      ${archived ? `<span class="tools"><button class="btn small ghost" onclick="restoreProject(${p.id})">restore</button></span>` : ''}
+    </div>
+    ${collapsed ? '' : `<div class="tasks" data-tasklist="${p.id}" data-parent="">${p.tasks.map(taskHTML).join('')}</div>
+    <div class="children" data-childlist="${p.id}">${p.children.map(c => projectHTML(c, false)).join('')}</div>`}
+  </div>`;
+}
+const countTasks = p => p.tasks.reduce((a, t) => a + 1 + countSub(t), 0) + p.children.reduce((a, c) => a + countTasks(c), 0);
+const countSub = t => t.children.reduce((a, c) => a + 1 + countSub(c), 0);
+function taskHTML(t) {
+  const open = expanded.has(t.id);
+  const done = !!t.completed_at;
+  const kids = t.children.length, folded = kids && collapsedTasks.has(t.id);
+  return `<div class="task ${done ? 'done' : ''}" tabindex="0" data-tid="${t.id}" data-project="${t.project_id}" data-parent="${t.parent_id ?? ''}" ${done ? 'data-done="1"' : ''}>
+    <span class="handle" draggable="${done ? 'false' : 'true'}" ${done ? '' : `data-drag-task="${t.id}"`} style="${done ? 'visibility:hidden' : ''}">≡</span>
+    <span class="caret" ${kids ? `onclick="event.stopPropagation(); toggleTaskFold(${t.id})" title="${folded ? 'Show' : 'Hide'} ${kids} sub-task${kids === 1 ? '' : 's'}"` : ''}>${kids ? (folded ? '▸' : '▾') : ''}</span>
+    <input type="checkbox" ${done ? 'checked' : ''} title="${done ? 'Restore' : 'Complete'}" onchange="${done ? `uncomplete(${t.id})` : `completeTask(${t.id}, this)`}">
+    <div class="body" onmousedown="if (event.shiftKey) event.preventDefault()" onclick="if (event.shiftKey) {event.stopPropagation(); extendSelTo(this.closest('.task'));} else if (!event.target.closest('a') && !selecting()) {clearSel(); this.closest('.task').focus();}" ondblclick="if (!event.target.closest('a, input, textarea, .notes')) {event.preventDefault(); toggleTask(${t.id});}">
+<span class="title ${t.linear_id ? 'lin' : ''} ${mdLine(t.title).level ? 'md-h' + mdLine(t.title).level : ''}" onclick="event.stopPropagation(); if (!selecting()) editTaskTitle(${t.id}, null, caretFromClick(event, this))" title="Click to edit, double-click for notes" ondblclick="event.stopPropagation()">${mdLine(t.title).html}</span>
+      <span style="margin-left:6px">${done ? `<span class="chip ok">completed ${fmtDay(t.completed_at)}</span>` : chips(t)}</span>
+      ${open ? taskNotesHTML(t) : ''}
+    </div>
+  </div>
+  <div class="tasks sub ${folded ? 'collapsed' : ''}" data-tasklist="${t.project_id}" data-parent="${t.id}">${t.children.map(taskHTML).join('')}</div>`;
+}
+// Expanding a task shows one thing: its notes / links / context box, editable in place. The other fields
+// (deadline, blocking, importance) live on the title line and in the "edit" dialog.
+const notesPlaceholder = '<span class="muted">Add notes, context, links…</span>';
+function taskNotesHTML(t) {
+  return `<div class="notes" onclick="event.stopPropagation(); if (!event.target.closest('a') && !selecting()) editTaskNotes(${t.id}, this)">${t.description ? linkify(t.description) : notesPlaceholder}<div class="more">${t.linear_url ? `<a href="${esc(t.linear_url)}" target="_blank">${esc(t.linear_identifier)}</a> · ` : ''}<a onclick="event.stopPropagation(); editTask(${t.id})">dates &amp; priority…</a></div></div>`;
+}
+function findTask(id, nodes = tree) {
+  const walk = ts => {for (const t of ts) {if (t.id === id) return t; const r = walk(t.children); if (r) return r;} return null;};
+  for (const p of nodes) {const r = walk(p.tasks) || findTask(id, p.children); if (r) return r;}
+  return null;
+}
+function editTaskNotes(tid, el) {
+  if (el.querySelector('textarea')) return;
+  const t = findTask(tid); const orig = t?.description || '';
+  const ta = document.createElement('textarea'); ta.value = orig; ta.defaultValue = orig; ta.placeholder = 'Notes, context, links…';
+  el.replaceChildren(ta); ta.focus();
+  let closeBox = false;   // Shift+Enter inside the box: save, close the box and go back to the line
+  ta.onblur = async () => {
+    const description = ta.value;
+    if (description !== orig) {await api(`/tasks/${tid}`, 'PATCH', {description}); if (t) t.description = description; pushUndo('notes change', () => api(`/tasks/${tid}`, 'PATCH', {description: orig}));}
+    if (closeBox) {expandOnly(tid); pendingFocus = tid; renderProjects(); return;}
+    const t2 = findTask(tid) || {id: tid}; t2.description = description; el.outerHTML = taskNotesHTML(t2);
+  };
+  ta.onkeydown = e => {
+    if (e.key === 'Escape') {ta.value = orig; ta.blur();}
+    else if (e.key === 'Enter' && e.shiftKey) {e.preventDefault(); closeBox = true; ta.blur();}
+    e.stopPropagation();
+  };
+}
+function toggleTaskFold(id) {collapsedTasks.has(id) ? collapsedTasks.delete(id) : collapsedTasks.add(id); saveFold(); pendingFocus = id; renderProjects();}
+function unfold(id) {if (collapsedTasks.delete(id)) saveFold();}
+// only one notes box is open at a time: opening one closes the other
+function expandOnly(id) {const open = expanded.has(id); expanded.clear(); if (!open) expanded.add(id); localStorage.setItem('expanded', JSON.stringify([...expanded]));}
+function toggleTask(id) {expandOnly(id); pendingFocus = id; renderProjects();}
+function toggleProject(id) {collapsedProjects.has(id) ? collapsedProjects.delete(id) : collapsedProjects.add(id); localStorage.setItem('collapsed', JSON.stringify([...collapsedProjects])); renderProjects();}
+async function completeTask(id, box) {
+  box.disabled = true;
+  const r = await api(`/tasks/${id}/complete`, 'POST');
+  pushUndo('complete', () => api(`/tasks/${id}/uncomplete`, 'POST'));
+  if (r.linear_error) toast('Completed locally; Linear: ' + esc(r.linear_error), 6000);
+  else toast(`Completed. <button class="btn small" onclick="uncomplete(${id})">Undo</button>`, 5000);
+  renderProjects();
+}
+async function restoreProject(id) {await api(`/projects/${id}/restore`, 'POST'); pushUndo('restore', () => api(`/projects/${id}`, 'DELETE')); toast('Project restored'); renderProjects();}
+async function uncomplete(id) {await api(`/tasks/${id}/uncomplete`, 'POST'); pushUndo('restore', () => api(`/tasks/${id}/complete`, 'POST')); toast('Restored'); render();}
+function editProjectName(pid, append, caret) {
+  closeInlineAdd();
+  const head = document.querySelector(`.proj[data-pid="${pid}"] > .phead`);
+  const el = head?.querySelector('h3') || (focusProject === pid ? document.querySelector('.pdetails h2') : null);
+  if (!el || el.querySelector('.inline')) return;
+  const p = findProject(pid); const orig = p?.name ?? el.textContent.trim();
+  const inp = inlineField(orig + (append || '')); inp.defaultValue = orig;
+  el.replaceChildren(inp); inp.fit(); el.onclick = e => e.stopPropagation();
+  let done = false;
+  const save = async (saveIt = true) => {   // closes the editor; the caller re-renders
+    if (done) return false; done = true; const v = inp.value.trim(); el.textContent = (saveIt && v) || orig;
+    if (saveIt && v && v !== orig) {await api(`/projects/${pid}`, 'PATCH', {name: v}); pushUndo('rename', () => api(`/projects/${pid}`, 'PATCH', {name: orig})); return true;}
+    return false;
+  };
+  inp.onkeydown = async e => {
+    if (e.key === 'Escape') {e.preventDefault(); await save(false); if (head) pendingFocusProject = pid; renderProjects();}
+    else if (plainEnter(e) && splitAt(inp)?.left) {const sp = splitAt(inp); e.preventDefault(); inp.value = sp.left; await save(); pendingAdd = {project_id: pid, parent_id: null, after_id: 0, text: sp.right, caret: 'start'}; renderProjects();}
+    else if (!head) {if (e.key === 'Enter') {e.preventDefault(); await save(); pendingAdd = {project_id: pid, parent_id: null, after_id: 0}; renderProjects();}}   // zoomed-in heading
+    else if (e.key === 'Backspace' && !inp.value) {   // an emptied, empty project goes away
+      e.preventDefault(); const prev = neighbourRow(head, -1);
+      try {await deleteLine(lineInfo(head)); done = true; editRowLater(prev); renderProjects();}
+      catch (err) {toast(esc(err.message), 5000);}
+    }
+    else await outlineKey(e, head, save);
+  };
+  inp.onblur = () => setTimeout(async () => {if (!done) {await save(); renderProjects();}}, 120);
+  wirePaste(inp, async rest => {await save(); const ids = await addOutline({project_id: pid, parent_id: null, after_id: 0}, rest); pendingEdit = ids[ids.length - 1]; renderProjects();});
+  inp.focus(); if (append) inp.setSelectionRange(inp.value.length, inp.value.length); else if (caret != null) {const c = Math.min(caret, inp.value.length); inp.setSelectionRange(c, c);} else inp.select();
+}
+function lastRootProjectId() {const ps = $('#tree').querySelectorAll(':scope > .proj:not(.editing)'); return ps.length ? +ps[ps.length - 1].dataset.pid : null;}
+// A new project line. `after_pid` puts it right below that sibling project (Shift+Enter on a project row);
+// otherwise it goes last among `parent_id`'s sub-projects (or the top level).
+function openInlineProjectAdd(parent_id, after_pid, text) {
+  closeInlineAdd(); if (projectAdd) {projectAdd.row.remove(); projectAdd = null;}
+  if (parent_id && collapsedProjects.has(parent_id)) {collapsedProjects.delete(parent_id); localStorage.setItem('collapsed', JSON.stringify([...collapsedProjects])); pendingProjectAdd = parent_id; renderProjects(); return;}
+  const container = parent_id ? document.querySelector(`[data-childlist="${parent_id}"]`) : $('#tree');
+  if (!container) return;
+  const row = document.createElement('div'); row.className = `proj ${parent_id ? '' : 'root'} editing`;
+  row.innerHTML = `<div class="phead"><span class="handle" style="visibility:hidden">≡</span><span class="caret"></span><h3 style="flex:1"><textarea class="inline" placeholder="${parent_id ? 'New sub-project' : 'New project'}"></textarea></h3></div>`;
+  const afterEl = after_pid ? container.querySelector(`:scope > .proj[data-pid="${after_pid}"]`) : null;
+  if (afterEl) afterEl.after(row); else container.appendChild(row);
+  container.querySelector(':scope > .hint')?.remove();
+  projectAdd = {parent_id, row};
+  const inp = attachFit(row.querySelector('.inline')); if (text) {inp.value = text; inp.fit();}
+  const close = () => {if (projectAdd?.row === row) {row.remove(); projectAdd = null; if (after_pid) {pendingFocusProject = after_pid; renderProjects();}}};
+  const stepOut = () => {   // one level up, right after the parent project
+    if (!parent_id) return false;
+    const v = inp.value, par = findProject(parent_id); row.remove(); projectAdd = null;
+    openInlineProjectAdd(par?.parent_id || (focusProject && focusProject !== parent_id ? focusProject : null), parent_id, v); return !!projectAdd;
+  };
+  const commit = async (thenEdit, fromEnter) => {
+    const name = inp.value.trim(); if (!name) {if (!(fromEnter && stepOut())) {close(); editRow(thenEdit);} return;}
+    inp.disabled = true;
+    try {
+      const r = await api('/projects', 'POST', {name, parent_id});
+      if (afterEl) {   // the server appends; put it where the line was
+        const ids = [...container.querySelectorAll(':scope > .proj:not(.editing)')].map(p => +p.dataset.pid).flatMap(id => id === after_pid ? [id, r.id] : [id]);
+        await api('/projects/reorder', 'POST', {parent_id: focusProject && container.id === 'tree' ? focusProject : parent_id, ids});
+      }
+      pushUndo(`new project "${name}"`, () => api(`/projects/${r.id}/delete_empty`, 'POST'));
+      projectAdd = null;
+      if (thenEdit) editRowLater(thenEdit); else pendingAdd = {project_id: r.id, parent_id: null, after_id: 0};   // straight on to its first task
+      renderProjects();
+    }
+    catch (err) {toast(esc(err.message)); inp.disabled = false; inp.focus();}
+  };
+  inp.onkeydown = e => {
+    if (e.key === 'Enter') {e.preventDefault(); commit(null, true);}
+    else if (e.key === 'Escape') {e.preventDefault(); close();}
+    else if (e.key === 'Backspace' && !remainingAfterBackspace(inp)) {e.preventDefault(); close();}
+    else if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && caretAtEdge(inp, e.key === 'ArrowUp' ? -1 : 1)) {const n = neighbourRow(row.querySelector('.phead'), e.key === 'ArrowUp' ? -1 : 1); if (n) {e.preventDefault(); commit(n);}}
+    else if (e.key === 'Tab' && !e.shiftKey) {   // becomes a task line at the end of the project above it
+      let prev = row.previousElementSibling; while (prev && !prev.classList.contains('proj')) prev = prev.previousElementSibling;
+      if (!prev && parent_id) prev = null;
+      e.preventDefault(); const v = inp.value;
+      if (prev) {const pid = +prev.dataset.pid; const rows = prev.querySelectorAll(`:scope > .tasks > .task:not([data-done])`); const last = rows.length ? +rows[rows.length - 1].dataset.tid : null;
+        row.remove(); projectAdd = null; if (collapsedProjects.has(pid)) {collapsedProjects.delete(pid); saveCollapsed(); pendingAdd = {project_id: pid, parent_id: null, after_id: last}; renderProjects(); return;} openInlineAdd({project_id: pid, parent_id: null, after_id: last}, v);}
+      else if (parent_id) {const rows = document.querySelectorAll(`[data-tasklist="${parent_id}"][data-parent=""] > .task:not([data-done])`); const last = rows.length ? +rows[rows.length - 1].dataset.tid : null; row.remove(); projectAdd = null; openInlineAdd({project_id: parent_id, parent_id: null, after_id: last}, v);}
+    }
+    else if (e.key === 'Tab' && e.shiftKey) {e.preventDefault(); stepOut();}
+  };
+  inp.onblur = () => setTimeout(() => {if (projectAdd?.row === row && !inp.disabled && document.activeElement !== inp) commit();}, 120);
+  inp.focus();
+}
+async function archiveProject(id) {const p = findProject(id); const n = p ? countTasks(p) : 0; if (!await confirmBox(`Archive this project${n ? ` and its ${n} open task${n === 1 ? '' : 's'}` : ''}${p?.children.length ? ' and its sub-projects' : ''}? You can restore it from the Archived filter.`)) return; try {await api(`/projects/${id}`, 'DELETE'); pushUndo('archive', () => api(`/projects/${id}/restore`, 'POST')); if (focusProject === id) openProject(findProject(id)?.parent_id || null); else renderProjects();} catch (e) {toast(esc(e.message));}}
+async function taskToProject(id) {
+  const row = document.querySelector(`.task[data-tid="${id}"]`); const slot = row ? slotOf(row) : null;   // so undo puts it back where it was
+  try {const r = await api(`/tasks/${id}/to_project`, 'POST');
+    pushUndo('make project', async () => {const b = await api(`/projects/${r.project_id}/to_task`, 'POST'); if (slot) await api(`/tasks/${b.task_id}`, 'PATCH', slot);});
+    toast('Now a project'); renderProjects();} catch (e) {toast(esc(e.message));}
+}
+async function projectToTask(id) {try {const r = await api(`/projects/${id}/to_task`, 'POST'); pushUndo('make task', () => api(`/tasks/${r.task_id}/to_project`, 'POST')); toast('Now a task'); if (focusProject === id) openProject(findProject(id)?.parent_id || null); else {pendingFocus = r.task_id; renderProjects();}} catch (e) {toast(esc(e.message));}}
+function addTaskTo(pid) {
+  if (collapsedProjects.has(pid)) {collapsedProjects.delete(pid); localStorage.setItem('collapsed', JSON.stringify([...collapsedProjects])); pendingAdd = {project_id: pid, parent_id: null, after_id: null}; renderProjects(); return;}
+  openInlineAdd({project_id: pid, parent_id: null, after_id: null});
+}
+
+// inline task entry ------------------------------------------------
+// Enter on a task row (or the "+ New task" line) opens a one-line editor in place. Enter saves and opens the
+// next line; Tab / Shift+Tab indent and outdent; Escape (or Enter on an empty line) closes it.
+function listFor(project_id, parent_id) {return document.querySelector(`[data-tasklist="${project_id}"][data-parent="${parent_id ?? ''}"]`);}
+function subListOf(row) {const n = row.nextElementSibling; return n && n.classList.contains('sub') ? n : null;}
+function placeInlineRow(a, row) {
+  const list = listFor(a.project_id, a.parent_id); if (!list) return false;
+  const after = a.after_id ? list.querySelector(`:scope > .task[data-tid="${a.after_id}"]`) : null;
+  if (after) (subListOf(after) || after).after(row);
+  else if (a.after_id === 0) list.prepend(row);
+  else {const add = list.querySelector(':scope > .addrow'); add ? list.insertBefore(row, add) : list.appendChild(row);}
+  return true;
+}
+function openInlineAdd(a, text, caret) {
+  closeInlineAdd(); if (projectAdd) {projectAdd.row.remove(); projectAdd = null;}
+  const row = document.createElement('div'); row.className = 'task editing';
+  row.innerHTML = `<span class="handle" style="visibility:hidden">≡</span><span class="caret"></span><input type="checkbox" disabled><div class="body"><textarea class="inline" placeholder="New task"></textarea></div>`;
+  if (!placeInlineRow(a, row)) return;
+  inlineAdd = {...a, row};
+  const inp = attachFit(row.querySelector('.inline')); if (text) {inp.value = text; inp.fit();}
+  const commit = async (asProject, fromEnter, thenEdit, rest) => {
+    const split = fromEnter ? splitAt(inp) : null;
+    const title = split ? split.left : inp.value.trim();
+    if (!title) {   // Enter on an empty nested line steps it out one level (Roam / Workflowy); otherwise the line goes away
+      if (split) return;
+      if (!(fromEnter && outdentInline())) {closeInlineAdd(); editRow(thenEdit);}
+      return;
+    }
+    inp.disabled = true;
+    try {
+      const t = await api('/tasks', 'POST', {project_id: inlineAdd.project_id, parent_id: inlineAdd.parent_id, after_id: inlineAdd.after_id, title});
+      if (t.parent_id) unfold(t.parent_id);
+      if (rest) {const ids = await addOutline({project_id: t.project_id, parent_id: t.parent_id, after_id: t.id}, rest, [t.id]); pendingEdit = ids[ids.length - 1]; inlineAdd = null; renderProjects(); return;}
+      pushUndo(`new task "${title}"`, () => api(`/tasks/${t.id}`, 'DELETE'));
+      if (asProject === true) {inlineAdd = null; await taskToProject(t.id); return;}
+      if (thenEdit) editRowLater(thenEdit); else pendingAdd = {project_id: t.project_id, parent_id: t.parent_id, after_id: t.id, text: split?.right, caret: 'start'};
+      inlineAdd = null; renderProjects();
+    } catch (err) {toast(esc(err.message)); inp.disabled = false; inp.focus();}
+  };
+  wirePaste(inp, rest => commit(false, false, null, rest));
+  inp.onkeydown = e => {
+    if (e.key === 'Escape') {e.preventDefault(); closeInlineAdd();}
+    else if (e.key === 'Backspace' && !remainingAfterBackspace(inp)) {   // deleting the last character removes the line; focus goes to the task above
+      e.preventDefault(); const prev = prevTaskRow(row) || row.closest('.tasks')?.previousElementSibling?.closest?.('.task');
+      closeInlineAdd(); if (prev && prev.classList.contains('task')) prev.focus();
+    }
+    else if (e.key === 'Tab') {e.preventDefault(); e.shiftKey ? outdentInline() : indentInline();}
+    else if (e.key === 'Enter') {e.preventDefault(); commit(false, true);}
+    else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'b') {e.preventDefault(); commit(true);}
+    else if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && caretAtEdge(inp, e.key === 'ArrowUp' ? -1 : 1)) {const n = neighbourRow(row, e.key === 'ArrowUp' ? -1 : 1); if (n) {e.preventDefault(); commit(false, false, n);}}
+  };
+  inp.onblur = () => setTimeout(() => {if (inlineAdd && inlineAdd.row === row && !inp.disabled && document.activeElement !== inp) commit();}, 120);
+  inp.focus(); if (text) {const p = caret === 'start' ? 0 : inp.value.length; inp.setSelectionRange(p, p);}
+}
+function remainingAfterBackspace(inp) {
+  const v = inp.value, a = inp.selectionStart ?? v.length, b = inp.selectionEnd ?? v.length;
+  return a === b ? v.slice(0, Math.max(0, a - 1)) + v.slice(a) : v.slice(0, a) + v.slice(b);
+}
+function closeInlineAdd() {if (inlineAdd) {inlineAdd.row.remove(); inlineAdd = null;}}
+function prevTaskRow(row) {let n = row.previousElementSibling; while (n && !(n.classList.contains('task') && !n.classList.contains('editing') && !n.dataset.done)) n = n.previousElementSibling; return n;}
+function indentInline() {
+  const prev = prevTaskRow(inlineAdd.row); if (!prev) return;
+  const kids = [...subListOf(prev).querySelectorAll(':scope > .task:not(.editing)')];
+  const a = {project_id: inlineAdd.project_id, parent_id: +prev.dataset.tid, after_id: kids.length ? +kids[kids.length - 1].dataset.tid : null};
+  const inp = inlineAdd.row.querySelector('.inline'); const v = inp.value;
+  if (placeInlineRow(a, inlineAdd.row)) Object.assign(inlineAdd, a);
+  inp.value = v; inp.fit(); inp.focus();
+}
+// Steps the new line out one level. At a project's root the line turns into a project line beside that project
+// (so a line inside a top-level project becomes a new top-level project). Returns false when there is nowhere to go.
+function outdentInline() {
+  if (!inlineAdd.parent_id) {
+    const pid = inlineAdd.project_id, p = findProject(pid), text = inlineAdd.row.querySelector('.inline').value;
+    const proj = document.querySelector(`.proj[data-pid="${pid}"]`); if (!proj) return false;   // zoomed into this project: no outside here
+    closeInlineAdd(); openInlineProjectAdd(p?.parent_id || (focusProject || null), pid, text); return !!projectAdd;
+  }
+  const parentRow = document.querySelector(`.task[data-tid="${inlineAdd.parent_id}"]`); if (!parentRow) return false;
+  const a = {project_id: inlineAdd.project_id, parent_id: parentRow.dataset.parent ? +parentRow.dataset.parent : null, after_id: +parentRow.dataset.tid};
+  const inp = inlineAdd.row.querySelector('.inline'); const v = inp.value;
+  if (placeInlineRow(a, inlineAdd.row)) Object.assign(inlineAdd, a);
+  inp.value = v; inp.fit(); inp.focus(); return true;
+}
+// keyboard --------------------------------------------------------
+// The tree is one outline, Workflowy-style: every project header and task row is a line. The same keys work
+// whether a line is merely selected (focused) or its text is being edited:
+//   Enter new line (first child if the line shows children, else sibling below)   Tab / Shift+Tab nest / un-nest
+//   Up / Down previous / next line           Cmd+Up / Cmd+Down collapse / expand   Cmd+Shift+Up / Down move the line
+//   Cmd+Enter complete (tasks)               Shift+Enter notes                     Alt+Right / Alt+Left zoom in / out
+//   Cmd+B bold = project (and back)          Cmd+E dates & priority                Cmd+Shift+Backspace delete the line
+//   Cmd+Z undo
+// where a row sits now, so a move can be undone (after_id 0 = first among its siblings)
+const slotOf = row => ({project_id: +row.dataset.project, parent_id: row.dataset.parent ? +row.dataset.parent : null, after_id: prevTaskRow(row) ? +prevTaskRow(row).dataset.tid : 0});
+const moveBack = (tid, slot) => () => api(`/tasks/${tid}`, 'PATCH', slot);
+async function indentTask(row) {
+  const prev = prevTaskRow(row); if (!prev || row.dataset.done) return false;
+  const slot = slotOf(row);
+  await api(`/tasks/${row.dataset.tid}`, 'PATCH', {parent_id: +prev.dataset.tid}); unfold(+prev.dataset.tid);
+  pushUndo('indent', moveBack(+row.dataset.tid, slot)); return true;
+}
+async function outdentTask(row) {
+  const parent_id = row.dataset.parent ? +row.dataset.parent : null; if (!parent_id) return false;
+  const parentRow = document.querySelector(`.task[data-tid="${parent_id}"]`);
+  const slot = slotOf(row);
+  await api(`/tasks/${row.dataset.tid}`, 'PATCH', {parent_id: parentRow?.dataset.parent ? +parentRow.dataset.parent : null, after_id: parent_id});
+  pushUndo('outdent', moveBack(+row.dataset.tid, slot)); return true;
+}
+function visibleRows(includeEditing) {
+  return [...document.querySelectorAll(includeEditing ? '#tree .phead, #tree .task' : '#tree .phead, #tree .task:not(.editing)')]
+    .filter(r => !r.closest('.tasks.sub.collapsed') && (includeEditing || !r.closest('.proj.editing')));
+}
+function neighbourRow(row, dir) {const rows = visibleRows(true); return rows[rows.indexOf(row) + dir] || null;}
+const isHead = el => el.classList.contains('phead');
+const rowPid = el => +el.parentElement.dataset.pid;
+// A line editor: a textarea that wraps and grows with its text, so a long line stays fully visible while typing.
+// Enter never inserts a newline here (the key handlers decide what Enter does).
+function attachFit(ta) {
+  const fit = () => {ta.style.height = '0'; ta.style.height = ta.scrollHeight + 'px';};
+  ta.rows = 1; ta.fit = fit; ta.addEventListener('input', fit); ta.addEventListener('keydown', e => {if (e.key === 'Enter') e.preventDefault();});
+  requestAnimationFrame(fit); return ta;
+}
+function inlineField(value, placeholder) {
+  const ta = document.createElement('textarea'); ta.className = 'inline'; ta.value = value || ''; ta.placeholder = placeholder || ''; ta.spellcheck = true;
+  return attachFit(ta);
+}
+// Up / Down inside a wrapped line move within it first; only from its first / last visual line do they leave it
+function caretAtEdge(ta, dir) {
+  const cs = getComputedStyle(ta); const lh = parseFloat(cs.lineHeight) || 20;
+  if (ta.clientHeight < lh * 1.5) return true;
+  const m = document.createElement('div');
+  for (const p of ['fontFamily', 'fontSize', 'fontWeight', 'lineHeight', 'letterSpacing', 'padding', 'border', 'boxSizing']) m.style[p] = cs[p];
+  Object.assign(m.style, {position: 'absolute', visibility: 'hidden', whiteSpace: 'pre-wrap', wordWrap: 'break-word', width: ta.clientWidth + 'px', top: 0, left: 0});
+  const pos = ta.selectionStart ?? ta.value.length; m.textContent = ta.value.slice(0, pos);
+  const mark = document.createElement('span'); mark.textContent = ta.value.slice(pos) || '.'; m.appendChild(mark);
+  document.body.appendChild(m); const top = mark.offsetTop, h = m.scrollHeight; m.remove();
+  return dir < 0 ? top < lh * 0.5 : top > h - lh * 1.5;
+}
+// where in the text a click landed, so the editor's cursor opens right there (Workflowy / Roam)
+function caretFromClick(e, el) {
+  let node, off;
+  if (document.caretPositionFromPoint) {const p = document.caretPositionFromPoint(e.clientX, e.clientY); if (p) {node = p.offsetNode; off = p.offset;}}
+  else if (document.caretRangeFromPoint) {const r = document.caretRangeFromPoint(e.clientX, e.clientY); if (r) {node = r.startContainer; off = r.startOffset;}}
+  if (!node || !el.contains(node)) return null;
+  const range = document.createRange(); range.setStart(el, 0); range.setEnd(node, off); return range.toString().length;
+}
+function editRow(el, append) {if (!el) return; isHead(el) ? editProjectName(rowPid(el), append) : editTaskTitle(+el.dataset.tid, append);}
+function editRowLater(el) {if (!el) return; if (isHead(el)) pendingProjectEdit = rowPid(el); else pendingEdit = +el.dataset.tid;}
+function focusRowLater(el) {if (!el) return; if (isHead(el)) pendingFocusProject = rowPid(el); else pendingFocus = +el.dataset.tid;}
+const printable = e => e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey && e.key !== ' ';
+const selecting = () => !!(window.getSelection && window.getSelection().toString());
+const plainEnter = e => e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey;
+// Enter inside a line's text splits it: what is after the cursor becomes the new line below (Workflowy)
+function splitAt(inp) {const pos = inp.selectionStart ?? inp.value.length, v = inp.value; if (inp.selectionEnd !== pos) return null; const right = v.slice(pos).trim(); return pos < v.length && right ? {left: v.slice(0, pos).trim(), right} : null;}
+
+// pasting an outline --------------------------------------------------
+// A multi-line paste into any line: its first line goes into the text at the cursor, the other lines become
+// new lines below it, nested the way they were indented (tabs, spaces, "-", "*", "•", "1." all understood).
+function parseOutline(text) {
+  const rows = text.replace(/\r/g, '').split('\n').map(l => {
+    const w = l.match(/^\s*/)[0].replace(/\t/g, '    ').length;
+    const title = l.trim().replace(/^(?:[-*+•◦▪‣–—]|\d+[.)]|[a-zA-Z][.)])\s+/, '').replace(/^\[[ xX]\]\s*/, '').trim();
+    return {w, title};
+  }).filter(r => r.title);
+  if (!rows.length) return [];
+  const widths = [...new Set(rows.map(r => r.w))].sort((a, b) => a - b), base = widths.indexOf(rows[0].w);
+  return rows.map(r => ({title: r.title, depth: Math.max(0, widths.indexOf(r.w) - base)}));
+}
+function wirePaste(inp, onRest) {
+  inp.addEventListener('paste', e => {
+    const text = e.clipboardData?.getData('text/plain') || '';
+    const items = text.trim().includes('\n') ? parseOutline(text) : [];
+    if (items.length < 2) return;
+    e.preventDefault();
+    const a = inp.selectionStart ?? inp.value.length, b = inp.selectionEnd ?? a;
+    inp.value = inp.value.slice(0, a) + items[0].title + inp.value.slice(b); inp.fit?.();
+    onRest(items.slice(1));
+  });
+}
+async function addOutline(where, items, alsoUndo = []) {   // where: {project_id, parent_id, after_id}
+  const r = await api('/tasks/bulk', 'POST', {...where, items});
+  const ids = [...alsoUndo, ...r.ids];
+  pushUndo(`paste of ${ids.length} lines`, async () => {for (const id of [...ids].reverse()) await api(`/tasks/${id}`, 'DELETE');});
+  if (where.parent_id) unfold(where.parent_id);
+  return r.ids;
+}
+const saveCollapsed = () => localStorage.setItem('collapsed', JSON.stringify([...collapsedProjects]));
+// projects nest and un-nest like tasks: Tab puts one under the project above it, Shift+Tab lifts it out
+function projectSlot(proj) {const c = proj.parentElement; return {parent_id: c.dataset.childlist ? +c.dataset.childlist : (focusProject && c.id === 'tree' ? focusProject : null), ids: [...c.querySelectorAll(':scope > .proj:not(.editing)')].map(p => +p.dataset.pid)};}
+async function indentProject(proj) {
+  let prev = proj.previousElementSibling; while (prev && !prev.classList.contains('proj')) prev = prev.previousElementSibling;
+  if (!prev) return false;
+  const slot = projectSlot(proj), target = +prev.dataset.pid;
+  const ids = [...prev.querySelectorAll(':scope > .children > .proj')].map(p => +p.dataset.pid).concat(+proj.dataset.pid);
+  await api('/projects/reorder', 'POST', {parent_id: target, ids}); collapsedProjects.delete(target); saveCollapsed();
+  pushUndo('indent', () => api('/projects/reorder', 'POST', slot)); return true;
+}
+async function outdentProject(proj) {
+  const parent = proj.parentElement.closest('.proj'); if (!parent) return false;
+  const slot = projectSlot(proj), up = projectSlot(parent);
+  const ids = up.ids.flatMap(id => id === +parent.dataset.pid ? [id, +proj.dataset.pid] : [id]);
+  await api('/projects/reorder', 'POST', {parent_id: up.parent_id, ids});
+  pushUndo('outdent', () => api('/projects/reorder', 'POST', slot)); return true;
+}
+function lineInfo(el) {
+  if (isHead(el)) {const proj = el.parentElement; return {kind: 'project', id: +proj.dataset.pid, el, proj, parent_id: proj.dataset.parent ? +proj.dataset.parent : (focusProject || null)};}
+  return {kind: 'task', id: +el.dataset.tid, el, row: el, project_id: +el.dataset.project, parent_id: el.dataset.parent ? +el.dataset.parent : null, done: !!el.dataset.done, linear: !!el.querySelector('.title.lin')};
+}
+async function moveLine(L, dir) {
+  if (L.kind === 'task') {
+    const list = L.row.parentElement; const rows = [...list.querySelectorAll(':scope > .task:not([data-done]):not(.editing)')];
+    const i = rows.indexOf(L.row), j = i + dir; if (i < 0 || j < 0 || j >= rows.length) return false;
+    const before = rows.map(r => +r.dataset.tid), ids = [...before]; [ids[i], ids[j]] = [ids[j], ids[i]];
+    const where = {project_id: +list.dataset.tasklist, parent_id: list.dataset.parent ? +list.dataset.parent : null};
+    await api('/tasks/reorder', 'POST', {...where, ids}); pushUndo('move', () => api('/tasks/reorder', 'POST', {...where, ids: before}));
+  } else {
+    const slot = projectSlot(L.proj), ids = [...slot.ids]; const i = ids.indexOf(L.id), j = i + dir; if (i < 0 || j < 0 || j >= ids.length) return false;
+    [ids[i], ids[j]] = [ids[j], ids[i]];
+    await api('/projects/reorder', 'POST', {parent_id: slot.parent_id, ids}); pushUndo('move', () => api('/projects/reorder', 'POST', slot));
+  }
+  return true;
+}
+function setFold(L, collapsed) {
+  if (L.kind === 'task') {
+    if (!subListOf(L.row)?.children.length || collapsedTasks.has(L.id) === collapsed) return false;
+    collapsed ? collapsedTasks.add(L.id) : collapsedTasks.delete(L.id); saveFold(); return true;
+  }
+  if (collapsedProjects.has(L.id) === collapsed) return false;
+  collapsed ? collapsedProjects.add(L.id) : collapsedProjects.delete(L.id); saveCollapsed(); return true;
+}
+async function deleteLine(L) {   // throws (with a readable message) when the line has something attached to it
+  if (L.kind === 'task') {
+    const old = findTask(L.id), slot = slotOf(L.row);
+    await api(`/tasks/${L.id}`, 'DELETE');
+    if (old) pushUndo(`delete "${old.title}"`, () => api('/tasks', 'POST', {...slot, title: old.title, description: old.description || '', deadline: old.deadline, blocking: !!old.blocking, blocking_for: old.blocking_for || '', importance: old.importance, chunkable: !!old.chunkable}));
+  } else {
+    const p = findProject(L.id);
+    await api(`/projects/${L.id}/delete_empty`, 'POST');
+    if (p) pushUndo(`delete project "${p.name}"`, () => api('/projects', 'POST', {name: p.name, parent_id: p.parent_id}));
+  }
+}
+async function toggleComplete(L) {
+  if (L.done) {await api(`/tasks/${L.id}/uncomplete`, 'POST'); pushUndo('restore', () => api(`/tasks/${L.id}/complete`, 'POST')); toast('Restored');}
+  else {const r = await api(`/tasks/${L.id}/complete`, 'POST'); pushUndo('complete', () => api(`/tasks/${L.id}/uncomplete`, 'POST')); toast(r.linear_error ? 'Completed locally; Linear: ' + esc(r.linear_error) : 'Completed', 4000);}
+}
+function newLineAfter(L, text) {   // Enter: the first child when the line shows its children, otherwise a sibling right below
+  if (L.kind === 'task') {
+    const kids = subListOf(L.row); const open = kids && kids.children.length && !kids.classList.contains('collapsed');
+    openInlineAdd(open ? {project_id: L.project_id, parent_id: L.id, after_id: 0} : {project_id: L.project_id, parent_id: L.parent_id, after_id: L.id}, text, 'start');
+  } else {   // a project line: its first task (unfolding it if needed)
+    const a = {project_id: L.id, parent_id: null, after_id: 0, text, caret: 'start'};
+    if (collapsedProjects.has(L.id)) {collapsedProjects.delete(L.id); saveCollapsed(); pendingAdd = a; renderProjects();} else openInlineAdd(a, text, 'start');
+  }
+}
+// Handles an outline command on line `el`. `save` is set while the line's text is being edited: it saves the
+// text and closes the editor without re-rendering, and returns whether the text changed. Returns true when the
+// key was taken.
+async function outlineKey(e, el, save) {
+  const L = lineInfo(el), mod = e.metaKey || e.ctrlKey, k = e.key, editing = !!save, dir = k === 'ArrowUp' ? -1 : 1;
+  const keep = () => editing ? editRowLater(el) : focusRowLater(el);
+  const back = () => editing ? editRow(el) : el.focus();
+  // fn returns true to re-render keeping this line, false to put the cursor back, anything else if it took over
+  const run = async fn => {e.preventDefault(); if (save) await save(); let r; try {r = await fn();} catch (err) {toast(esc(err.message), 5000); r = false;} if (r === true) {keep(); renderProjects();} else if (r === false) back();};
+  if (mod && e.shiftKey && (k === 'ArrowUp' || k === 'ArrowDown')) {await run(() => moveLine(L, dir)); return true;}
+  if (mod && (k === 'ArrowUp' || k === 'ArrowDown')) {await run(() => setFold(L, k === 'ArrowUp')); return true;}
+  if (mod && e.shiftKey && k === 'Backspace') {
+    await run(async () => {const prev = neighbourRow(el, -1); await deleteLine(L); editing ? editRowLater(prev) : focusRowLater(prev); renderProjects();}); return true;
+  }
+  if (mod && k === 'Enter') {if (L.kind !== 'task') return false; await run(async () => {await toggleComplete(L); return true;}); return true;}
+  if (e.shiftKey && k === 'Enter') {
+    if (L.kind === 'task') await run(() => {const open = expanded.has(L.id); expandOnly(L.id); if (open) focusRowLater(el); else pendingNotesEdit = L.id; renderProjects();});
+    else await run(() => {pendingProjectNotes = true; openProject(L.id);});
+    return true;
+  }
+  if (e.altKey && k === 'ArrowRight') {await run(() => {openProject(L.kind === 'project' ? L.id : L.project_id);}); return true;}
+  if (e.altKey && k === 'ArrowLeft') {if (!focusProject) return false; await run(() => {const chain = projectChain(focusProject) || []; openProject(chain.length > 1 ? chain[chain.length - 2].id : null);}); return true;}
+  if (mod && k.toLowerCase() === 'e') {await run(() => {L.kind === 'task' ? editTask(L.id) : openProject(L.id);}); return true;}
+  if (mod && k.toLowerCase() === 'b') {
+    if (L.kind === 'task' && !L.done && !L.linear) await run(() => {taskToProject(L.id);});
+    else if (L.kind === 'project' && L.proj.dataset.parent) await run(() => {projectToTask(L.id);});
+    else return false;
+    return true;
+  }
+  if (mod || e.altKey) return false;
+  if (k === 'Tab') {await run(() => L.kind === 'task' ? (e.shiftKey ? outdentTask(L.row) : indentTask(L.row)) : (e.shiftKey ? outdentProject(L.proj) : indentProject(L.proj))); return true;}
+  if (k === 'Enter') {if (L.done) return false; await run(() => {newLineAfter(L);}); return true;}
+  if (k === 'ArrowUp' || k === 'ArrowDown') {
+    if (editing && document.activeElement?.tagName === 'TEXTAREA' && !caretAtEdge(document.activeElement, dir)) return false;
+    const n = neighbourRow(el, dir); if (!n) return false;
+    e.preventDefault();
+    if (!editing) {n.focus(); return true;}
+    const changed = await save(); if (changed) {editRowLater(n); renderProjects();} else editRow(n);
+    return true;
+  }
+  return false;
+}
+// multi-selection (Workflowy): Shift+Up / Shift+Down or Shift+click extend from the selected line; Cmd+C copies
+// the selected lines, with everything under them, as an indented bulleted list.
+let sel = {anchor: null, rows: []};
+function clearSel() {sel.rows.forEach(r => r.classList.remove('sel')); sel = {anchor: null, rows: []};}
+function setSelRange(a, b) {
+  const rows = visibleRows(); let i = rows.indexOf(a), j = rows.indexOf(b); if (i < 0 || j < 0) return;
+  sel.rows.forEach(r => r.classList.remove('sel'));
+  sel.rows = rows.slice(Math.min(i, j), Math.max(i, j) + 1); sel.rows.forEach(r => r.classList.add('sel')); sel.anchor = a;
+}
+function extendSelTo(el) {
+  const anchor = sel.anchor || (document.activeElement?.matches?.('.task, .phead') ? document.activeElement : el);
+  setSelRange(anchor, el); el.focus({preventScroll: true});
+}
+function lineDepth(el) {   // for relative indentation in copied text
+  if (isHead(el)) return (projectChain(rowPid(el)) || []).length - 1;
+  const t = findTask(+el.dataset.tid); let d = (projectChain(+el.dataset.project) || []).length, n = el;
+  while ((n = n.parentElement) && n.id !== 'tree') if (n.classList.contains('sub')) d++;
+  return d;
+}
+function outlineText(els) {
+  const out = [], seen = new Set();
+  const emitTask = (t, d) => {if (seen.has('t' + t.id)) return; seen.add('t' + t.id); out.push('  '.repeat(d) + '- ' + t.title); t.children.forEach(c => emitTask(c, d + 1));};
+  const emitProject = (p, d) => {if (seen.has('p' + p.id)) return; seen.add('p' + p.id); out.push('  '.repeat(d) + '- ' + p.name); p.tasks.forEach(t => emitTask(t, d + 1)); p.children.forEach(c => emitProject(c, d + 1));};
+  const items = els.map(el => ({el, d: lineDepth(el)})); const min = Math.min(...items.map(i => i.d));
+  for (const {el, d} of items) {
+    if (isHead(el)) {const p = findProject(rowPid(el)); if (p) emitProject(p, d - min);}
+    else {const t = findTask(+el.dataset.tid); if (t) emitTask(t, d - min);}
+  }
+  return out.join('\n');
+}
+async function copyText(text) {
+  try {await navigator.clipboard.writeText(text); return true;} catch {}
+  const ta = document.createElement('textarea'); ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select();
+  const ok = document.execCommand('copy'); ta.remove(); return ok;
+}
+document.addEventListener('keydown', async e => {
+  if (!((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'c')) return;
+  const a = document.activeElement;
+  if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA') || selecting()) return;   // ordinary text copy
+  const els = sel.rows.length ? sel.rows : (a?.matches?.('.task, .phead') ? [a] : []);
+  if (!els.length) return;
+  e.preventDefault();
+  const ok = await copyText(outlineText(els));
+  toast(ok ? `Copied ${els.length} line${els.length === 1 ? '' : 's'}` : 'Could not copy');
+});
+// a selected (focused) line
+document.addEventListener('keydown', async e => {
+  const el = e.target.closest?.('.task:not(.editing), .phead'); if (!el || e.target !== el || el.closest('.proj.editing, .proj.archived')) return;
+  if (e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {   // grow / shrink the selection
+    e.preventDefault(); const rows = visibleRows(); const anchor = sel.anchor || el; const n = rows[rows.indexOf(el) + (e.key === 'ArrowUp' ? -1 : 1)];
+    if (n) {setSelRange(anchor, n); n.focus({preventScroll: false});} else setSelRange(anchor, el);
+    return;
+  }
+  if (e.key === 'Escape' && sel.rows.length) {e.preventDefault(); clearSel(); return;}
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'c') return;   // copy keeps the selection
+  if (!e.shiftKey || e.key === 'Tab' || e.key === 'Enter') clearSel();
+  if (await outlineKey(e, el, null)) return;
+  const L = lineInfo(e.target);
+  if (e.key === ' ') {e.preventDefault(); L.kind === 'task' ? toggleTask(L.id) : openProject(L.id);}
+  else if (e.key === 'ArrowLeft') {if (setFold(L, true)) {e.preventDefault(); focusRowLater(el); renderProjects();}}
+  else if (e.key === 'ArrowRight') {if (setFold(L, false)) {e.preventDefault(); focusRowLater(el); renderProjects();}}
+  else if (e.key === 'Escape') el.blur();
+  else if (printable(e) && !L.done) {e.preventDefault(); editRow(el, e.key);}   // typing on a selected line edits it
+});
+// nothing selected: Enter starts the first line of the zoomed project, or the first project of an empty list
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Enter' || e.target !== document.body || view !== 'projects' || inlineAdd || projectAdd) return;
+  if (focusProject) {e.preventDefault(); openInlineAdd({project_id: focusProject, parent_id: null, after_id: 0});}
+  else if (!tree.length) {e.preventDefault(); openInlineProjectAdd(null);}
+});
+
+// click-to-edit titles --------------------------------------------------
+// Backspace on an already-empty title deletes the task (if nothing is attached to it); Escape reverts; everything
+// else goes through outlineKey above.
+function editTaskTitle(tid, append, caret) {
+  closeInlineAdd();
+  if (titleEdit) {const te = titleEdit; titleEdit = null; te.span.textContent = te.inp.value.trim() || te.orig;}
+  const row = document.querySelector(`.task[data-tid="${tid}"]`); if (!row) return;
+  const span = row.querySelector('.title'); const orig = findTask(tid)?.title ?? span.textContent;
+  const inp = inlineField(orig + (append || '')); inp.defaultValue = orig;
+  span.replaceChildren(inp); inp.fit();
+  titleEdit = {tid, row, span, orig, inp};
+  const end = () => {if (titleEdit?.inp === inp) {titleEdit = null; span.textContent = inp.value.trim() || orig;}};
+  const save = async () => {
+    const v = inp.value.trim(); end();
+    if (v && v !== orig) {const r = await api(`/tasks/${tid}`, 'PATCH', {title: v}); pushUndo('rename', () => api(`/tasks/${tid}`, 'PATCH', {title: orig})); if (r.linear_error) toast('Saved; Linear: ' + esc(r.linear_error), 6000); return true;}
+    return false;
+  };
+  inp.onkeydown = async e => {
+    if (e.key === 'Escape') {e.preventDefault(); inp.value = orig; end(); row.focus();}
+    else if (e.key === 'Backspace' && !inp.value) {
+      e.preventDefault(); const prev = neighbourRow(row, -1);
+      try {await deleteLine(lineInfo(row)); titleEdit = null; editRowLater(prev); renderProjects();}
+      catch (err) {toast(esc(err.message), 5000);}
+    }
+    else if (plainEnter(e) && splitAt(inp)) {
+      e.preventDefault(); const sp = splitAt(inp), L = lineInfo(row);
+      if (!sp.left) {await save(); openInlineAdd({project_id: L.project_id, parent_id: L.parent_id, after_id: prevTaskRow(row) ? +prevTaskRow(row).dataset.tid : 0}); return;}   // at the very start: an empty line above
+      inp.value = sp.left; await save(); newLineAfter(L, sp.right);
+    }
+    else await outlineKey(e, row, save);
+  };
+  wirePaste(inp, async rest => {const L = lineInfo(row); await save(); const ids = await addOutline({project_id: L.project_id, parent_id: L.parent_id, after_id: tid}, rest); pendingEdit = ids[ids.length - 1]; renderProjects();});
+  inp.onblur = () => setTimeout(async () => {if (titleEdit?.inp === inp) {const changed = await save(); if (changed) renderProjects();}}, 120);
+  inp.focus(); const c = append == null && caret != null ? Math.min(caret, inp.value.length) : inp.value.length; inp.setSelectionRange(c, c);
+}
+
+// drag & drop ------------------------------------------------------
+// Rows move under the pointer while you drag; what you see is what gets saved on drop. Drag to the right
+// (about 40px) over the lower half of a row to nest under it.
+let drag = null;
+function wireDnD() {
+  const treeEl = $('#tree'); if (!treeEl) return;
+  treeEl.querySelectorAll('.tasks').forEach(l => l.addEventListener('click', e => {
+    if (e.target !== l || l.closest('.proj.archived')) return;
+    const rows = [...l.querySelectorAll(':scope > .task:not([data-done]):not(.editing)')];
+    openInlineAdd({project_id: +l.dataset.tasklist, parent_id: l.dataset.parent ? +l.dataset.parent : null, after_id: rows.length ? +rows[rows.length - 1].dataset.tid : null});
+  }));
+  document.querySelectorAll('[data-drag-task],[data-drag-project]').forEach(h => {
+    h.addEventListener('dragstart', e => {
+      e.stopPropagation();
+      const isTask = 'dragTask' in h.dataset;
+      const el = h.closest(isTask ? '.task' : '.proj');
+      drag = {type: isTask ? 'task' : 'project', id: +(h.dataset.dragTask || h.dataset.dragProject), el, sub: isTask ? subListOf(el) : null, x0: e.clientX, dropped: false};
+      if (isTask) drag.slot = slotOf(el);
+      else {const c = el.parentElement; drag.slot = {parent_id: c.dataset.childlist ? +c.dataset.childlist : (focusProject && c.id === 'tree' ? focusProject : null), ids: [...c.querySelectorAll(':scope > .proj')].map(p => +p.dataset.pid)};}
+      e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(drag.id));
+      try {e.dataTransfer.setDragImage(el, 24, 14);} catch {}
+      setTimeout(() => {el.classList.add('dragging'); drag?.sub?.classList.add('dragging');}, 0);
+    });
+    h.addEventListener('dragend', () => {if (drag && !drag.dropped) renderProjects(); drag = null;});
+  });
+  treeEl.addEventListener('dragover', e => {
+    if (!drag) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move';
+    drag.type === 'task' ? taskDragOver(e) : projectDragOver(e);
+  });
+  treeEl.addEventListener('drop', async e => {
+    e.preventDefault(); if (!drag) return; drag.dropped = true;
+    try {await persistDrag();} catch (err) {toast(esc(err.message));}
+    drag = null; renderProjects();
+  });
+}
+const moveWithSub = (place) => {place(drag.el); if (drag.sub) drag.el.after(drag.sub);};
+function taskDragOver(e) {
+  const inDragged = n => drag.el.contains(n) || (drag.sub && drag.sub.contains(n));
+  const row = e.target.closest?.('.task:not(.editing)');
+  if (row && !inDragged(row)) {
+    if (row.dataset.done) return;
+    const r = row.getBoundingClientRect(); const before = e.clientY < r.top + r.height / 2;
+    const nest = !before && e.clientX - drag.x0 > 40;
+    const rowSub = subListOf(row);
+    if (nest && rowSub && !rowSub.classList.contains('collapsed')) moveWithSub(el => rowSub.prepend(el));
+    else if (before) moveWithSub(el => row.before(el));
+    else moveWithSub(el => (rowSub || row).after(el));
+    return;
+  }
+  const head = e.target.closest?.('.phead');
+  const list = head ? head.parentElement.querySelector(':scope > .tasks') : e.target.closest?.('[data-tasklist]');
+  if (list && !inDragged(list) && list !== drag.el.parentElement) {
+    const add = list.querySelector(':scope > .addrow');
+    moveWithSub(el => add ? list.insertBefore(el, add) : list.appendChild(el));
+  }
+}
+function projectDragOver(e) {
+  const proj = e.target.closest?.('.proj');
+  if (!proj || proj === drag.el || drag.el.contains(proj)) return;
+  const head = proj.querySelector(':scope > .phead'); const r = head.getBoundingClientRect();
+  const before = e.clientY < r.top + r.height / 2;
+  const nest = !before && e.clientX - drag.x0 > 40;
+  const kids = proj.querySelector(':scope > .children');
+  if (nest && kids) kids.prepend(drag.el);
+  else if (before) proj.before(drag.el);
+  else proj.after(drag.el);
+  drag.el.classList.toggle('root', drag.el.parentElement.id === 'tree');
+}
+async function persistDrag() {
+  const d = drag;   // dragend clears `drag` while we wait for the server
+  if (d.type === 'task') {
+    const list = d.el.closest('[data-tasklist]'); if (!list) return;
+    const ids = [...list.querySelectorAll(':scope > .task:not([data-done]):not(.editing)')].map(r => +r.dataset.tid);
+    await api('/tasks/reorder', 'POST', {project_id: +list.dataset.tasklist, parent_id: list.dataset.parent ? +list.dataset.parent : null, ids});
+    if (list.dataset.parent) unfold(+list.dataset.parent);
+    pushUndo('move', moveBack(d.id, d.slot));
+  } else {
+    const container = d.el.parentElement;
+    const parent_id = container.dataset.childlist ? +container.dataset.childlist : (focusProject && container.id === 'tree' ? focusProject : null);
+    const ids = [...container.querySelectorAll(':scope > .proj')].map(p => +p.dataset.pid);
+    await api('/projects/reorder', 'POST', {parent_id, ids});
+    const back = d.slot; pushUndo('move', () => api('/projects/reorder', 'POST', back));
+  }
+}
+
+// task editor (details) --------------------------------------------
+function flatProjects(nodes = tree, depth = 0, out = []) {for (const n of nodes) {out.push({id: n.id, label: '  '.repeat(depth) + n.name}); flatProjects(n.children, depth + 1, out);} return out;}
+async function ensureTree() {if (!tree.length) tree = await api('/tree');}
+async function editTask(id) {await ensureTree(); const t = await api(`/tasks/${id}`); openTaskModal(t);}
+function openTaskModal(t) {
+  const opts = flatProjects().map(p => `<option value="${p.id}" ${p.id === t.project_id ? 'selected' : ''}>${p.label}</option>`).join('');
+  const el = document.createElement('div'); el.className = 'modal';
+  el.innerHTML = `<div class="card"><h3 style="margin-top:0">Edit task</h3>
+    <form class="form" onsubmit="return false">
+      <label>Title</label><input name="title" value="${esc(t.title)}" required autofocus>
+      <label>Project</label><select name="project_id">${opts}</select>
+      <label>Deadline</label><input name="deadline" type="date" value="${esc((t.deadline || '').slice(0, 10))}">
+      <label>Blocking</label><div class="row"><input name="blocking" type="checkbox" ${t.blocking ? 'checked' : ''} style="width:auto"> <input name="blocking_for" placeholder="who is waiting?" value="${esc(t.blocking_for || '')}"></div>
+      <label>Importance</label><select name="importance"><option value="" ${t.importance ? '' : 'selected'}>none in particular</option>${[1, 2, 3, 4, 5].map(n => `<option value="${n}" ${n === t.importance ? 'selected' : ''}>${n}${n === 5 ? ' (critical)' : n === 1 ? ' (trivial)' : ''}</option>`).join('')}</select>
+      <label>Shape</label><div><input name="chunkable" type="checkbox" ${t.chunkable ? 'checked' : ''} style="width:auto"> <span class="muted">can be split across sittings</span></div>
+      <label>Notes</label><textarea name="description" placeholder="context, links…">${esc(t.description || '')}</textarea>
+      <label>Created</label><div class="muted">${fmtDate(t.created_at)}${t.linear_url ? ` · <a href="${esc(t.linear_url)}" target="_blank">${esc(t.linear_identifier)}</a>` : ''}</div>
+      <div class="full row" style="justify-content:flex-end;margin-top:8px"><button class="btn" type="button" id="cancel">Cancel</button><button class="btn primary" type="submit" id="save">Save</button></div>
+    </form></div>`;
+  document.body.appendChild(el);
+  const close = () => el.remove();
+  el.querySelector('#cancel').onclick = close;
+  el.addEventListener('click', e => {if (e.target === el) close();});
+  el.querySelector('form').onsubmit = async () => {
+    const f = new FormData(el.querySelector('form'));
+    const body = {title: f.get('title'), project_id: +f.get('project_id'), description: f.get('description'),
+      deadline: f.get('deadline') || null, blocking: f.get('blocking') === 'on', blocking_for: f.get('blocking_for'),
+      importance: f.get('importance') ? +f.get('importance') : null, chunkable: f.get('chunkable') === 'on'};
+    try {
+      const r = await api(`/tasks/${t.id}`, 'PATCH', body);
+      const before = Object.fromEntries(Object.keys(body).map(k => [k, k === 'description' || k === 'blocking_for' ? (t[k] || '') : k === 'blocking' || k === 'chunkable' ? !!t[k] : k === 'deadline' ? (t.deadline || null) : t[k]]));
+      pushUndo('edit', () => api(`/tasks/${t.id}`, 'PATCH', before));
+      if (r.linear_error) toast('Saved; Linear: ' + esc(r.linear_error), 6000);
+      close(); render();
+    } catch (e) {toast(esc(e.message));}
+    return false;
+  };
+  setTimeout(() => el.querySelector('[name=title]').focus(), 0);
+}
+
+// ------------------------------------------------------------------ plan timeline
+async function renderPlan() {
+  const p = await api('/plan');
+  const m = $('#main');
+  if (!p.items) {m.innerHTML = `<div class="card">No plan yet. <button class="btn primary" onclick="rebuild(false)">Build today's plan</button></div>`; return;}
+  m.innerHTML = `<div class="card">
+    <div class="row" style="justify-content:space-between"><h3 style="margin:0">Plan for ${esc(p.date)} <span class="muted" style="font-weight:400;font-size:13px">${p.work_start}–${p.work_end} · exercise: ${esc(p.exercise)}</span></h3>
+      <span class="row"><button class="btn small" onclick="rebuild(true)">Re-plan rest of day</button><button class="btn small" onclick="rebuild(false)">Rebuild</button></span></div>
+    <p class="muted">${esc(p.rationale)}</p>
+    <ul class="timeline" style="list-style:none;padding:0;margin:0">${p.items.map(i => `<li class="${i.status}"><span>${i.start}–${i.end}</span><span class="k">${i.kind}</span><span>${mdLine(i.title).html}${i.note ? ` <span class="muted">— ${esc(i.note)}</span>` : ''}</span>
+      <span>${i.kind === 'meeting' ? '' : i.status === 'pending' ? `<button class="btn small ghost" onclick="skipItem(${i.id}).then(renderPlan)">skip</button>` : `<button class="btn small ghost" onclick="api('/feed/reset_item','POST',{item_id:${i.id}}).then(renderPlan)">reset</button>`}</span></li>`).join('')}</ul></div>`;
+}
+
+// ------------------------------------------------------------------ stats
+async function renderStats() {
+  const s = await api('/stats/estimates');
+  $('#main').innerHTML = `<div class="card"><h3 style="margin-top:0">Estimate calibration</h3>
+    <p>Across <b>${s.samples}</b> completed tasks with estimates and tracked time, tasks take <b>${s.overall}×</b> their estimate (median). ${s.samples < 5 ? '<span class="muted">Fewer than 5 samples: the scheduler is still using raw estimates.</span>' : 'The scheduler multiplies estimates by this.'}</p>
+    ${Object.keys(s.by_root_project).length ? `<p class="muted">Per top-level project: ${Object.entries(s.by_root_project).map(([k, v]) => `#${k}: ${v}×`).join(', ')}</p>` : ''}
+    ${s.recent.length ? `<table><tr><th>Task</th><th>Estimate</th><th>Actual</th></tr>${s.recent.map(r => `<tr><td>${mdLine(r.title).html}</td><td>${r.estimate} min</td><td>${r.actual} min</td></tr>`).join('')}</table>` : ''}
+    <h3>Integrations</h3>
+    <table>${[['Claude (quick add, scheduling)', status.llm], ['Toggl', status.toggl], ['Linear', status.linear], ['Calendar feeds', status.calendar], ['Checklist / exercise sheets', status.sheets !== 'none' ? status.sheets : false], ['Sheet write-back', status.sheets_writable]].map(([k, v]) => `<tr><td>${k}</td><td>${v ? '<span class="chip ok">on</span>' : '<span class="chip warn">off</span>'}</td></tr>`).join('')}</table>
+    <p class="muted"><a href="#plan" onclick="go('plan');return false">Inspect today's internal schedule</a> (debugging only; the feed is the normal interface).</p>
+    <p class="muted">Work day ${status.work_start}–${status.work_end}. Edit config.toml and the rules doc, then <button class="btn small" onclick="api('/refresh','POST').then(()=>toast('Reloaded'))">reload config</button>.</p></div>`;
+}
+
+refreshStatus().then(render);
+window.addEventListener('hashchange', () => {const v = location.hash.slice(1); if (v && v !== view) {view = v; render();}});
+setInterval(() => {if (view === 'feed' && !document.querySelector('.modal')) renderFeed().catch(() => {});}, 60000);
+</script>
+</body>
+</html>
