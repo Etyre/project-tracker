@@ -71,7 +71,7 @@ for the terminal). A "Journaling" Toggl timer starts.
 
 **Projects** - one outline, modelled on Workflowy and Roam. Every project header and task is a line; projects
 are the bold lines. Every project heading gets a box, with sub-projects as boxes inside their parent's box;
-nested tasks are simply indented. There are no buttons
+nested tasks are simply indented. A project's own tasks sit below its sub-projects. There are no buttons
 on the lines: you navigate with the arrow keys and type.
 
 - Click a line to select it, click a task's text (or type on a selected line) to edit it, double-click a task to

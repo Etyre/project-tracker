@@ -447,8 +447,8 @@ async function renderProjects() {
         <button class="btn" onclick="openInlineProjectAdd(${focus ? focus.id : 'null'}, 0)">${focus ? '+ Sub-project' : '+ Project'}</button></div></div>
     ${focus ? projectDetailsHTML(focus) : ''}
     <div id="tree">${focus
-      ? `<div class="tasks zoomroot" data-tasklist="${focus.id}" data-parent="">${focus.tasks.map(taskHTML).join('')}</div>
-         <div class="children" data-childlist="${focus.id}">${focus.children.map(c => projectHTML(c, false)).join('')}</div>`
+      ? `<div class="children" data-childlist="${focus.id}">${focus.children.map(c => projectHTML(c, false)).join('')}</div>
+         <div class="tasks zoomroot" data-tasklist="${focus.id}" data-parent="">${focus.tasks.map(taskHTML).join('')}</div>`
       : tree.map(p => projectHTML(p, true)).join('') + (tree.length ? '' : `<div class="hint">Click here, or press Enter, to add your first project.</div>`)}</div>`;
   if (!focus) $('#tree').addEventListener('click', e => {if (e.target.id === 'tree') openInlineProjectAdd(null, lastRootProjectId());});
   wireDnD();
@@ -495,8 +495,8 @@ function projectHTML(p, root) {
       <h3 class="${mdLine(p.name).level ? 'md-h' + mdLine(p.name).level : ''}"><span class="name" onmousedown="this.dataset.was = document.activeElement === this.closest('.phead') ? '1' : ''" onclick="event.stopPropagation(); if (selecting()) return; this.dataset.was ? editProjectName(${p.id}, null, caretFromClick(event, this)) : this.closest('.phead').focus()" title="Click again to edit, double-click the row to open">${mdLine(p.name).html}</span> <span class="muted" style="font-weight:400;font-size:13px">${count}${archived ? ' · archived ' + fmtDay(p.archived_at) : ''}</span></h3>
       ${archived ? `<span class="tools"><button class="btn small ghost" onclick="restoreProject(${p.id})">restore</button></span>` : ''}
     </div>
-    ${collapsed ? '' : `<div class="tasks" data-tasklist="${p.id}" data-parent="">${p.tasks.map(taskHTML).join('')}</div>
-    <div class="children" data-childlist="${p.id}">${p.children.map(c => projectHTML(c, false)).join('')}</div>`}
+    ${collapsed ? '' : `<div class="children" data-childlist="${p.id}">${p.children.map(c => projectHTML(c, false)).join('')}</div>
+    <div class="tasks" data-tasklist="${p.id}" data-parent="">${p.tasks.map(taskHTML).join('')}</div>`}
   </div>`;
 }
 const countTasks = p => p.tasks.reduce((a, t) => a + 1 + countSub(t), 0) + p.children.reduce((a, c) => a + countTasks(c), 0);
@@ -991,7 +991,7 @@ function lineDepth(el) {   // for relative indentation in copied text
 function outlineText(els) {
   const out = [], seen = new Set();
   const emitTask = (t, d) => {if (seen.has('t' + t.id)) return; seen.add('t' + t.id); out.push('  '.repeat(d) + '- ' + t.title); t.children.forEach(c => emitTask(c, d + 1));};
-  const emitProject = (p, d) => {if (seen.has('p' + p.id)) return; seen.add('p' + p.id); out.push('  '.repeat(d) + '- ' + p.name); p.tasks.forEach(t => emitTask(t, d + 1)); p.children.forEach(c => emitProject(c, d + 1));};
+  const emitProject = (p, d) => {if (seen.has('p' + p.id)) return; seen.add('p' + p.id); out.push('  '.repeat(d) + '- ' + p.name); p.children.forEach(c => emitProject(c, d + 1)); p.tasks.forEach(t => emitTask(t, d + 1));};
   const items = els.map(el => ({el, d: lineDepth(el)})); const min = Math.min(...items.map(i => i.d));
   for (const {el, d} of items) {
     if (isHead(el)) {const p = findProject(rowPid(el)); if (p) emitProject(p, d - min);}
