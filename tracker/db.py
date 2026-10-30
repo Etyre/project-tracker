@@ -342,7 +342,7 @@ def create_tasks_outline(project_id: int, parent_id: int | None, after_id: int |
             d -= 1
         parent = parent_id if d == 0 else last[d - 1]
         after = last.get(d) if d == 0 or d in last else None
-        tid = create_task(project_id, str(it["title"]).strip() or "Untitled", after_id=after, parent_id=parent)
+        tid = create_task(project_id, str(it["title"]).strip() or "Untitled", after_id=after, parent_id=parent, **(it.get("fields") or {}))
         for k in [k for k in last if k > d]:
             del last[k]
         last[d] = tid

@@ -234,3 +234,31 @@ def test_outline_paste_nests_by_depth():
     assert db.task(a1a)["parent_id"] == a1
     assert db.task(deep)["parent_id"] == b                       # deeper than anything before it: hangs off B
     assert [t["id"] for t in db.subtasks(a)] == [a1, a2]
+
+
+def test_inline_tags():
+    import datetime as dt
+    from tracker import tags
+    wed = dt.date(2026, 10, 28)                       # a Wednesday
+    title, f = tags.parse_tags("Send draft to Sam #p2 #due:fri #blocking:Sam", today=wed)
+    assert title == "Send draft to Sam"
+    assert f == {"importance": 4, "deadline": "2026-10-30", "blocking": 1, "blocking_for": "Sam"}
+    assert tags.parse_tags("Pay rent #tomorrow", today=wed)[1]["deadline"] == "2026-10-29"
+    assert tags.parse_tags("Taxes #due:nov3", today=wed)[1]["deadline"] == "2026-11-03"
+    assert tags.parse_tags("Taxes #due:3nov", today=wed)[1]["deadline"] == "2026-11-03"
+    assert tags.parse_tags("Renew #due:01-15", today=wed)[1]["deadline"] == "2027-01-15"   # next January
+    assert tags.parse_tags("Renew #due:2026-12-01")[1]["deadline"] == "2026-12-01"
+    assert tags.parse_tags("Deep work #onesitting")[1] == {"chunkable": 0}
+    assert tags.parse_tags("## Weekly #review") == ("## Weekly #review", {})            # heading hashes and unknown tags stay
+    assert tags.parse_tags("see issue #42 #p1") == ("see issue #42", {"importance": 5})
+    assert tags.parse_tags("#p3") == ("#p3", {"importance": 3})                           # a title cannot become empty
+    assert tags.parse_tags("Call #due:someday") == ("Call #due:someday", {})               # unparseable date is left alone
+
+
+def test_tags_apply_on_create_and_patch():
+    pid = db.create_project("Tagged")
+    from tracker import tags
+    title, f = tags.parse_tags("Write intro #p1 #blocking")
+    tid = db.create_task(pid, title, **f)
+    t = db.task(tid)
+    assert (t["title"], t["importance"], t["blocking"]) == ("Write intro", 5, 1)

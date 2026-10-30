@@ -13,7 +13,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
-from . import calendar_feed, config, db, estimates, journal, linear, llm, scheduler, sheets, toggl
+from . import tags, calendar_feed, config, db, estimates, journal, linear, llm, scheduler, sheets, toggl
 
 log = logging.getLogger("web")
 HTML_PATH = config.ROOT / "tracker" / "dashboard.html"
@@ -283,6 +283,8 @@ def create_app() -> FastAPI:
         d["chunkable"] = int(d["chunkable"])
         if d["importance"] is not None:
             d["importance"] = max(1, min(5, d["importance"]))
+        d["title"], tagged = tags.parse_tags(d["title"])       # "#p1 #due:fri #blocking:Sam" typed in the line
+        d.update(tagged)
         try:
             tid = db.create_task(d.pop("project_id"), d.pop("title"), **d)
         except ValueError as e:
@@ -305,6 +307,9 @@ def create_app() -> FastAPI:
             fields["importance"] = max(1, min(5, int(fields["importance"])))
         if fields.get("title") is not None and not fields["title"].strip():
             raise HTTPException(400, "title required")
+        if fields.get("title"):
+            fields["title"], tagged = tags.parse_tags(fields["title"])
+            fields.update(tagged)
         for b in ("blocking", "chunkable"):
             if fields.get(b) is not None:
                 fields[b] = int(fields[b])
@@ -339,7 +344,7 @@ def create_app() -> FastAPI:
 
     @app.post("/api/tasks/bulk")
     def create_tasks_bulk(o: OutlineIn):
-        items = [{"title": i.title, "depth": i.depth} for i in o.items if i.title.strip()]
+        items = [{"depth": i.depth, **dict(zip(("title", "fields"), tags.parse_tags(i.title)))} for i in o.items if i.title.strip()]
         if not items:
             raise HTTPException(400, "nothing to add")
         if o.parent_id and not db.task(o.parent_id):
@@ -397,7 +402,8 @@ def create_app() -> FastAPI:
         created = []
         if not llm.enabled():
             pid = db.ensure_project_path(["Inbox"])
-            tid = db.create_task(pid, text.splitlines()[0][:200], description="\n".join(text.splitlines()[1:]), source="quick_add")
+            first, tagged = tags.parse_tags(text.splitlines()[0][:200])
+            tid = db.create_task(pid, first, description="\n".join(text.splitlines()[1:]), source="quick_add", **tagged)
             return {"created": [{**db.task(tid), "path": ["Inbox"]}], "note": "Claude not configured; filed in Inbox."}
         try:
             res = llm.quick_add(text, scheduler.tree_text(), db.today())
@@ -406,10 +412,11 @@ def create_app() -> FastAPI:
         for t in res["tasks"]:
             path = [s for s in t["project_path"] if s.strip()] or ["Inbox"]
             pid = db.find_project_by_path(path) or db.ensure_project_path(path)
-            tid = db.create_task(pid, t["title"], description=t["description"], deadline=t["deadline"],
-                                 blocking=int(t["blocking"]), blocking_for=t["blocking_for"],
-                                 importance=None if t["importance"] is None else max(1, min(5, int(t["importance"]))),
-                                 estimate_minutes=t["estimate_minutes"], chunkable=int(t["chunkable"]), source="quick_add")
+            title, tagged = tags.parse_tags(t["title"])       # explicit tags in the note win over Claude's reading
+            tid = db.create_task(pid, title, **{"description": t["description"], "deadline": t["deadline"],
+                                 "blocking": int(t["blocking"]), "blocking_for": t["blocking_for"],
+                                 "importance": None if t["importance"] is None else max(1, min(5, int(t["importance"]))),
+                                 "estimate_minutes": t["estimate_minutes"], "chunkable": int(t["chunkable"]), "source": "quick_add", **tagged})
             created.append({**db.task(tid), "path": db.project_path(pid)})
         return {"created": created, "note": res.get("note", "")}
 

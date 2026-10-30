@@ -92,6 +92,10 @@ on the lines: you navigate with the arrow keys and type.
 - Text is Markdown everywhere: **bold**, *italic*, `code`, ~~strike~~ and [links](url) render in titles, names
   and notes, and a line that starts with one to six hashes (`## Big step`) is shown as a heading of that size.
   The raw text shows only while you edit it. Lines wrap while you type, so a long line stays fully visible.
+- Tags typed in a line set its fields and disappear from the title: `#p1` to `#p5` for priority (`#p1`
+  highest), `#today`, `#tomorrow` or `#due:fri` / `#due:nov3` / `#due:2026-11-03` for the deadline,
+  `#blocking` or `#blocking:Sam`, and `#onesitting`. They work in pasted outlines and the quick-add bar too;
+  any other `#tag` stays in the text.
 - Shift+Up / Shift+Down (or Shift+click) select several lines; Cmd+C copies them, with everything under
   them, as an indented bulleted list that pastes back into the app or anywhere else.
 - Cmd+Z undoes the last change on the page, as many steps back as you like.

@@ -88,6 +88,7 @@ textarea.inline{display:block;width:100%;padding:2px 4px;margin:0;border:0;borde
 .phead h3.md-h1{font-size:24px}.phead h3.md-h2{font-size:20px}.phead h3.md-h3{font-size:17px}.phead h3.md-h4{font-size:15px}.phead h3.md-h5{font-size:14px}.phead h3.md-h6{font-size:13px}
 .pdetails h2.md-h1{font-size:28px}.pdetails h2.md-h2{font-size:24px}.pdetails h2.md-h3{font-size:20px}.pdetails h2.md-h4,.pdetails h2.md-h5,.pdetails h2.md-h6{font-size:17px}
 code{font-size:.9em;padding:1px 4px;border-radius:3px;background:var(--hover)}
+.tag{color:var(--muted)}
 .proj.editing>.phead:hover{background:transparent}
 .task .title.lin::after{content:" ↗";color:var(--muted);font-size:12px}
 .task .meta{font-size:12px;color:var(--muted);margin-top:2px}
@@ -190,7 +191,8 @@ const mdInline = s => esc(s)
   .replace(/(^|[^"(>])(https?:\/\/[^\s<]+)/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>')
   .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/__(.+?)__/g, '<b>$1</b>')
   .replace(/(^|[\s(])\*(?!\s)([^*]+?)\*(?=[\s.,;:!?)]|$)/g, '$1<i>$2</i>').replace(/(^|[\s(])_(?!\s)([^_]+?)_(?=[\s.,;:!?)]|$)/g, '$1<i>$2</i>')
-  .replace(/~~(.+?)~~/g, '<s>$1</s>');
+  .replace(/~~(.+?)~~/g, '<s>$1</s>')
+  .replace(/(^|\s)#([A-Za-z][\w:-]*)/g, '$1<span class="tag">#$2</span>');
 const mdHeading = s => {const m = String(s ?? '').match(/^(#{1,6})\s+(.*)$/); return m ? {level: m[1].length, text: m[2]} : {level: 0, text: String(s ?? '')};};
 // one line of the outline (a title or a project name): leading hashes set the heading size
 const mdLine = s => {const h = mdHeading(s); return {level: h.level, html: mdInline(h.text)};};
@@ -206,7 +208,7 @@ const fmtDate = ts => ts ? new Date(ts * 1000).toLocaleString([], {dateStyle: 'm
 const fmtDay = ts => ts ? new Date(ts * 1000).toLocaleDateString([], {dateStyle: 'medium'}) : '';
 const hms = s => {const h = Math.floor(s / 3600), m = Math.floor(s % 60 / 1) && Math.floor((s % 3600) / 60), sec = s % 60; return (h ? h + ':' : '') + String(Math.floor((s % 3600) / 60)).padStart(2, '0') + ':' + String(sec).padStart(2, '0');};
 let toastT; const toast = (m, ms = 3500) => {const t = $('#toast'); t.innerHTML = m; t.style.display = 'block'; clearTimeout(toastT); toastT = setTimeout(() => t.style.display = 'none', ms);};
-const todayISO = () => new Date().toISOString().slice(0, 10);
+const todayISO = () => {const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);};   // local date, not UTC
 function deadlineChip(d) {
   if (!d) return '';
   const days = Math.round((new Date(d.slice(0, 10)) - new Date(todayISO())) / 86400000);
@@ -1063,7 +1065,7 @@ function editTaskTitle(tid, append, caret, text) {
   const save = async () => {
     if (done) return false;
     const v = inp.value.trim(); end();
-    if (v && v !== orig) {const t = findTask(tid); if (t) t.title = v; const r = await api(`/tasks/${tid}`, 'PATCH', {title: v}); pushUndo('rename', () => api(`/tasks/${tid}`, 'PATCH', {title: orig})); if (r.linear_error) toast('Saved; Linear: ' + esc(r.linear_error), 6000); return true;}
+    if (v && v !== orig) {const t = findTask(tid); if (t) t.title = v; const r = await api(`/tasks/${tid}`, 'PATCH', {title: v}); if (t) t.title = r.title; span.innerHTML = mdLine(r.title).html; pushUndo('rename', () => api(`/tasks/${tid}`, 'PATCH', {title: orig})); if (r.linear_error) toast('Saved; Linear: ' + esc(r.linear_error), 6000); if (r.title !== v) setTimeout(renderProjects, 0); return true;}
     return false;
   };
   titleEdit = {tid, row, span, orig, inp, save};
