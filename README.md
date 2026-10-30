@@ -86,7 +86,7 @@ on the lines: you navigate with the arrow keys and type.
 - Up / Down move between lines (and move the editor while typing). Cmd+Up / Cmd+Down collapse and expand,
   Left / Right do the same on a selected line. Cmd+Shift+Up / Down move a line among its siblings.
 - Cmd+Enter completes a task, Shift+Enter opens its notes and, pressed again on the line or inside the box,
-  closes them, Cmd+E opens its dates and priority, Alt+Right /
+  closes them (the box also closes by itself when you move to another line), Cmd+E opens its dates and priority, Alt+Right /
   Alt+Left zoom into and out of a project, Cmd+Shift+Backspace deletes a line (Backspace on an emptied line
   does too). Deleting is refused, with a message, for anything with sub-items, tracked time or a Linear link.
 - Text is Markdown everywhere: **bold**, *italic*, `code`, ~~strike~~ and [links](url) render in titles, names

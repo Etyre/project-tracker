@@ -551,6 +551,14 @@ function unfold(id) {if (collapsedTasks.delete(id)) saveFold();}
 // only one notes box is open at a time: opening one closes the other
 function expandOnly(id) {const open = expanded.has(id); expanded.clear(); if (!open) expanded.add(id); localStorage.setItem('expanded', JSON.stringify([...expanded]));}
 function toggleTask(id) {expandOnly(id); pendingFocus = id; renderProjects();}
+// the box closes as soon as you move to another line (keyboard or mouse)
+function closeNotesBox() {if (!expanded.size) return; expanded.clear(); localStorage.setItem('expanded', '[]'); document.querySelectorAll('#tree .task > .body > .notes').forEach(n => n.remove());}
+document.addEventListener('focusin', e => {
+  if (!expanded.size || !e.target.closest?.('#tree')) return;
+  const row = document.querySelector(`.task[data-tid="${[...expanded][0]}"]`);
+  if (row && row.contains(e.target)) return;
+  closeNotesBox();
+});
 function toggleProject(id) {collapsedProjects.has(id) ? collapsedProjects.delete(id) : collapsedProjects.add(id); localStorage.setItem('collapsed', JSON.stringify([...collapsedProjects])); renderProjects();}
 async function completeTask(id, box) {
   box.disabled = true;
