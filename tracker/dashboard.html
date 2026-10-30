@@ -227,7 +227,10 @@ const saveFold = () => localStorage.setItem('collapsedTasks', JSON.stringify([..
 // undo: every mutation from the projects page pushes its inverse; Cmd/Ctrl+Z (outside a text field that has
 // been typed in) pops and runs it.
 const undoStack = [];
-function pushUndo(label, fn) {undoStack.push({label, fn}); if (undoStack.length > 100) undoStack.shift();}
+function pushUndo(label, fn, mergeWithPrevious) {   // merge: this and the previous step undo together (e.g. a split line)
+  if (mergeWithPrevious && undoStack.length) {const prev = undoStack.pop(); undoStack.push({label: 'split', fn: async () => {await fn(); await prev.fn();}}); return;}
+  undoStack.push({label, fn}); if (undoStack.length > 100) undoStack.shift();
+}
 async function undo() {
   const u = undoStack.pop(); if (!u) {toast('Nothing to undo'); return;}
   await new Promise(r => setTimeout(r, 150));   // let a blurred editor finish its own save first
@@ -408,9 +411,26 @@ function openProject(id) {focusProject = id || null; localStorage.setItem('focus
 function findProject(id, nodes = tree) {for (const n of nodes) {if (n.id === id) return n; const r = findProject(id, n.children); if (r) return r;} return null;}
 function projectChain(id, nodes = tree, trail = []) {for (const n of nodes) {const t = [...trail, n]; if (n.id === id) return t; const r = projectChain(id, n.children, t); if (r) return r;} return null;}
 
+let projectEdit = null;     // the open project-name editor: {pid, inp, save}
+// What is being typed right now, if the typing field still has focus: a re-render re-opens it as it was.
+function captureEditor() {
+  const live = inp => inp && document.activeElement === inp;
+  if (inlineAdd && !inlineAdd.committing) {const inp = inlineAdd.row.querySelector('.inline'); if (live(inp)) return {kind: 'add', a: {project_id: inlineAdd.project_id, parent_id: inlineAdd.parent_id, after_id: inlineAdd.after_id}, text: inp.value, caret: inp.selectionStart};}
+  if (titleEdit && live(titleEdit.inp)) return {kind: 'title', tid: titleEdit.tid, text: titleEdit.inp.value, caret: titleEdit.inp.selectionStart};
+  if (projectAdd && !projectAdd.committing) {const inp = projectAdd.row.querySelector('.inline'); if (live(inp)) return {kind: 'padd', parent_id: projectAdd.parent_id, after_pid: projectAdd.after_pid, text: inp.value, caret: inp.selectionStart};}
+  if (projectEdit && live(projectEdit.inp)) return {kind: 'pname', pid: projectEdit.pid, text: projectEdit.inp.value, caret: projectEdit.inp.selectionStart};
+  return null;
+}
+function restoreEditor(k) {
+  if (k.kind === 'add') openInlineAdd(k.a, k.text, k.caret);
+  else if (k.kind === 'title') editTaskTitle(k.tid, null, k.caret, k.text);
+  else if (k.kind === 'padd') openInlineProjectAdd(k.parent_id, k.after_pid, k.text, k.caret);
+  else if (k.kind === 'pname') editProjectName(k.pid, null, k.caret, k.text);
+}
 async function renderProjects() {
+  const keep = (pendingAdd || pendingEdit || pendingProjectAdd !== undefined || pendingProjectEdit || pendingNotesEdit) ? null : captureEditor();
   tree = await api(`/tree?active=${showFilter.active}&completed=${showFilter.completed}&archived=${showFilter.archived}`);
-  inlineAdd = null; titleEdit = null; projectAdd = null;
+  inlineAdd = null; titleEdit = null; projectAdd = null; projectEdit = null;
   const m = $('#main');
   let focus = focusProject ? findProject(focusProject) : null;
   if (focusProject && !focus) {focusProject = null; localStorage.setItem('focusProject', '');}
@@ -424,7 +444,7 @@ async function renderProjects() {
       <div class="row" style="gap:6px">
         <span class="filterwrap"><button class="btn small ghost ${filtersOpen ? 'on' : ''}" onclick="toggleFilters()">${filtersOpen ? 'Hide filters' : nonDefault ? 'Filters (on)' : 'Filters'}</button>
           ${filtersOpen ? `<div class="filters"><span class="muted">Show:</span>${chk('active', 'Active')}${chk('completed', 'Completed')}${chk('archived', 'Archived')}</div>` : ''}</span>
-        <button class="btn" onclick="openInlineProjectAdd(${focus ? focus.id : 'null'})">${focus ? '+ Sub-project' : '+ Project'}</button></div></div>
+        <button class="btn" onclick="openInlineProjectAdd(${focus ? focus.id : 'null'}, 0)">${focus ? '+ Sub-project' : '+ Project'}</button></div></div>
     ${focus ? projectDetailsHTML(focus) : ''}
     <div id="tree">${focus
       ? `<div class="tasks zoomroot" data-tasklist="${focus.id}" data-parent="">${focus.tasks.map(taskHTML).join('')}</div>
@@ -440,6 +460,7 @@ async function renderProjects() {
   if (pendingProjectEdit) {const id = pendingProjectEdit; pendingProjectEdit = null; editProjectName(id);}
   if (pendingNotesEdit) {const id = pendingNotesEdit; pendingNotesEdit = null; const n = m.querySelector(`.task[data-tid="${id}"] .notes`); if (n) editTaskNotes(id, n);}
   if (pendingProjectNotes) {pendingProjectNotes = false; const n = m.querySelector('.pdetails .notes'); if (n && focus) editNotes(focus.id, n);}
+  if (keep) restoreEditor(keep);
 }
 function projectDetailsHTML(p) {
   const open = countTasks(p), subs = p.children.length;
@@ -541,72 +562,81 @@ async function completeTask(id, box) {
 }
 async function restoreProject(id) {await api(`/projects/${id}/restore`, 'POST'); pushUndo('restore', () => api(`/projects/${id}`, 'DELETE')); toast('Project restored'); renderProjects();}
 async function uncomplete(id) {await api(`/tasks/${id}/uncomplete`, 'POST'); pushUndo('restore', () => api(`/tasks/${id}/complete`, 'POST')); toast('Restored'); render();}
-function editProjectName(pid, append, caret) {
-  closeInlineAdd();
+function editProjectName(pid, append, caret, text) {
+  flushInlineAdd(); flushProjectAdd(); if (projectEdit) projectEdit.save(); if (titleEdit) titleEdit.save();
   const head = document.querySelector(`.proj[data-pid="${pid}"] > .phead`);
   const el = head?.querySelector('h3') || (focusProject === pid ? document.querySelector('.pdetails h2') : null);
   if (!el || el.querySelector('.inline')) return;
   const p = findProject(pid); const orig = p?.name ?? el.textContent.trim();
-  const inp = inlineField(orig + (append || '')); inp.defaultValue = orig;
+  const inp = inlineField(text != null ? text : orig + (append || '')); inp.defaultValue = orig;
   el.replaceChildren(inp); inp.fit(); el.onclick = e => e.stopPropagation();
   let done = false;
   const save = async (saveIt = true) => {   // closes the editor; the caller re-renders
-    if (done) return false; done = true; const v = inp.value.trim(); el.textContent = (saveIt && v) || orig;
-    if (saveIt && v && v !== orig) {await api(`/projects/${pid}`, 'PATCH', {name: v}); pushUndo('rename', () => api(`/projects/${pid}`, 'PATCH', {name: orig})); return true;}
+    if (done) return false; done = true; if (projectEdit?.inp === inp) projectEdit = null;
+    const v = inp.value.trim(); el.textContent = (saveIt && v) || orig;
+    if (saveIt && v && v !== orig) {await api(`/projects/${pid}`, 'PATCH', {name: v}); if (p) p.name = v; pushUndo('rename', () => api(`/projects/${pid}`, 'PATCH', {name: orig})); return true;}
     return false;
   };
+  projectEdit = {pid, inp, save};
   inp.onkeydown = async e => {
     if (e.key === 'Escape') {e.preventDefault(); await save(false); if (head) pendingFocusProject = pid; renderProjects();}
-    else if (plainEnter(e) && splitAt(inp)?.left) {const sp = splitAt(inp); e.preventDefault(); inp.value = sp.left; await save(); pendingAdd = {project_id: pid, parent_id: null, after_id: 0, text: sp.right, caret: 'start'}; renderProjects();}
+    else if (plainEnter(e) && splitAt(inp)?.left) {const sp = splitAt(inp); e.preventDefault(); inp.value = sp.left; await save(); pendingAdd = {project_id: pid, parent_id: null, after_id: 0, text: sp.right, caret: 'start', split: true}; renderProjects();}
     else if (!head) {if (e.key === 'Enter') {e.preventDefault(); await save(); pendingAdd = {project_id: pid, parent_id: null, after_id: 0}; renderProjects();}}   // zoomed-in heading
     else if (e.key === 'Backspace' && !inp.value) {   // an emptied, empty project goes away
       e.preventDefault(); const prev = neighbourRow(head, -1);
-      try {await deleteLine(lineInfo(head)); done = true; editRowLater(prev); renderProjects();}
+      try {await deleteLine(lineInfo(head)); done = true; projectEdit = null; editRowLater(prev); renderProjects();}
       catch (err) {toast(esc(err.message), 5000);}
     }
     else await outlineKey(e, head, save);
   };
-  inp.onblur = () => setTimeout(async () => {if (!done) {await save(); renderProjects();}}, 120);
+  // clicking away keeps what was typed: save at once (a re-render then re-opens whatever got the click)
+  inp.onblur = () => setTimeout(async () => {if (!done && document.activeElement !== inp) {const changed = await save(); if (changed) renderProjects();}}, 0);
   wirePaste(inp, async rest => {await save(); const ids = await addOutline({project_id: pid, parent_id: null, after_id: 0}, rest); pendingEdit = ids[ids.length - 1]; renderProjects();});
-  inp.focus(); if (append) inp.setSelectionRange(inp.value.length, inp.value.length); else if (caret != null) {const c = Math.min(caret, inp.value.length); inp.setSelectionRange(c, c);} else inp.select();
+  inp.focus();
+  if (append) inp.setSelectionRange(inp.value.length, inp.value.length);
+  else if (caret != null) {const c = Math.min(caret, inp.value.length); inp.setSelectionRange(c, c);}
+  else inp.select();
 }
 function lastRootProjectId() {const ps = $('#tree').querySelectorAll(':scope > .proj:not(.editing)'); return ps.length ? +ps[ps.length - 1].dataset.pid : null;}
 // A new project line. `after_pid` puts it right below that sibling project (Shift+Enter on a project row);
 // otherwise it goes last among `parent_id`'s sub-projects (or the top level).
-function openInlineProjectAdd(parent_id, after_pid, text) {
-  closeInlineAdd(); if (projectAdd) {projectAdd.row.remove(); projectAdd = null;}
+function openInlineProjectAdd(parent_id, after_pid, text, caret) {
+  flushInlineAdd(); flushProjectAdd(); if (titleEdit) titleEdit.save(); if (projectEdit) projectEdit.save();
   if (parent_id && collapsedProjects.has(parent_id)) {collapsedProjects.delete(parent_id); localStorage.setItem('collapsed', JSON.stringify([...collapsedProjects])); pendingProjectAdd = parent_id; renderProjects(); return;}
   const container = parent_id ? document.querySelector(`[data-childlist="${parent_id}"]`) : $('#tree');
   if (!container) return;
   const row = document.createElement('div'); row.className = `proj ${parent_id ? '' : 'root'} editing`;
   row.innerHTML = `<div class="phead"><span class="handle" style="visibility:hidden">≡</span><span class="caret"></span><h3 style="flex:1"><textarea class="inline" placeholder="${parent_id ? 'New sub-project' : 'New project'}"></textarea></h3></div>`;
   const afterEl = after_pid ? container.querySelector(`:scope > .proj[data-pid="${after_pid}"]`) : null;
-  if (afterEl) afterEl.after(row); else container.appendChild(row);
+  if (afterEl) afterEl.after(row); else if (after_pid === 0) container.prepend(row); else container.appendChild(row);   // 0 = first
   container.querySelector(':scope > .hint')?.remove();
-  projectAdd = {parent_id, row};
   const inp = attachFit(row.querySelector('.inline')); if (text) {inp.value = text; inp.fit();}
-  const close = () => {if (projectAdd?.row === row) {row.remove(); projectAdd = null; if (after_pid) {pendingFocusProject = after_pid; renderProjects();}}};
+  let done = false;
+  const close = () => {done = true; if (projectAdd?.row === row) projectAdd = null; row.remove(); if (after_pid) {pendingFocusProject = after_pid; renderProjects();}};
   const stepOut = () => {   // one level up, right after the parent project
     if (!parent_id) return false;
-    const v = inp.value, par = findProject(parent_id); row.remove(); projectAdd = null;
+    const v = inp.value, par = findProject(parent_id); done = true; row.remove(); if (projectAdd?.row === row) projectAdd = null;
     openInlineProjectAdd(par?.parent_id || (focusProject && focusProject !== parent_id ? focusProject : null), parent_id, v); return !!projectAdd;
   };
-  const commit = async (thenEdit, fromEnter) => {
+  const commit = async (thenEdit, fromEnter, fromBlur) => {
+    if (done) return;
     const name = inp.value.trim(); if (!name) {if (!(fromEnter && stepOut())) {close(); editRow(thenEdit);} return;}
-    inp.disabled = true;
+    done = true; inp.disabled = true; if (projectAdd?.row === row) projectAdd.committing = true;
     try {
       const r = await api('/projects', 'POST', {name, parent_id});
-      if (afterEl) {   // the server appends; put it where the line was
-        const ids = [...container.querySelectorAll(':scope > .proj:not(.editing)')].map(p => +p.dataset.pid).flatMap(id => id === after_pid ? [id, r.id] : [id]);
+      if (afterEl || after_pid === 0) {   // the server appends; put it where the line was
+        const others = [...container.querySelectorAll(':scope > .proj:not(.editing)')].map(p => +p.dataset.pid).filter(id => id !== r.id);
+        const ids = after_pid === 0 ? [r.id, ...others] : others.flatMap(id => id === after_pid ? [id, r.id] : [id]);
         await api('/projects/reorder', 'POST', {parent_id: focusProject && container.id === 'tree' ? focusProject : parent_id, ids});
       }
       pushUndo(`new project "${name}"`, () => api(`/projects/${r.id}/delete_empty`, 'POST'));
-      projectAdd = null;
-      if (thenEdit) editRowLater(thenEdit); else pendingAdd = {project_id: r.id, parent_id: null, after_id: 0};   // straight on to its first task
+      if (projectAdd?.row === row) projectAdd = null;
+      if (thenEdit) editRowLater(thenEdit); else if (!fromBlur) pendingAdd = {project_id: r.id, parent_id: null, after_id: 0};   // straight on to its first task
       renderProjects();
     }
-    catch (err) {toast(esc(err.message)); inp.disabled = false; inp.focus();}
+    catch (err) {toast(esc(err.message)); done = false; inp.disabled = false; if (projectAdd) projectAdd.committing = false; inp.focus();}
   };
+  projectAdd = {parent_id, after_pid, row, commit};
   inp.onkeydown = e => {
     if (e.key === 'Enter') {e.preventDefault(); commit(null, true);}
     else if (e.key === 'Escape') {e.preventDefault(); close();}
@@ -614,17 +644,20 @@ function openInlineProjectAdd(parent_id, after_pid, text) {
     else if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && caretAtEdge(inp, e.key === 'ArrowUp' ? -1 : 1)) {const n = neighbourRow(row.querySelector('.phead'), e.key === 'ArrowUp' ? -1 : 1); if (n) {e.preventDefault(); commit(n);}}
     else if (e.key === 'Tab' && !e.shiftKey) {   // becomes a task line at the end of the project above it
       let prev = row.previousElementSibling; while (prev && !prev.classList.contains('proj')) prev = prev.previousElementSibling;
-      if (!prev && parent_id) prev = null;
       e.preventDefault(); const v = inp.value;
       if (prev) {const pid = +prev.dataset.pid; const rows = prev.querySelectorAll(`:scope > .tasks > .task:not([data-done])`); const last = rows.length ? +rows[rows.length - 1].dataset.tid : null;
-        row.remove(); projectAdd = null; if (collapsedProjects.has(pid)) {collapsedProjects.delete(pid); saveCollapsed(); pendingAdd = {project_id: pid, parent_id: null, after_id: last}; renderProjects(); return;} openInlineAdd({project_id: pid, parent_id: null, after_id: last}, v);}
-      else if (parent_id) {const rows = document.querySelectorAll(`[data-tasklist="${parent_id}"][data-parent=""] > .task:not([data-done])`); const last = rows.length ? +rows[rows.length - 1].dataset.tid : null; row.remove(); projectAdd = null; openInlineAdd({project_id: parent_id, parent_id: null, after_id: last}, v);}
+        done = true; row.remove(); projectAdd = null; if (collapsedProjects.has(pid)) {collapsedProjects.delete(pid); saveCollapsed(); pendingAdd = {project_id: pid, parent_id: null, after_id: last, text: v}; renderProjects(); return;} openInlineAdd({project_id: pid, parent_id: null, after_id: last}, v);}
+      else if (parent_id) {const rows = document.querySelectorAll(`[data-tasklist="${parent_id}"][data-parent=""] > .task:not([data-done])`); const last = rows.length ? +rows[rows.length - 1].dataset.tid : null; done = true; row.remove(); projectAdd = null; openInlineAdd({project_id: parent_id, parent_id: null, after_id: last}, v);}
     }
     else if (e.key === 'Tab' && e.shiftKey) {e.preventDefault(); stepOut();}
   };
-  inp.onblur = () => setTimeout(() => {if (projectAdd?.row === row && !inp.disabled && document.activeElement !== inp) commit();}, 120);
-  inp.focus();
+  // clicking away keeps what was typed
+  inp.onblur = () => setTimeout(() => {if (!done && !inp.disabled && document.activeElement !== inp) commit(null, false, true);}, 0);
+  inp.focus(); if (text) {const c = typeof caret === 'number' ? Math.min(caret, inp.value.length) : inp.value.length; inp.setSelectionRange(c, c);}
 }
+// Save (or drop, if empty) whatever new line is open before another editor takes over.
+function flushInlineAdd() {if (!inlineAdd || inlineAdd.committing) return; const inp = inlineAdd.row.querySelector('.inline'); if (inp.value.trim()) inlineAdd.commit(false, false, null, null, true); else closeInlineAdd();}
+function flushProjectAdd() {if (!projectAdd || projectAdd.committing) return; const inp = projectAdd.row.querySelector('.inline'); if (inp.value.trim()) projectAdd.commit(null, false, true); else {projectAdd.row.remove(); projectAdd = null;}}
 async function archiveProject(id) {const p = findProject(id); const n = p ? countTasks(p) : 0; if (!await confirmBox(`Archive this project${n ? ` and its ${n} open task${n === 1 ? '' : 's'}` : ''}${p?.children.length ? ' and its sub-projects' : ''}? You can restore it from the Archived filter.`)) return; try {await api(`/projects/${id}`, 'DELETE'); pushUndo('archive', () => api(`/projects/${id}/restore`, 'POST')); if (focusProject === id) openProject(findProject(id)?.parent_id || null); else renderProjects();} catch (e) {toast(esc(e.message));}}
 async function taskToProject(id) {
   const row = document.querySelector(`.task[data-tid="${id}"]`); const slot = row ? slotOf(row) : null;   // so undo puts it back where it was
@@ -652,45 +685,49 @@ function placeInlineRow(a, row) {
   return true;
 }
 function openInlineAdd(a, text, caret) {
-  closeInlineAdd(); if (projectAdd) {projectAdd.row.remove(); projectAdd = null;}
+  flushInlineAdd(); flushProjectAdd(); if (titleEdit) titleEdit.save(); if (projectEdit) projectEdit.save();
   const row = document.createElement('div'); row.className = 'task editing';
   row.innerHTML = `<span class="handle" style="visibility:hidden">≡</span><span class="caret"></span><input type="checkbox" disabled><div class="body"><textarea class="inline" placeholder="New task"></textarea></div>`;
   if (!placeInlineRow(a, row)) return;
-  inlineAdd = {...a, row};
   const inp = attachFit(row.querySelector('.inline')); if (text) {inp.value = text; inp.fit();}
-  const commit = async (asProject, fromEnter, thenEdit, rest) => {
-    const split = fromEnter ? splitAt(inp) : null;
+  let done = false;
+  const commit = async (asProject, fromEnter, thenEdit, rest, fromBlur) => {
+    if (done) return;
+    let split = fromEnter ? splitAt(inp) : null; if (split && !split.left) split = null;   // Enter at the start of a new line: the whole text is the line
     const title = split ? split.left : inp.value.trim();
     if (!title) {   // Enter on an empty nested line steps it out one level (Roam / Workflowy); otherwise the line goes away
-      if (split) return;
-      if (!(fromEnter && outdentInline())) {closeInlineAdd(); editRow(thenEdit);}
+      if (!(fromEnter && outdentInline())) {done = true; closeInlineAdd(); editRow(thenEdit);}
       return;
     }
-    inp.disabled = true;
+    const where = {project_id: inlineAdd.project_id, parent_id: inlineAdd.parent_id, after_id: inlineAdd.after_id, split: !!inlineAdd.split};
+    done = true; inp.disabled = true; inlineAdd.committing = true;
     try {
-      const t = await api('/tasks', 'POST', {project_id: inlineAdd.project_id, parent_id: inlineAdd.parent_id, after_id: inlineAdd.after_id, title});
+      const t = await api('/tasks', 'POST', {...where, title});
       if (t.parent_id) unfold(t.parent_id);
-      if (rest) {const ids = await addOutline({project_id: t.project_id, parent_id: t.parent_id, after_id: t.id}, rest, [t.id]); pendingEdit = ids[ids.length - 1]; inlineAdd = null; renderProjects(); return;}
-      pushUndo(`new task "${title}"`, () => api(`/tasks/${t.id}`, 'DELETE'));
-      if (asProject === true) {inlineAdd = null; await taskToProject(t.id); return;}
-      if (thenEdit) editRowLater(thenEdit); else pendingAdd = {project_id: t.project_id, parent_id: t.parent_id, after_id: t.id, text: split?.right, caret: 'start'};
-      inlineAdd = null; renderProjects();
-    } catch (err) {toast(esc(err.message)); inp.disabled = false; inp.focus();}
+      if (inlineAdd?.row === row) inlineAdd = null;
+      if (rest) {const ids = await addOutline({project_id: t.project_id, parent_id: t.parent_id, after_id: t.id}, rest, [t.id]); pendingEdit = ids[ids.length - 1]; renderProjects(); return;}
+      pushUndo(`new task "${title}"`, () => api(`/tasks/${t.id}`, 'DELETE'), !!where.split);
+      if (asProject === true) {await taskToProject(t.id); return;}
+      if (thenEdit) editRowLater(thenEdit); else if (!fromBlur) pendingAdd = {project_id: t.project_id, parent_id: t.parent_id, after_id: t.id, text: split?.right, caret: 'start', split: !!split};
+      renderProjects();
+    } catch (err) {toast(esc(err.message)); done = false; inp.disabled = false; if (inlineAdd) inlineAdd.committing = false; inp.focus();}
   };
+  inlineAdd = {...a, row, commit};
   wirePaste(inp, rest => commit(false, false, null, rest));
   inp.onkeydown = e => {
-    if (e.key === 'Escape') {e.preventDefault(); closeInlineAdd();}
+    if (e.key === 'Escape') {e.preventDefault(); done = true; closeInlineAdd();}
     else if (e.key === 'Backspace' && !remainingAfterBackspace(inp)) {   // deleting the last character removes the line; focus goes to the task above
       e.preventDefault(); const prev = prevTaskRow(row) || row.closest('.tasks')?.previousElementSibling?.closest?.('.task');
-      closeInlineAdd(); if (prev && prev.classList.contains('task')) prev.focus();
+      done = true; closeInlineAdd(); if (prev && prev.classList.contains('task')) prev.focus();
     }
     else if (e.key === 'Tab') {e.preventDefault(); e.shiftKey ? outdentInline() : indentInline();}
     else if (e.key === 'Enter') {e.preventDefault(); commit(false, true);}
     else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'b') {e.preventDefault(); commit(true);}
     else if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && caretAtEdge(inp, e.key === 'ArrowUp' ? -1 : 1)) {const n = neighbourRow(row, e.key === 'ArrowUp' ? -1 : 1); if (n) {e.preventDefault(); commit(false, false, n);}}
   };
-  inp.onblur = () => setTimeout(() => {if (inlineAdd && inlineAdd.row === row && !inp.disabled && document.activeElement !== inp) commit();}, 120);
-  inp.focus(); if (text) {const p = caret === 'start' ? 0 : inp.value.length; inp.setSelectionRange(p, p);}
+  // clicking away keeps what was typed: the line is saved at once (and no next line opens)
+  inp.onblur = () => setTimeout(() => {if (!done && !inp.disabled && document.activeElement !== inp && inlineAdd?.row === row) commit(false, false, null, null, true);}, 0);
+  inp.focus(); if (text) {const p = caret === 'start' ? 0 : typeof caret === 'number' ? Math.min(caret, inp.value.length) : inp.value.length; inp.setSelectionRange(p, p);}
 }
 function remainingAfterBackspace(inp) {
   const v = inp.value, a = inp.selectionStart ?? v.length, b = inp.selectionEnd ?? v.length;
@@ -884,9 +921,9 @@ async function toggleComplete(L) {
 function newLineAfter(L, text) {   // Enter: the first child when the line shows its children, otherwise a sibling right below
   if (L.kind === 'task') {
     const kids = subListOf(L.row); const open = kids && kids.children.length && !kids.classList.contains('collapsed');
-    openInlineAdd(open ? {project_id: L.project_id, parent_id: L.id, after_id: 0} : {project_id: L.project_id, parent_id: L.parent_id, after_id: L.id}, text, 'start');
+    openInlineAdd(open ? {project_id: L.project_id, parent_id: L.id, after_id: 0, split: !!text} : {project_id: L.project_id, parent_id: L.parent_id, after_id: L.id, split: !!text}, text, 'start');
   } else {   // a project line: its first task (unfolding it if needed)
-    const a = {project_id: L.id, parent_id: null, after_id: 0, text, caret: 'start'};
+    const a = {project_id: L.id, parent_id: null, after_id: 0, text, caret: 'start', split: !!text};
     if (collapsedProjects.has(L.id)) {collapsedProjects.delete(L.id); saveCollapsed(); pendingAdd = a; renderProjects();} else openInlineAdd(a, text, 'start');
   }
 }
@@ -1006,20 +1043,22 @@ document.addEventListener('keydown', e => {
 // click-to-edit titles --------------------------------------------------
 // Backspace on an already-empty title deletes the task (if nothing is attached to it); Escape reverts; everything
 // else goes through outlineKey above.
-function editTaskTitle(tid, append, caret) {
-  closeInlineAdd();
-  if (titleEdit) {const te = titleEdit; titleEdit = null; te.span.textContent = te.inp.value.trim() || te.orig;}
+function editTaskTitle(tid, append, caret, text) {
+  flushInlineAdd(); flushProjectAdd(); if (projectEdit) projectEdit.save();
+  if (titleEdit) titleEdit.save();   // whatever was being typed elsewhere is kept
   const row = document.querySelector(`.task[data-tid="${tid}"]`); if (!row) return;
   const span = row.querySelector('.title'); const orig = findTask(tid)?.title ?? span.textContent;
-  const inp = inlineField(orig + (append || '')); inp.defaultValue = orig;
+  const inp = inlineField(text != null ? text : orig + (append || '')); inp.defaultValue = orig;
   span.replaceChildren(inp); inp.fit();
-  titleEdit = {tid, row, span, orig, inp};
-  const end = () => {if (titleEdit?.inp === inp) {titleEdit = null; span.textContent = inp.value.trim() || orig;}};
+  let done = false;
+  const end = () => {done = true; if (titleEdit?.inp === inp) titleEdit = null; span.textContent = inp.value.trim() || orig;};
   const save = async () => {
+    if (done) return false;
     const v = inp.value.trim(); end();
-    if (v && v !== orig) {const r = await api(`/tasks/${tid}`, 'PATCH', {title: v}); pushUndo('rename', () => api(`/tasks/${tid}`, 'PATCH', {title: orig})); if (r.linear_error) toast('Saved; Linear: ' + esc(r.linear_error), 6000); return true;}
+    if (v && v !== orig) {const t = findTask(tid); if (t) t.title = v; const r = await api(`/tasks/${tid}`, 'PATCH', {title: v}); pushUndo('rename', () => api(`/tasks/${tid}`, 'PATCH', {title: orig})); if (r.linear_error) toast('Saved; Linear: ' + esc(r.linear_error), 6000); return true;}
     return false;
   };
+  titleEdit = {tid, row, span, orig, inp, save};
   inp.onkeydown = async e => {
     if (e.key === 'Escape') {e.preventDefault(); inp.value = orig; end(); row.focus();}
     else if (e.key === 'Backspace' && !inp.value) {
@@ -1035,7 +1074,8 @@ function editTaskTitle(tid, append, caret) {
     else await outlineKey(e, row, save);
   };
   wirePaste(inp, async rest => {const L = lineInfo(row); await save(); const ids = await addOutline({project_id: L.project_id, parent_id: L.parent_id, after_id: tid}, rest); pendingEdit = ids[ids.length - 1]; renderProjects();});
-  inp.onblur = () => setTimeout(async () => {if (titleEdit?.inp === inp) {const changed = await save(); if (changed) renderProjects();}}, 120);
+  // clicking away keeps what was typed: save at once (a re-render then re-opens whatever got the click)
+  inp.onblur = () => setTimeout(async () => {if (!done && document.activeElement !== inp) {const changed = await save(); if (changed) renderProjects();}}, 0);
   inp.focus(); const c = append == null && caret != null ? Math.min(caret, inp.value.length) : inp.value.length; inp.setSelectionRange(c, c);
 }
 
