@@ -101,6 +101,8 @@ on the lines: you navigate with the arrow keys and type.
   them, as an indented bulleted list that pastes back into the app or anywhere else. With several lines
   selected, typing `#` opens a small field whose tags (`#p2 #due:fri`) apply to every selected task at once,
   and Cmd+E opens a dates-and-priority dialog for all of them; project lines in the selection are left alone.
+  "Edit multiple" at the top switches to a selection mode where clicking any lines (not only a run) adds and
+  removes them; the Tags… and Dates & priority… buttons beside the count apply to them, Done or Escape leaves.
 - Cmd+Z undoes the last change on the page, as many steps back as you like.
 - Paste a bulleted or indented list into any line and it lands in the outline with its nesting: the first
   line goes into the text at the cursor, the rest become lines below it.
