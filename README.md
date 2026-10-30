@@ -88,16 +88,19 @@ on the lines: you navigate with the arrow keys and type.
 - Cmd+Enter completes a task, Shift+Enter opens its notes and, pressed again on the line or inside the box,
   closes them (the box also closes by itself when you move to another line), Cmd+E opens its dates and priority, Alt+Right /
   Alt+Left zoom into and out of a project, Cmd+Shift+Backspace deletes a line (Backspace on an emptied line
-  does too). Deleting is refused, with a message, for anything with sub-items, tracked time or a Linear link.
+  does too). Backspace at the start of a line joins it onto the line above, which undoes an accidental split.
+  Deleting is refused, with a message, for anything with sub-items, tracked time or a Linear link.
 - Text is Markdown everywhere: **bold**, *italic*, `code`, ~~strike~~ and [links](url) render in titles, names
   and notes, and a line that starts with one to six hashes (`## Big step`) is shown as a heading of that size.
   The raw text shows only while you edit it. Lines wrap while you type, so a long line stays fully visible.
 - Tags typed in a line set its fields and disappear from the title: `#p1` to `#p5` for priority (`#p1`
   highest), `#today`, `#tomorrow` or `#due:fri` / `#due:nov3` / `#due:2026-11-03` for the deadline,
-  `#blocking` or `#blocking:Sam`, and `#onesitting`. They work in pasted outlines and the quick-add bar too;
-  any other `#tag` stays in the text.
+  `#blocking` or `#blocking:Sam`, and `#onesitting`. `#nodue`, `#p0` and `#notblocking` clear those again. They
+  work in pasted outlines and the quick-add bar too; any other `#tag` stays in the text.
 - Shift+Up / Shift+Down (or Shift+click) select several lines; Cmd+C copies them, with everything under
-  them, as an indented bulleted list that pastes back into the app or anywhere else.
+  them, as an indented bulleted list that pastes back into the app or anywhere else. With several lines
+  selected, typing `#` opens a small field whose tags (`#p2 #due:fri`) apply to every selected task at once,
+  and Cmd+E opens a dates-and-priority dialog for all of them; project lines in the selection are left alone.
 - Cmd+Z undoes the last change on the page, as many steps back as you like.
 - Paste a bulleted or indented list into any line and it lands in the outline with its nesting: the first
   line goes into the text at the cursor, the rest become lines below it.

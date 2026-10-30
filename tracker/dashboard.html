@@ -83,10 +83,10 @@ textarea.inline{display:block;width:100%;padding:2px 4px;margin:0;border:0;borde
 .task .body{flex:1;min-width:0}
 .task .body{cursor:default}
 .task .title{cursor:text}
-.md-h1{font-size:24px;font-weight:700;line-height:1.25}.md-h2{font-size:20px;font-weight:700;line-height:1.3}.md-h3{font-size:17px;font-weight:650}
+.md-h1{font-size:29px;font-weight:700;line-height:1.25}.md-h2{font-size:20px;font-weight:700;line-height:1.3}.md-h3{font-size:17px;font-weight:650}
 .md-h4{font-size:15px;font-weight:650}.md-h5{font-size:14px;font-weight:650}.md-h6{font-size:13px;font-weight:650;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
-.phead h3.md-h1{font-size:24px}.phead h3.md-h2{font-size:20px}.phead h3.md-h3{font-size:17px}.phead h3.md-h4{font-size:15px}.phead h3.md-h5{font-size:14px}.phead h3.md-h6{font-size:13px}
-.pdetails h2.md-h1{font-size:28px}.pdetails h2.md-h2{font-size:24px}.pdetails h2.md-h3{font-size:20px}.pdetails h2.md-h4,.pdetails h2.md-h5,.pdetails h2.md-h6{font-size:17px}
+.phead h3.md-h1{font-size:29px}.phead h3.md-h2{font-size:20px}.phead h3.md-h3{font-size:17px}.phead h3.md-h4{font-size:15px}.phead h3.md-h5{font-size:14px}.phead h3.md-h6{font-size:13px}
+.pdetails h2.md-h1{font-size:34px}.pdetails h2.md-h2{font-size:24px}.pdetails h2.md-h3{font-size:20px}.pdetails h2.md-h4,.pdetails h2.md-h5,.pdetails h2.md-h6{font-size:17px}
 code{font-size:.9em;padding:1px 4px;border-radius:3px;background:var(--hover)}
 .tag{color:var(--muted)}
 .proj.editing>.phead:hover{background:transparent}
@@ -100,6 +100,8 @@ code{font-size:.9em;padding:1px 4px;border-radius:3px;background:var(--hover)}
 .filters{display:flex;gap:14px;align-items:center;font-size:14px}
 .filterwrap{position:relative}
 .filterwrap .filters{position:absolute;right:0;top:calc(100% - 1px);margin:0;padding:10px 14px;background:var(--card);border:1px solid var(--line);border-radius:10px;border-top-right-radius:0;box-shadow:0 6px 18px rgba(0,0,0,.08);z-index:5;white-space:nowrap}
+.bulkbar{position:fixed;z-index:15;display:flex;gap:8px;align-items:center;padding:6px 10px;background:var(--card);border:1px solid var(--line);border-radius:6px;box-shadow:0 6px 18px rgba(0,0,0,.12);font-size:13px}
+.bulkbar input{width:320px;font:inherit;padding:3px 6px;border:1px solid var(--line);border-radius:4px;background:var(--box);color:var(--ink)}
 .btn.ghost.on{background:var(--card);color:var(--ink);border-color:var(--line);border-bottom-color:var(--card);border-bottom-left-radius:0;border-bottom-right-radius:0;position:relative;z-index:6}
 .filters label{display:flex;gap:5px;align-items:center;cursor:pointer}
 .dropzone{height:4px}
@@ -456,10 +458,10 @@ async function renderProjects() {
   wireDnD();
   if (pendingAdd) {const a = pendingAdd; pendingAdd = null; openInlineAdd(a, a.text, a.caret);}
   if (pendingFocus) {const r = m.querySelector(`.task[data-tid="${pendingFocus}"]`); pendingFocus = null; if (r) r.focus();}
-  if (pendingEdit) {const id = pendingEdit; pendingEdit = null; editTaskTitle(id);}
+  if (pendingEdit) {const pe = pendingEdit; pendingEdit = null; typeof pe === 'object' ? editTaskTitle(pe.id, null, pe.caret) : editTaskTitle(pe);}
   if (pendingProjectAdd !== undefined) {const pa = pendingProjectAdd; pendingProjectAdd = undefined; openInlineProjectAdd(pa);}
   if (pendingFocusProject) {const h = m.querySelector(`.proj[data-pid="${pendingFocusProject}"] > .phead`); pendingFocusProject = null; if (h) h.focus();}
-  if (pendingProjectEdit) {const id = pendingProjectEdit; pendingProjectEdit = null; editProjectName(id);}
+  if (pendingProjectEdit) {const pe = pendingProjectEdit; pendingProjectEdit = null; typeof pe === 'object' ? editProjectName(pe.id, null, pe.caret) : editProjectName(pe);}
   if (pendingNotesEdit) {const id = pendingNotesEdit; pendingNotesEdit = null; const n = m.querySelector(`.task[data-tid="${id}"] .notes`); if (n) editTaskNotes(id, n);}
   if (pendingProjectNotes) {pendingProjectNotes = false; const n = m.querySelector('.pdetails .notes'); if (n && focus) editNotes(focus.id, n);}
   if (keep) restoreEditor(keep);
@@ -730,6 +732,10 @@ function openInlineAdd(a, text, caret) {
       e.preventDefault(); const prev = prevTaskRow(row) || row.closest('.tasks')?.previousElementSibling?.closest?.('.task');
       done = true; closeInlineAdd(); if (prev && prev.classList.contains('task')) prev.focus();
     }
+    else if (e.key === 'Backspace' && atStart(inp)) {
+      e.preventDefault(); const text = inp.value.trim(), fromSplit = !!inlineAdd.split; row.dataset.project = inlineAdd.project_id;
+      mergeIntoPrev(row, text, async () => {done = true; closeInlineAdd(); return false;}, fromSplit).catch(err => toast(esc(err.message), 5000));
+    }
     else if (e.key === 'Tab') {e.preventDefault(); e.shiftKey ? outdentInline() : indentInline();}
     else if (e.key === 'Enter') {e.preventDefault(); commit(false, true);}
     else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'b') {e.preventDefault(); commit(true);}
@@ -774,7 +780,8 @@ function outdentInline() {
 //   Up / Down previous / next line           Cmd+Up / Cmd+Down collapse / expand   Cmd+Shift+Up / Down move the line
 //   Cmd+Enter complete (tasks)               Shift+Enter notes                     Alt+Right / Alt+Left zoom in / out
 //   Cmd+B bold = project (and back)          Cmd+E dates & priority                Cmd+Shift+Backspace delete the line
-//   Cmd+Z undo
+//   Cmd+Z undo                               Backspace at the start of a line joins it onto the line above
+//   With several lines selected (Shift+Up/Down, Shift+click): # applies tags to all of them, Cmd+E edits all of them
 // where a row sits now, so a move can be undone (after_id 0 = first among its siblings)
 const slotOf = row => ({project_id: +row.dataset.project, parent_id: row.dataset.parent ? +row.dataset.parent : null, after_id: prevTaskRow(row) ? +prevTaskRow(row).dataset.tid : 0});
 const moveBack = (tid, slot) => () => api(`/tasks/${tid}`, 'PATCH', slot);
@@ -913,6 +920,24 @@ function setFold(L, collapsed) {
   if (collapsedProjects.has(L.id) === collapsed) return false;
   collapsed ? collapsedProjects.add(L.id) : collapsedProjects.delete(L.id); saveCollapsed(); return true;
 }
+// Backspace at the start of a line joins its text onto the line above and removes the line (Workflowy): the way to
+// undo an accidental split. Only within one project, never for a line that has children. `remove` takes the line
+// away (returns true when it pushed an undo step of its own); it is null for a new line that was never saved.
+const joinText = (a, b) => !a ? b : !b ? a : /\s$/.test(a) || /^\s/.test(b) ? a + b : a + ' ' + b;
+async function mergeIntoPrev(row, text, remove, mergeUndo) {
+  const prev = neighbourRow(row, -1); if (!prev || prev.dataset.done) return false;
+  const t = row.dataset.tid ? findTask(+row.dataset.tid) : null; if (t && t.children.length) return false;
+  const head = isHead(prev), pid = head ? rowPid(prev) : null, pt = head ? null : findTask(+prev.dataset.tid);
+  const target = head ? findProject(pid) : pt; if (!target) return false;
+  if ((head ? pid : pt.project_id) !== +row.dataset.project) return false;   // the line above belongs to another project
+  const was = head ? target.name : target.title, joined = joinText(was, text), caret = joined.length - text.length;
+  const removed = remove ? await remove() : false;   // throws when the line cannot go (notes, time, Linear): nothing changed yet
+  if (head) {await api(`/projects/${pid}`, 'PATCH', {name: joined}); target.name = joined; pushUndo('join lines', () => api(`/projects/${pid}`, 'PATCH', {name: was}), mergeUndo); pendingProjectEdit = {id: pid, caret};}
+  else {const r = await api(`/tasks/${pt.id}`, 'PATCH', {title: joined}); pt.title = r.title; pushUndo('join lines', () => api(`/tasks/${pt.id}`, 'PATCH', {title: was}), mergeUndo); pendingEdit = {id: pt.id, caret};}
+  if (removed) {const a = undoStack.pop(), b = undoStack.pop(); undoStack.push({label: 'join lines', fn: async () => {await a.fn(); await b.fn();}});}
+  renderProjects(); return true;
+}
+const atStart = inp => inp.value && inp.selectionStart === 0 && inp.selectionEnd === 0;
 async function deleteLine(L) {   // throws (with a readable message) when the line has something attached to it
   if (L.kind === 'task') {
     const old = findTask(L.id), slot = slotOf(L.row);
@@ -1024,6 +1049,70 @@ document.addEventListener('keydown', async e => {
   const ok = await copyText(outlineText(els));
   toast(ok ? `Copied ${els.length} line${els.length === 1 ? '' : 's'}` : 'Could not copy');
 });
+// several selected lines: "#" opens a small field whose tags apply to every selected task, Cmd+E opens dates &
+// priority for all of them. Project lines in the selection are left alone.
+const selectedTaskIds = () => sel.rows.filter(r => !isHead(r) && !r.dataset.done).map(r => +r.dataset.tid);
+const selKeys = () => sel.rows.map(r => isHead(r) ? 'p' + rowPid(r) : 't' + r.dataset.tid);
+function reselect(keys) {   // the same lines again, after a re-render
+  const rows = visibleRows().filter(r => keys.includes(isHead(r) ? 'p' + rowPid(r) : 't' + r.dataset.tid)); if (!rows.length) return;
+  sel.rows.forEach(r => r.classList.remove('sel')); sel = {anchor: rows[0], rows}; rows.forEach(r => r.classList.add('sel')); rows[rows.length - 1].focus({preventScroll: true});
+}
+async function applyToSelection(body) {   // body: {text: "#p2 #due:fri"} or {fields: {...}}
+  const ids = selectedTaskIds(), keys = selKeys(); if (!ids.length) {toast('No tasks selected'); return false;}
+  const r = await api('/tasks/apply', 'POST', {ids, ...body});
+  pushUndo(`change ${r.count} task${r.count === 1 ? '' : 's'}`, () => Promise.all(Object.entries(r.before).map(([id, f]) => api(`/tasks/${id}`, 'PATCH', f))));
+  const names = {importance: 'priority', blocking_for: 'who is waiting', chunkable: 'shape'};
+  toast(`Set ${Object.keys(r.fields).map(k => names[k] || k).join(', ')} on ${r.count} task${r.count === 1 ? '' : 's'}` + (r.linear_error ? '; Linear: ' + esc(r.linear_error) : ''), 4000);
+  await renderProjects(); reselect(keys); return true;
+}
+function openBulkTags() {
+  document.querySelector('.bulkbar')?.remove();
+  const keys = selKeys(), n = selectedTaskIds().length; if (!n) {toast('No tasks selected'); return;}
+  const at = sel.rows.includes(document.activeElement) ? document.activeElement : sel.rows[sel.rows.length - 1], rect = at.getBoundingClientRect();
+  const bar = document.createElement('div'); bar.className = 'bulkbar';
+  bar.innerHTML = `<span class="muted">${n} task${n === 1 ? '' : 's'}:</span><input placeholder="#p2 #due:fri #blocking:Sam #nodue …" value="#" spellcheck="false">`;
+  Object.assign(bar.style, {left: Math.max(16, Math.min(rect.left + 28, window.innerWidth - 440)) + 'px', top: Math.min(rect.bottom + 4, window.innerHeight - 50) + 'px'});
+  document.body.appendChild(bar);
+  const inp = bar.querySelector('input'); let done = false;
+  const close = () => {if (done) return; done = true; bar.remove(); reselect(keys);};
+  inp.onkeydown = async e => {
+    e.stopPropagation();
+    if (e.key === 'Escape') {e.preventDefault(); close();}
+    else if (e.key === 'Enter') {
+      e.preventDefault(); const text = inp.value.trim(); close(); if (!text || text === '#') return;
+      try {await applyToSelection({text});} catch (err) {toast(esc(err.message), 5000);}
+    }
+  };
+  inp.onblur = () => setTimeout(() => {if (!done && document.activeElement !== inp) close();}, 0);
+  inp.focus(); inp.setSelectionRange(1, 1);
+}
+function openBulkModal() {
+  const ids = selectedTaskIds(), keys = selKeys(); if (!ids.length) {toast('No tasks selected'); return;}
+  const el = document.createElement('div'); el.className = 'modal'; const keep = '<option value="">leave as is</option>';
+  el.innerHTML = `<div class="card"><h3 style="margin-top:0">Edit ${ids.length} task${ids.length === 1 ? '' : 's'}</h3>
+    <form class="form" onsubmit="return false">
+      <label>Deadline</label><div class="row" style="flex-wrap:nowrap"><input name="deadline" type="date" style="flex:1"> <label class="muted" style="font-weight:400;white-space:nowrap"><input name="nodeadline" type="checkbox" style="width:auto"> clear</label></div>
+      <label>Importance</label><select name="importance">${keep}<option value="none">none in particular</option>${[5, 4, 3, 2, 1].map(n => `<option value="${n}">${n}${n === 5 ? ' (critical)' : n === 1 ? ' (trivial)' : ''}</option>`).join('')}</select>
+      <label>Blocking</label><div class="row"><select name="blocking">${keep}<option value="1">blocking</option><option value="0">not blocking</option></select> <input name="blocking_for" placeholder="who is waiting?"></div>
+      <label>Shape</label><select name="chunkable">${keep}<option value="1">can be split across sittings</option><option value="0">one sitting</option></select>
+      <div class="full row" style="justify-content:flex-end;margin-top:8px"><button class="btn" type="button" id="cancel">Cancel</button><button class="btn primary" type="submit">Apply</button></div>
+    </form></div>`;
+  document.body.appendChild(el);
+  const close = () => {el.remove(); reselect(keys);};
+  el.querySelector('#cancel').onclick = close; el.addEventListener('click', e => {if (e.target === el) close();});
+  el.querySelector('form').onsubmit = async () => {
+    const f = new FormData(el.querySelector('form')), fields = {};
+    if (f.get('nodeadline') === 'on') fields.deadline = null; else if (f.get('deadline')) fields.deadline = f.get('deadline');
+    if (f.get('importance')) fields.importance = f.get('importance') === 'none' ? null : +f.get('importance');
+    if (f.get('blocking')) {fields.blocking = f.get('blocking') === '1'; if (!fields.blocking) fields.blocking_for = '';}
+    if (f.get('blocking_for')) {fields.blocking_for = f.get('blocking_for'); fields.blocking = true;}
+    if (f.get('chunkable')) fields.chunkable = f.get('chunkable') === '1';
+    close(); if (!Object.keys(fields).length) return false;
+    try {await applyToSelection({fields});} catch (e) {toast(esc(e.message), 5000);}
+    return false;
+  };
+  setTimeout(() => el.querySelector('[name=deadline]').focus(), 0);
+}
 // a selected (focused) line
 document.addEventListener('keydown', async e => {
   const el = e.target.closest?.('.task:not(.editing), .phead'); if (!el || e.target !== el || el.closest('.proj.editing, .proj.archived')) return;
@@ -1034,6 +1123,8 @@ document.addEventListener('keydown', async e => {
   }
   if (e.key === 'Escape' && sel.rows.length) {e.preventDefault(); clearSel(); return;}
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'c') return;   // copy keeps the selection
+  if (sel.rows.length > 1 && e.key === '#' && !e.metaKey && !e.ctrlKey && !e.altKey) {e.preventDefault(); openBulkTags(); return;}
+  if (sel.rows.length > 1 && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'e') {e.preventDefault(); openBulkModal(); return;}
   if (!e.shiftKey || e.key === 'Tab' || e.key === 'Enter') clearSel();
   if (await outlineKey(e, el, null)) return;
   const L = lineInfo(e.target);
@@ -1075,6 +1166,11 @@ function editTaskTitle(tid, append, caret, text) {
       e.preventDefault(); const prev = neighbourRow(row, -1);
       try {await deleteLine(lineInfo(row)); titleEdit = null; editRowLater(prev); renderProjects();}
       catch (err) {toast(esc(err.message), 5000);}
+    }
+    else if (e.key === 'Backspace' && atStart(inp)) {   // at the start of the text: join onto the line above
+      const L = lineInfo(row);
+      try {if (await mergeIntoPrev(row, inp.value.trim(), async () => {await deleteLine(L); done = true; titleEdit = null; return true;})) e.preventDefault();}
+      catch (err) {toast(esc(err.message), 5000); e.preventDefault();}
     }
     else if (plainEnter(e) && splitAt(inp)) {
       e.preventDefault(); const sp = splitAt(inp), L = lineInfo(row);

@@ -4,7 +4,8 @@
     #today  #tomorrow     deadline
     #due:fri  #due:nov3  #due:2026-11-03  #due:3nov  #due:11-03
     #blocking  #blocking:Sam
-    #onesitting           cannot be split across sittings
+    #onesitting           cannot be split across sittings (#splittable undoes it)
+    #p0  #nodue  #notblocking   clear the priority / deadline / blocking flag (handy on a multi-selection)
 
 Known tags are removed from the title and become fields; anything else starting with # stays as text.
 A line that *starts* with hashes and a space is a Markdown heading, not a tag, and is left alone.
@@ -66,9 +67,19 @@ def parse_tags(title: str, today: dt.date | None = None) -> tuple[str, dict]:
         name, arg = m.group(1).lower(), m.group(2)
         if name in PRIORITY and not arg:
             fields["importance"] = PRIORITY[name]
+        elif name == "p0" and not arg:              # clear the priority
+            fields["importance"] = None
+        elif name in ("nodue", "undue") and not arg:   # clear the deadline
+            fields["deadline"] = None
+        elif name in ("notblocking", "unblock") and not arg:
+            fields["blocking"] = 0
+            fields["blocking_for"] = ""
         elif name in ("today", "tomorrow") and not arg:
             fields["deadline"] = parse_date(name, today)
         elif name == "due" and arg:
+            if arg.lower() in ("none", "never", "-"):
+                fields["deadline"] = None
+                return ""
             d = parse_date(arg, today)
             if d is None:
                 return m.group(0)
@@ -79,6 +90,8 @@ def parse_tags(title: str, today: dt.date | None = None) -> tuple[str, dict]:
                 fields["blocking_for"] = arg.strip('"\'')
         elif name == "onesitting" and not arg:
             fields["chunkable"] = 0
+        elif name in ("splittable", "chunkable") and not arg:
+            fields["chunkable"] = 1
         else:
             return m.group(0)
         return ""

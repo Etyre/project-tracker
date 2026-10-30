@@ -164,7 +164,7 @@ def test_subtasks_insert_after_and_conversion():
         db.project_to_task(pid)                                    # top-level projects stay projects
 
 
-def test_migrates_old_schema(tmp_path, monkeypatch):
+def test_migrates_old_schema(tmp_path, monkeypatch, request):
     import sqlite3
     path = tmp_path / "old.db"
     con = sqlite3.connect(path)
@@ -186,6 +186,7 @@ def test_migrates_old_schema(tmp_path, monkeypatch):
     con.commit(); con.close()
     monkeypatch.setattr(config, "DB_PATH", path)
     db._local.__dict__.clear()
+    request.addfinalizer(db._local.__dict__.clear)   # reconnect to the shared test DB afterwards
     assert db.task(7)["title"] == "kept"
     tid = db.create_task(1, "new one", parent_id=7)                # parent_id column exists, importance may be NULL
     assert db.task(tid)["importance"] is None and db.task(tid)["parent_id"] == 7
@@ -262,3 +263,24 @@ def test_tags_apply_on_create_and_patch():
     tid = db.create_task(pid, title, **f)
     t = db.task(tid)
     assert (t["title"], t["importance"], t["blocking"]) == ("Write intro", 5, 1)
+
+
+def test_clearing_tags_and_apply_endpoint():
+    from fastapi.testclient import TestClient
+    from tracker import tags, web
+    _, f = tags.parse_tags("x #nodue #p0 #notblocking #splittable")
+    assert f == {"deadline": None, "importance": None, "blocking": 0, "blocking_for": "", "chunkable": 1}
+    assert tags.parse_tags("x #due:none")[1] == {"deadline": None}
+    pid = db.create_project("Apply")
+    a = db.create_task(pid, "one", importance=2)
+    b = db.create_task(pid, "two", deadline="2030-01-01")
+    c = TestClient(web.create_app())
+    r = c.post("/api/tasks/apply", json={"ids": [a, b, a], "text": "#p1 #due:2031-02-03"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["count"] == 2 and body["fields"] == {"importance": 5, "deadline": "2031-02-03"}
+    assert body["before"][str(a)] == {"importance": 2, "deadline": None}
+    assert db.task(b)["importance"] == 5 and db.task(a)["deadline"] == "2031-02-03"
+    r = c.post("/api/tasks/apply", json={"ids": [a], "fields": {"deadline": None, "blocking": True, "blocking_for": "Sam"}})
+    assert r.status_code == 200 and db.task(a)["deadline"] is None and db.task(a)["blocking"] == 1
+    assert c.post("/api/tasks/apply", json={"ids": [a], "text": "#random"}).status_code == 400

@@ -68,6 +68,13 @@ class TaskPatch(BaseModel):
     # Any field sent explicitly (including null) is applied; the clear_* flags are kept for older callers.
 
 
+class ApplyIn(BaseModel):
+    """Set fields on several tasks at once: from hashtag text ("#p2 #due:fri") and/or explicit fields."""
+    ids: list[int]
+    text: str | None = None
+    fields: dict[str, Any] | None = None
+
+
 class OutlineItem(BaseModel):
     title: str
     depth: int = 0
@@ -341,6 +348,35 @@ def create_app() -> FastAPI:
     def uncomplete_task(tid: int):
         db.uncomplete_task(tid)
         return {"ok": True, "linear_error": linear.safe_push(tid)}
+
+    @app.post("/api/tasks/apply")
+    def apply_to_tasks(a: ApplyIn):
+        fields: dict[str, Any] = {}
+        if a.text and a.text.strip():
+            _, tagged = tags.parse_tags("x " + a.text.strip())
+            fields.update(tagged)
+        allowed = {"deadline", "blocking", "blocking_for", "importance", "chunkable"}
+        for k, v in (a.fields or {}).items():
+            if k in allowed:
+                fields[k] = v
+        if not fields:
+            raise HTTPException(400, "No tags recognised" if a.text else "Nothing to change")
+        if fields.get("importance") is not None:
+            fields["importance"] = max(1, min(5, int(fields["importance"])))
+        for b in ("blocking", "chunkable"):
+            if fields.get(b) is not None:
+                fields[b] = int(fields[b])
+        before: dict[int, dict[str, Any]] = {}
+        errors = []
+        for tid in dict.fromkeys(a.ids):
+            cur = db.task(tid)
+            if not cur:
+                continue
+            before[tid] = {k: cur[k] for k in fields}
+            db.update_task(tid, **fields)
+            if err := linear.safe_push(tid):
+                errors.append(err)
+        return {"fields": fields, "before": before, "count": len(before), "linear_error": errors[0] if errors else None}
 
     @app.post("/api/tasks/bulk")
     def create_tasks_bulk(o: OutlineIn):
