@@ -1359,6 +1359,7 @@ async function renderStats() {
     <h3>Integrations</h3>
     <table>${[['Claude (quick add, scheduling)', status.llm], ['Toggl', status.toggl], ['Linear', status.linear], ['Calendar feeds', status.calendar], ['Checklist / exercise sheets', status.sheets !== 'none' ? status.sheets : false], ['Sheet write-back', status.sheets_writable]].map(([k, v]) => `<tr><td>${k}</td><td>${v ? '<span class="chip ok">on</span>' : '<span class="chip warn">off</span>'}</td></tr>`).join('')}</table>
     <p class="muted"><a href="#plan" onclick="go('plan');return false">Inspect today's internal schedule</a> (debugging only; the feed is the normal interface).</p>
+    <p class="muted">A Markdown snapshot of the whole outline is written every day (05:00 by default, <code>[snapshots]</code> in config.toml) into the data folder's <code>snapshots</code> directory. <button class="btn small" onclick="api('/snapshot','POST').then(r=>toast('Snapshot written: '+esc(r.path),6000))">Snapshot now</button></p>
     <p class="muted">Work day ${status.work_start}–${status.work_end}. Edit config.toml and the rules doc, then <button class="btn small" onclick="api('/refresh','POST').then(()=>toast('Reloaded'))">reload config</button>.</p></div>`;
 }
 

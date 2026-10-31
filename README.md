@@ -115,6 +115,12 @@ on the lines: you navigate with the arrow keys and type.
   sub-projects and open tasks with it (restore brings them back). The Filters button (hidden by default)
   opens a small panel to show completed tasks and archived projects alongside the active ones.
 
+**Snapshots** - every day at `[snapshots] time` (05:00) the whole outline is written to
+`~/Library/Application Support/TaskTracker/snapshots/YYYY-MM-DD.md` (or `[snapshots] dir`): projects as a bold
+nested list, open tasks as checkboxes with their tags, notes underneath, and the tasks completed since the last
+snapshot at the end. If the app was asleep at that hour the file is written when it next runs that day.
+**Stats -> Snapshot now** or `python -m tracker snapshot` writes one on demand.
+
 **Quick add** (⌘K) - free text goes to Claude with the project tree; it returns one or more tasks placed in the
 best project (creating a sub-project only when nothing fits), with deadline / blocking / importance / estimate
 inferred. Without an API key it files into "Inbox".

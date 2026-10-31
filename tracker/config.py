@@ -28,6 +28,11 @@ DEFAULTS: dict[str, Any] = {
         "overrun_minutes": 30,               # ... or the active block has run this far past its end
         "replan_min_interval_minutes": 10,   # never auto re-plan more often than this
     },
+    "snapshots": {
+        "enable": True,
+        "time": "05:00",                     # daily Markdown snapshot of the whole outline (local time)
+        "dir": "",                           # empty = <data folder>/snapshots
+    },
     "llm": {
         "model": "claude-opus-5-5",
         "effort": "high",

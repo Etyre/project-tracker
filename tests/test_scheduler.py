@@ -284,3 +284,27 @@ def test_clearing_tags_and_apply_endpoint():
     r = c.post("/api/tasks/apply", json={"ids": [a], "fields": {"deadline": None, "blocking": True, "blocking_for": "Sam"}})
     assert r.status_code == 200 and db.task(a)["deadline"] is None and db.task(a)["blocking"] == 1
     assert c.post("/api/tasks/apply", json={"ids": [a], "text": "#random"}).status_code == 400
+
+
+def test_daily_snapshot(tmp_path, monkeypatch):
+    from tracker import snapshot
+    monkeypatch.setitem(config.load()["snapshots"], "dir", str(tmp_path))
+    pid = db.create_project("# Snap root")
+    sub = db.create_project("## Snap sub", pid)
+    a = db.create_task(sub, "First", importance=4, deadline="2030-05-06", blocking=1, blocking_for="Ann", description="why\nand how")
+    db.create_task(sub, "Nested", parent_id=a)
+    done = db.create_task(pid, "Finished one")
+    db.complete_task(done)
+    md = snapshot.render(dt.datetime(2030, 1, 2, 5, 0), since=0)
+    lines = md.splitlines()
+    assert "- **Snap root**" in lines and "  - **Snap sub**" in lines
+    assert "    - [ ] First #p2 #due:2030-05-06 #blocking:Ann" in lines
+    i = lines.index("    - [ ] First #p2 #due:2030-05-06 #blocking:Ann")
+    assert lines[i + 1:i + 4] == ["      why", "      and how", "      - [ ] Nested"]
+    assert any(l.startswith("- [x] Finished one") for l in lines)
+    # before the hour nothing is written; after it, once per day; forced writes overwrite
+    assert snapshot.maybe_snapshot(dt.datetime(2030, 1, 2, 4, 59)) is None
+    path = snapshot.maybe_snapshot(dt.datetime(2030, 1, 2, 5, 0))
+    assert path == tmp_path / "2030-01-02.md" and path.read_text().startswith("# Task tracker snapshot")
+    assert snapshot.maybe_snapshot(dt.datetime(2030, 1, 2, 9, 0)) is None
+    assert snapshot.write(dt.datetime(2030, 1, 2, 9, 0)) == path

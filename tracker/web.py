@@ -13,7 +13,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
-from . import tags, calendar_feed, config, db, estimates, journal, linear, llm, scheduler, sheets, toggl
+from . import tags, calendar_feed, config, db, estimates, journal, linear, llm, scheduler, sheets, toggl, snapshot
 
 log = logging.getLogger("web")
 HTML_PATH = config.ROOT / "tracker" / "dashboard.html"
@@ -349,6 +349,11 @@ def create_app() -> FastAPI:
         db.uncomplete_task(tid)
         return {"ok": True, "linear_error": linear.safe_push(tid)}
 
+    @app.post("/api/snapshot")
+    def snapshot_now():
+        path = snapshot.write()
+        return {"path": str(path), "dir": str(snapshot.snapshot_dir())}
+
     @app.post("/api/tasks/apply")
     def apply_to_tasks(a: ApplyIn):
         fields: dict[str, Any] = {}
@@ -676,6 +681,8 @@ def _loop() -> None:
                 db.set_setting("auto_plan_date", db.today())
                 log.info("auto-building today's plan")
                 scheduler.build()
+            # 5. The daily Markdown snapshot of the outline (once the configured hour has passed)
+            snapshot.maybe_snapshot(now)
         except Exception:
             log.exception("background loop")
         time.sleep(60)
