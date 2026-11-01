@@ -49,7 +49,7 @@ def render(now: dt.datetime | None = None, since: float | None = None) -> str:
     out = [f"# Task tracker snapshot — {now:%A %Y-%m-%d %H:%M}", ""]
 
     def task(t: dict, depth: int) -> None:
-        out.append("  " * depth + "- [ ] " + t["title"].strip() + _tags(t))
+        out.append("  " * depth + "- [ ] " + re.sub(r"^#{1,6}\s+", "", t["title"].strip()) + _tags(t))
         _notes(t.get("description"), depth, out)
         for c in t["children"]:
             task(c, depth + 1)
@@ -106,3 +106,22 @@ def maybe_snapshot(now: dt.datetime | None = None) -> pathlib.Path | None:
     if (now.hour, now.minute) < (h, m):
         return None
     return write(now, force=False)
+
+
+def list_snapshots() -> list[dict]:
+    """Newest first: {date, size, modified}."""
+    d = snapshot_dir()
+    if not d.exists():
+        return []
+    out = []
+    for f in sorted(d.glob("????-??-??.md"), reverse=True):
+        st = f.stat()
+        out.append({"date": f.stem, "size": st.st_size, "modified": st.st_mtime})
+    return out
+
+
+def read(date: str) -> str | None:
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
+        return None
+    f = snapshot_dir() / f"{date}.md"
+    return f.read_text() if f.exists() else None

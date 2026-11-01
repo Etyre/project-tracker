@@ -119,7 +119,8 @@ on the lines: you navigate with the arrow keys and type.
 `~/Library/Application Support/TaskTracker/snapshots/YYYY-MM-DD.md` (or `[snapshots] dir`): projects as a bold
 nested list, open tasks as checkboxes with their tags, notes underneath, and the tasks completed since the last
 snapshot at the end. If the app was asleep at that hour the file is written when it next runs that day.
-**Stats -> Snapshot now** or `python -m tracker snapshot` writes one on demand.
+The **Snapshots** tab lists them by day and shows any of them; its **Snapshot now** button (or
+`python -m tracker snapshot`) writes one on demand.
 
 **Quick add** (⌘K) - free text goes to Claude with the project tree; it returns one or more tasks placed in the
 best project (creating a sub-project only when nothing fits), with deadline / blocking / importance / estimate

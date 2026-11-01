@@ -349,6 +349,17 @@ def create_app() -> FastAPI:
         db.uncomplete_task(tid)
         return {"ok": True, "linear_error": linear.safe_push(tid)}
 
+    @app.get("/api/snapshots")
+    def snapshots():
+        return {"dir": str(snapshot.snapshot_dir()), "items": snapshot.list_snapshots()}
+
+    @app.get("/api/snapshots/{date}")
+    def snapshot_text(date: str):
+        text = snapshot.read(date)
+        if text is None:
+            raise HTTPException(404)
+        return {"date": date, "text": text}
+
     @app.post("/api/snapshot")
     def snapshot_now():
         path = snapshot.write()

@@ -35,6 +35,12 @@ button{font:inherit;cursor:pointer}
 .btn.ghost{border-color:transparent;background:transparent;color:var(--muted)}
 .btn:disabled{opacity:.5;cursor:default}
 .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px}
+.snaps{display:flex;gap:16px;align-items:flex-start}
+.snaps .dates{flex:0 0 150px;display:flex;flex-direction:column;gap:2px;max-height:80vh;overflow:auto}
+.snaps .dates button{background:none;border:0;text-align:left;padding:6px 10px;border-radius:8px;color:var(--muted);cursor:pointer;font:inherit}
+.snaps .dates button:hover{background:var(--hover)}.snaps .dates button.on{background:var(--chip);color:var(--chip-ink);font-weight:600}
+.snaps .snap{flex:1;min-width:0;white-space:pre-wrap;line-height:1.5;font-size:14px}
+.snaps .snap .md-h1{display:block;margin-bottom:8px}.snaps .snap .md-h2{display:block;margin-top:12px}
 .muted{color:var(--muted)}
 .chip{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;background:var(--chip);color:var(--chip-ink);margin-right:4px;white-space:nowrap}
 .chip.bad{background:#fee2e2;color:#991b1b}.chip.warn{background:#fef3c7;color:#92400e}.chip.ok{background:#dcfce7;color:#166534}
@@ -163,6 +169,7 @@ table{border-collapse:collapse;width:100%}td,th{padding:6px 8px;border-bottom:1p
     <button data-view="projects">Projects</button>
     <button data-view="feed">Feed</button>
     <button data-view="stats">Stats</button>
+    <button data-view="snapshots">Snapshots</button>
   </nav>
   <div id="timer"></div>
 </aside>
@@ -270,6 +277,7 @@ async function render() {
     else if (view === 'projects') await renderProjects();
     else if (view === 'plan') await renderPlan();
     else if (view === 'stats') await renderStats();
+    else if (view === 'snapshots') await renderSnapshots();
   } catch (e) {$('#main').innerHTML = `<div class="card">Error: ${esc(e.message)}</div>`;}
 }
 
@@ -1349,6 +1357,29 @@ async function renderPlan() {
       <span>${i.kind === 'meeting' ? '' : i.status === 'pending' ? `<button class="btn small ghost" onclick="skipItem(${i.id}).then(renderPlan)">skip</button>` : `<button class="btn small ghost" onclick="api('/feed/reset_item','POST',{item_id:${i.id}}).then(renderPlan)">reset</button>`}</span></li>`).join('')}</ul></div>`;
 }
 
+// ------------------------------------------------------------------ snapshots
+// The daily Markdown files, newest first; the chosen one is rendered with the same Markdown as the notes boxes.
+let snapDate = null;
+async function renderSnapshots() {
+  const s = await api('/snapshots');
+  const m = $('#main');
+  if (!s.items.length) {
+    m.innerHTML = `<div class="card"><h3 style="margin-top:0">Snapshots</h3><p class="muted">No snapshots yet. One is written every day at 05:00 into <code>${esc(s.dir)}</code>.</p>
+      <button class="btn primary" onclick="snapshotNow()">Snapshot now</button></div>`;
+    return;
+  }
+  if (!s.items.some(i => i.date === snapDate)) snapDate = s.items[0].date;
+  const snap = await api(`/snapshots/${snapDate}`);
+  m.innerHTML = `<div class="card">
+    <div class="row" style="justify-content:space-between;margin-bottom:10px"><h3 style="margin:0">Snapshots <span class="muted" style="font-weight:400;font-size:13px">${s.items.length} day${s.items.length === 1 ? '' : 's'} · ${esc(s.dir)}</span></h3>
+      <button class="btn small" onclick="snapshotNow()">Snapshot now</button></div>
+    <div class="snaps">
+      <div class="dates">${s.items.map(i => `<button class="${i.date === snapDate ? 'on' : ''}" onclick="snapDate='${i.date}';renderSnapshots()">${i.date}</button>`).join('')}</div>
+      <div class="snap">${mdBlock(snap.text)}</div>
+    </div></div>`;
+}
+async function snapshotNow() {const r = await api('/snapshot', 'POST'); toast('Snapshot written: ' + esc(r.path), 5000); snapDate = r.path.slice(-13, -3); if (view === 'snapshots') renderSnapshots();}
+
 // ------------------------------------------------------------------ stats
 async function renderStats() {
   const s = await api('/stats/estimates');
@@ -1359,7 +1390,6 @@ async function renderStats() {
     <h3>Integrations</h3>
     <table>${[['Claude (quick add, scheduling)', status.llm], ['Toggl', status.toggl], ['Linear', status.linear], ['Calendar feeds', status.calendar], ['Checklist / exercise sheets', status.sheets !== 'none' ? status.sheets : false], ['Sheet write-back', status.sheets_writable]].map(([k, v]) => `<tr><td>${k}</td><td>${v ? '<span class="chip ok">on</span>' : '<span class="chip warn">off</span>'}</td></tr>`).join('')}</table>
     <p class="muted"><a href="#plan" onclick="go('plan');return false">Inspect today's internal schedule</a> (debugging only; the feed is the normal interface).</p>
-    <p class="muted">A Markdown snapshot of the whole outline is written every day (05:00 by default, <code>[snapshots]</code> in config.toml) into the data folder's <code>snapshots</code> directory. <button class="btn small" onclick="api('/snapshot','POST').then(r=>toast('Snapshot written: '+esc(r.path),6000))">Snapshot now</button></p>
     <p class="muted">Work day ${status.work_start}–${status.work_end}. Edit config.toml and the rules doc, then <button class="btn small" onclick="api('/refresh','POST').then(()=>toast('Reloaded'))">reload config</button>.</p></div>`;
 }
 

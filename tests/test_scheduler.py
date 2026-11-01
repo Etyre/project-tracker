@@ -308,3 +308,5 @@ def test_daily_snapshot(tmp_path, monkeypatch):
     assert path == tmp_path / "2030-01-02.md" and path.read_text().startswith("# Task tracker snapshot")
     assert snapshot.maybe_snapshot(dt.datetime(2030, 1, 2, 9, 0)) is None
     assert snapshot.write(dt.datetime(2030, 1, 2, 9, 0)) == path
+    assert [i["date"] for i in snapshot.list_snapshots()] == ["2030-01-02"]
+    assert snapshot.read("2030-01-02").startswith("# Task tracker snapshot") and snapshot.read("nope") is None
