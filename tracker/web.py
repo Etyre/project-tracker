@@ -197,8 +197,9 @@ def _checklist_state(date: str) -> dict:
     done_local = db.checklist_done_today(date)
     items = []
     for r in cl["items"]:
-        extra = {k: v for k, v in r.items() if k not in ("item", "done_today", "_row") and v not in ("", None)}
-        items.append({"item": r["item"], "done": bool(r.get("done_today")) or r["item"] in done_local, "fields": extra})
+        extra = {k: v for k, v in r.items() if k not in ("item", "done_today", "_row", "checkable", "computed") and v not in ("", None)}
+        items.append({"item": r["item"], "done": bool(r.get("done_today")) or r["item"] in done_local, "fields": extra,
+                      "checkable": r.get("checkable", True), "computed": bool(r.get("computed"))})
     return {"items": items, "source": cl["source"], "writable": sheets.writable()}
 
 

@@ -47,15 +47,18 @@ Google Calendar -> Settings -> your calendar -> *Secret address in iCal format*.
 
 ### Daily checklist and exercise sheets (read **and** write)
 1. Open the spreadsheet with the checklist -> Extensions -> Apps Script, paste `apps_script/Code.gs`.
-2. Script Properties: `SHEET_TOKEN` (random string), `CHECKLIST_SHEET`, `EXERCISE_SHEET`
-   (and `EXERCISE_SHEET_ID` if the exercise log is a different file), optionally `ITEM_COLUMN` and `MODE`.
+2. Script Properties: `SHEET_TOKEN` (random string), `CHECKLIST_SHEET` (tab name), `EXERCISE_SHEET`
+   (and `EXERCISE_SHEET_ID` if the exercise log is a different file), optionally `ITEM_COLUMN` (a column
+   letter or header), `HEADER_ROW` (found automatically: the first row holding a date) and `MODE`.
 3. Deploy -> Web app (Execute as me, access Anyone). Put the `/exec` URL in `[sheets] apps_script_url`
    and the token in `SHEETS_TOKEN`.
 
 Checking a checklist item off in the feed ticks it in the sheet (today's date column, a "Last done" column,
 or a "Done" checkbox, per `MODE`). The scheduler reads every other column (frequency, minutes, when...) as-is,
-so you can lay the sheet out however you like. Without the script, `daily_checklist_csv` / `exercise_csv`
-CSV-export URLs work read-only.
+so you can lay the sheet out however you like: date headers may sit below other rows, real date cells work,
+hidden rows are skipped, and a row is checkable only where today's cell is a checkbox (a formula row shows
+its computed state, a heading or dropdown row is shown as text). Without the script, `daily_checklist_csv` /
+`exercise_csv` CSV-export URLs work read-only.
 
 ### Linear
 Set `LINEAR_API_KEY` and `[linear] enable = true`. Issues assigned to you are mirrored as tasks under the

@@ -348,7 +348,9 @@ async function renderFeed() {
     let body = `<div class="head"><div class="kind">${esc(project) || '&nbsp;'}</div><div class="big">${c.kind === 'checklist' ? 'Daily checklist' : mdLine(c.title).html}</div>`;
     if (c.kind === 'checklist') {
       const cl = c.checklist;
-      body += cl.items.length ? `<div class="clist">${cl.items.map(i => `<label><input type="checkbox" ${i.done ? 'checked' : ''} onchange="checkItem(this, ${JSON.stringify(i.item).replace(/"/g, '&quot;')})"> <span>${esc(i.item)}</span></label>`).join('')}</div>` : `<div class="meta">No checklist sheet configured.</div>`;
+      // a checkbox for rows the sheet lets us tick; computed rows (formulas) show their state; headings stay text
+      body += cl.items.length ? `<div class="clist">${cl.items.map(i => i.checkable !== false ? `<label><input type="checkbox" ${i.done ? 'checked' : ''} onchange="checkItem(this, ${JSON.stringify(i.item).replace(/"/g, '&quot;')})"> <span>${esc(i.item)}</span></label>`
+        : i.computed ? `<label class="muted" title="computed in the sheet"><span>${i.done ? '☑' : '☐'}</span> <span>${esc(i.item)}</span></label>` : `<div class="muted" style="margin-top:4px">${esc(i.item)}</div>`).join('')}</div>` : `<div class="meta">No checklist sheet configured.</div>`;
     }
     body += '</div>';
     const actions = `<div class="actions">
