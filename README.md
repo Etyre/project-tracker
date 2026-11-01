@@ -90,6 +90,9 @@ on the lines: you navigate with the arrow keys and type.
   Alt+Left zoom into and out of a project, Cmd+Shift+Backspace deletes a line (Backspace on an emptied line
   does too). Backspace at the start of a line joins it onto the line above, which undoes an accidental split.
   Deleting is refused, with a message, for anything with sub-items, tracked time or a Linear link.
+- Right-click a line for a small menu: complete, notes, dates & priority, make project (or open / make task on
+  a project line) and Delete. From the menu a task is deleted together with its sub-items (Cmd+Z brings the
+  whole subtree back); a project with content is archived rather than deleted.
 - Text is Markdown everywhere: **bold**, *italic*, `code`, ~~strike~~ and [links](url) render in titles, names
   and notes, and a line that starts with one to six hashes (`## Big step`) is shown as a heading of that size.
   The raw text shows only while you edit it. Lines wrap while you type, so a long line stays fully visible.

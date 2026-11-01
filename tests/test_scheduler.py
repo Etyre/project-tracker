@@ -286,6 +286,26 @@ def test_clearing_tags_and_apply_endpoint():
     assert c.post("/api/tasks/apply", json={"ids": [a], "text": "#random"}).status_code == 400
 
 
+def test_delete_subtree_and_recreate():
+    pid = db.create_project("Subtree")
+    a = db.create_task(pid, "Parent", description="notes here", importance=3)
+    b = db.create_task(pid, "Child", parent_id=a, deadline="2031-01-01")
+    c = db.create_task(pid, "Grandchild", parent_id=b)
+    db.complete_task(c)
+    d = db.create_task(pid, "After")
+    outline = db.delete_task_tree(a)
+    assert [(o["title"], o["depth"]) for o in outline] == [("Parent", 0), ("Child", 1), ("Grandchild", 2)]
+    assert db.task(a) is None and db.task(c) is None and db.task(d)
+    ids = db.create_tasks_outline(pid, None, 0, outline)
+    tree = db.project_tree(active=True, completed=True)
+    p = next(x for x in tree if x["id"] == pid)
+    assert [t["title"] for t in p["tasks"]] == ["Parent", "After"]
+    parent = db.task(ids[0])
+    assert parent["description"] == "notes here" and parent["importance"] == 3
+    assert db.task(ids[1])["parent_id"] == ids[0] and db.task(ids[1])["deadline"] == "2031-01-01"
+    assert db.task(ids[2])["completed_at"] is not None
+
+
 def test_daily_snapshot(tmp_path, monkeypatch):
     from tracker import snapshot
     monkeypatch.setitem(config.load()["snapshots"], "dir", str(tmp_path))

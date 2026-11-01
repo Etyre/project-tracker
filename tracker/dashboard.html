@@ -108,6 +108,9 @@ code{font-size:.9em;padding:1px 4px;border-radius:3px;background:var(--hover)}
 .filters{display:flex;gap:14px;align-items:center;font-size:14px}
 .filterwrap{position:relative}
 .filterwrap .filters{position:absolute;right:0;top:calc(100% - 1px);margin:0;padding:10px 14px;background:var(--card);border:1px solid var(--line);border-radius:10px;border-top-right-radius:0;box-shadow:0 6px 18px rgba(0,0,0,.08);z-index:5;white-space:nowrap}
+.ctx{position:fixed;z-index:30;background:var(--card);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.14);padding:4px;min-width:180px}
+.ctx button{display:block;width:100%;text-align:left;background:none;border:0;padding:6px 10px;border-radius:6px;font:inherit;font-size:13px;color:var(--ink);cursor:pointer}
+.ctx button:hover{background:var(--hover)}.ctx button.danger{color:#b91c1c}.ctx hr{border:0;border-top:1px solid var(--line);margin:4px 0}
 .bulkbar{position:fixed;z-index:15;display:flex;gap:8px;align-items:center;padding:6px 10px;background:var(--card);border:1px solid var(--line);border-radius:6px;box-shadow:0 6px 18px rgba(0,0,0,.12);font-size:13px}
 .bulkbar input{width:320px;font:inherit;padding:3px 6px;border:1px solid var(--line);border-radius:4px;background:var(--box);color:var(--ink)}
 .btn.ghost.on{background:var(--card);color:var(--ink);border-color:var(--line);border-bottom-color:var(--card);border-bottom-left-radius:0;border-bottom-right-radius:0;position:relative;z-index:6}
@@ -1143,6 +1146,52 @@ function openBulkModal() {
     return false;
   };
   setTimeout(() => el.querySelector('[name=deadline]').focus(), 0);
+}
+// right-click on a line: a small menu (delete lives here, with undo; a task goes with its sub-items, a project
+// with content is archived instead). Inside a text editor the browser's own menu stays.
+function closeCtx() {document.querySelector('.ctx')?.remove();}
+document.addEventListener('contextmenu', e => {
+  const row = e.target.closest('#tree .task, #tree .phead');
+  if (!row || e.target.closest('textarea, input, a') || row.classList.contains('editing') || row.closest('.proj.archived')) return;
+  e.preventDefault(); closeCtx(); if (!multi) clearSel(); row.focus({preventScroll: true});
+  const L = lineInfo(row), items = [];
+  const add = (label, fn, cls) => items.push({label, fn, cls});
+  if (L.kind === 'task') {
+    const t = findTask(L.id), kids = countDesc(t);
+    add(L.done ? 'Reopen' : 'Complete', () => toggleComplete(L).then(renderProjects));
+    if (!L.done) add(expanded.has(L.id) ? 'Hide notes' : 'Notes', () => toggleTask(L.id));
+    add('Dates & priority…', () => editTask(L.id));
+    if (!L.done && !L.linear) add('Make project', () => taskToProject(L.id));
+    items.push(null);
+    add(kids ? `Delete with ${kids} sub-item${kids === 1 ? '' : 's'}` : 'Delete', () => deleteTree(L), 'danger');
+  } else {
+    const p = findProject(L.id), empty = p && !p.tasks.length && !p.children.length;
+    add('Open', () => openProject(L.id));
+    if (L.proj.dataset.parent) add('Make task', () => projectToTask(L.id));
+    items.push(null);
+    add(empty ? 'Delete' : 'Archive…', () => empty ? deleteTree(L) : archiveProject(L.id), 'danger');
+  }
+  const m = document.createElement('div'); m.className = 'ctx';
+  m.innerHTML = items.map(i => i ? `<button class="${i.cls || ''}">${esc(i.label)}</button>` : '<hr>').join('');
+  [...m.querySelectorAll('button')].forEach((b, j) => {const it = items.filter(Boolean)[j]; b.onclick = async () => {closeCtx(); try {await it.fn();} catch (err) {toast(esc(err.message), 5000);}};});
+  document.body.appendChild(m);
+  const r = m.getBoundingClientRect();
+  m.style.left = Math.min(e.clientX, window.innerWidth - r.width - 8) + 'px'; m.style.top = Math.min(e.clientY, window.innerHeight - r.height - 8) + 'px';
+});
+document.addEventListener('mousedown', e => {if (!e.target.closest('.ctx')) closeCtx();}, true);
+document.addEventListener('keydown', e => {if (e.key === 'Escape' && document.querySelector('.ctx')) {e.preventDefault(); closeCtx();}}, true);
+window.addEventListener('scroll', closeCtx, true); window.addEventListener('blur', closeCtx);
+const countDesc = t => t ? t.children.reduce((n, c) => n + 1 + countDesc(c), 0) : 0;
+async function deleteTree(L) {   // a task with everything under it (undo recreates the subtree), or an empty project
+  const prev = neighbourRow(L.el, -1);
+  if (L.kind === 'project' || !countDesc(findTask(L.id))) {await deleteLine(L);}
+  else {
+    const slot = slotOf(L.row), t = findTask(L.id);
+    const r = await api(`/tasks/${L.id}?subtree=1`, 'DELETE');
+    pushUndo(`delete "${t.title}" and sub-items`, () => api('/tasks/bulk', 'POST', {...slot, items: r.outline}));
+    toast(`Deleted with ${r.outline.length - 1} sub-item${r.outline.length === 2 ? '' : 's'}`);
+  }
+  focusRowLater(prev); renderProjects();
 }
 // a selected (focused) line
 document.addEventListener('keydown', async e => {

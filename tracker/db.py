@@ -427,6 +427,37 @@ def uncomplete_task(tid: int) -> None:
     update_task(tid, completed_at=None, position=pos, parent_id=parent_id)
 
 
+SUBTREE_FIELDS = ("description", "deadline", "blocking", "blocking_for", "importance", "estimate_minutes", "chunkable", "completed_at")
+
+
+def delete_task_tree(tid: int) -> list[dict]:
+    """Delete a task with everything under it (right-click -> Delete). Returns the subtree as an outline of
+    {title, depth, fields} in document order, so an undo can recreate it with create_tasks_outline. Refused when
+    anything in it is mirrored from Linear or has tracked time."""
+    t = task(tid)
+    if not t:
+        return []
+    out: list[dict] = []
+    ids: list[int] = []
+
+    def walk(x: dict, depth: int) -> None:
+        if x["linear_id"]:
+            raise ValueError(f'"{x["title"]}" is mirrored from Linear; complete it instead')
+        if row("SELECT id FROM time_entries WHERE task_id=? LIMIT 1", (x["id"],)):
+            raise ValueError(f'"{x["title"]}" has tracked time; complete it instead')
+        out.append({"title": x["title"], "depth": depth, "fields": {k: x[k] for k in SUBTREE_FIELDS}})
+        ids.append(x["id"])
+        for c in subtasks(x["id"], open_only=False):
+            walk(c, depth + 1)
+
+    walk(t, 0)
+    marks = ",".join("?" * len(ids))
+    with _write_lock:
+        execute(f"UPDATE plan_items SET task_id=NULL WHERE task_id IN ({marks})", ids)
+        execute(f"DELETE FROM tasks WHERE id IN ({marks})", ids)
+    return out
+
+
 def subtasks(tid: int, open_only: bool = True) -> list[dict]:
     q = "SELECT * FROM tasks WHERE parent_id=?" + (" AND completed_at IS NULL" if open_only else "")
     return rows(q + " ORDER BY position, id", (tid,))

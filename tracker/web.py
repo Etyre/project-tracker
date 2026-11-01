@@ -78,6 +78,7 @@ class ApplyIn(BaseModel):
 class OutlineItem(BaseModel):
     title: str
     depth: int = 0
+    fields: dict[str, Any] | None = None   # notes, dates etc. when a deleted subtree is recreated
 
 
 class OutlineIn(BaseModel):
@@ -396,7 +397,13 @@ def create_app() -> FastAPI:
 
     @app.post("/api/tasks/bulk")
     def create_tasks_bulk(o: OutlineIn):
-        items = [{"depth": i.depth, **dict(zip(("title", "fields"), tags.parse_tags(i.title)))} for i in o.items if i.title.strip()]
+        items = []
+        for i in o.items:
+            if not i.title.strip():
+                continue
+            title, fields = tags.parse_tags(i.title)
+            fields.update({k: v for k, v in (i.fields or {}).items() if k in db.SUBTREE_FIELDS})
+            items.append({"depth": i.depth, "title": title, "fields": fields})
         if not items:
             raise HTTPException(400, "nothing to add")
         if o.parent_id and not db.task(o.parent_id):
@@ -415,10 +422,12 @@ def create_app() -> FastAPI:
         return {"ok": True}
 
     @app.delete("/api/tasks/{tid}")
-    def delete_task(tid: int):
+    def delete_task(tid: int, subtree: bool = False):
         if not db.task(tid):
             raise HTTPException(404)
         try:
+            if subtree:
+                return {"ok": True, "outline": db.delete_task_tree(tid)}
             db.delete_task(tid)
         except ValueError as e:
             raise HTTPException(400, f"Cannot delete: {e}")
