@@ -330,3 +330,19 @@ def test_daily_snapshot(tmp_path, monkeypatch):
     assert snapshot.write(dt.datetime(2030, 1, 2, 9, 0)) == path
     assert [i["date"] for i in snapshot.list_snapshots()] == ["2030-01-02"]
     assert snapshot.read("2030-01-02").startswith("# Task tracker snapshot") and snapshot.read("nope") is None
+
+
+def test_settings_save_roundtrip(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "config.toml")
+    config.load.cache_clear()
+    cfg = config.save({"general": {"work_start": "08:30", "min_block_minutes": "20"},
+                       "calendar": {"ics_urls": ["https://a/x.ics", " https://b/y.ics "], "busy_only": False},
+                       "linear": {"enable": "true"}, "exercise": {"rotation": "run, swim"}, "bogus": {"x": 1}})
+    assert cfg["general"]["work_start"] == "08:30" and cfg["general"]["min_block_minutes"] == 20
+    assert cfg["calendar"]["ics_urls"] == ["https://a/x.ics", "https://b/y.ics"] and cfg["calendar"]["busy_only"] is False
+    assert cfg["linear"]["enable"] is True and cfg["exercise"]["rotation"] == ["run", "swim"] and "bogus" not in cfg
+    import tomllib
+    data = tomllib.loads((tmp_path / "config.toml").read_text())
+    assert data["general"]["work_start"] == "08:30" and data["calendar"]["ics_urls"][1] == "https://b/y.ics"
+    assert set(config.secret_status()) == {"anthropic", "toggl", "linear", "sheets"}
+    config.load.cache_clear()

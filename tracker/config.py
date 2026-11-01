@@ -150,3 +150,54 @@ def keychain_set(account: str, value: str) -> None:
                  "sheets": "SHEETS_TOKEN"}
     os.environ[env_names.get(account, account.upper())] = value
     secret.cache_clear()
+
+
+# ---- editing from the app's Settings page --------------------------------------------------------------
+SECRETS = {"anthropic": "ANTHROPIC_API_KEY", "toggl": "TOGGL_API_TOKEN", "linear": "LINEAR_API_KEY", "sheets": "SHEETS_TOKEN"}
+
+
+def _toml_value(v: Any) -> str:
+    import json
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return str(v)
+    if isinstance(v, (list, tuple)):
+        return "[" + ", ".join(_toml_value(x) for x in v) + "]"
+    return json.dumps("" if v is None else str(v))
+
+
+def save(data: dict[str, Any]) -> dict[str, Any]:
+    """Write config.toml from a full config dict (sections of scalars and lists) and reload it. Only sections
+    and keys known from DEFAULTS are written, coerced to the default's type."""
+    merged = _merge(load(), {k: v for k, v in data.items() if isinstance(v, dict)})
+    lines = ["# Task Tracker configuration, edited from the app's Settings page.",
+             '# Secrets are not here: they live in the login Keychain (service "TaskTracker") or the environment.', ""]
+    for sec, defaults in DEFAULTS.items():
+        lines.append(f"[{sec}]")
+        for k, d in defaults.items():
+            v = merged.get(sec, {}).get(k, d)
+            if isinstance(d, bool):
+                v = bool(v) if not isinstance(v, str) else v.lower() in ("1", "true", "yes", "on")
+            elif isinstance(d, int) and not isinstance(v, bool):
+                try:
+                    v = int(v)
+                except (TypeError, ValueError):
+                    v = d
+            elif isinstance(d, list):
+                v = [str(x).strip() for x in (v if isinstance(v, (list, tuple)) else str(v).replace("\n", ",").split(",")) if str(x).strip()]
+            elif isinstance(d, str):
+                v = "" if v is None else str(v)
+            lines.append(f"{k} = {_toml_value(v)}")
+        lines.append("")
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    CONFIG_PATH.write_text("\n".join(lines))
+    return reload()
+
+
+def secret_status() -> dict[str, str]:
+    """For each secret: "env" (shell / env file), "keychain", or "" when it is not set anywhere."""
+    out = {}
+    for name, env in SECRETS.items():
+        out[name] = "env" if os.environ.get(env) and _keychain(name) != os.environ.get(env) else ("keychain" if _keychain(name) else "")
+    return out

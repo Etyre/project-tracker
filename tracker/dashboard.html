@@ -160,6 +160,11 @@ a{color:var(--accent)}
 .form input,.form select,.form textarea{width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit}
 .form textarea{min-height:110px}
 .form .full{grid-column:1/-1}
+.settings .card{margin-bottom:14px}.settings h3{margin:0 0 10px}.settings h3 .chip{margin-left:8px;font-weight:500;vertical-align:middle}
+.settings .form{grid-template-columns:170px 1fr}.settings .form label{font-size:14px}.settings .form .help{grid-column:2;font-size:12px;color:var(--muted);margin:-4px 0 2px}
+.settings .form input[type=checkbox]{width:auto;justify-self:start}
+.settings .keyrow{display:flex;gap:8px;align-items:center}.settings .keyrow input{flex:1}
+.settings .savebar{position:sticky;bottom:0;background:var(--bg);padding:10px 0;display:flex;gap:10px;align-items:center;justify-content:flex-end}
 #toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 14px;border-radius:10px;font-size:14px;max-width:90vw;display:none;z-index:30}
 table{border-collapse:collapse;width:100%}td,th{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;font-size:14px}
 .kbd{font-size:12px;color:var(--muted)}
@@ -173,6 +178,7 @@ table{border-collapse:collapse;width:100%}td,th{padding:6px 8px;border-bottom:1p
     <button data-view="feed">Feed</button>
     <button data-view="stats">Stats</button>
     <button data-view="snapshots">Snapshots</button>
+    <button data-view="settings">Settings</button>
   </nav>
   <div id="timer"></div>
 </aside>
@@ -281,6 +287,7 @@ async function render() {
     else if (view === 'plan') await renderPlan();
     else if (view === 'stats') await renderStats();
     else if (view === 'snapshots') await renderSnapshots();
+    else if (view === 'settings') await renderSettings();
   } catch (e) {$('#main').innerHTML = `<div class="card">Error: ${esc(e.message)}</div>`;}
 }
 
@@ -1406,6 +1413,57 @@ async function renderPlan() {
       <span>${i.kind === 'meeting' ? '' : i.status === 'pending' ? `<button class="btn small ghost" onclick="skipItem(${i.id}).then(renderPlan)">skip</button>` : `<button class="btn small ghost" onclick="api('/feed/reset_item','POST',{item_id:${i.id}}).then(renderPlan)">reset</button>`}</span></li>`).join('')}</ul></div>`;
 }
 
+// ------------------------------------------------------------------ settings
+// Everything the menu bar item and the files offer: API keys (Keychain), config.toml, the rules document.
+async function renderSettings() {
+  const s = await api('/settings'); const c = s.config, m = $('#main');
+  const f = (sec, key, label, help, type) => {
+    const v = c[sec]?.[key]; const id = `${sec}.${key}`;
+    let input;
+    if (type === 'bool') input = `<input type="checkbox" name="${id}" ${v ? 'checked' : ''}>`;
+    else if (type === 'lines') input = `<textarea name="${id}" rows="3" style="min-height:60px">${esc((v || []).join('\n'))}</textarea>`;
+    else if (Array.isArray(type)) input = `<select name="${id}">${type.map(o => `<option value="${o}" ${String(v) === String(o) ? 'selected' : ''}>${o}</option>`).join('')}</select>`;
+    else input = `<input name="${id}" type="${type || 'text'}" value="${esc(Array.isArray(v) ? v.join(', ') : (v ?? ''))}">`;
+    return `<label>${label}</label>${input}${help ? `<div class="help">${help}</div>` : ''}`;
+  };
+  const key = (name, label, placeholder, help) => `<label>${label}</label><div class="keyrow"><span class="chip ${s.secrets[name] ? 'ok' : 'warn'}" id="sec-${name}">${s.secrets[name] === 'env' ? 'set (environment)' : s.secrets[name] ? 'set' : 'not set'}</span>
+      <input type="password" placeholder="${placeholder}" autocomplete="off" data-secret="${name}"><button class="btn small" onclick="saveSecret('${name}', this)">Save</button></div>${help ? `<div class="help">${help}</div>` : ''}`;
+  const card = (title, status, body, intro) => `<div class="card"><h3>${title}${status === undefined ? '' : `<span class="chip ${status ? 'ok' : 'warn'}">${status ? 'on' : 'off'}</span>`}</h3>${intro ? `<p class="muted" style="margin:0 0 10px;font-size:13px">${intro}</p>` : ''}<div class="form">${body}</div></div>`;
+  m.innerHTML = `<div class="settings">
+    ${card('Claude', status.llm, key('anthropic', 'API key', 'sk-ant-…') + f('llm', 'enable', 'Use Claude', 'quick-add filing, estimates and the day plan; without it everything falls back to rules', 'bool') + f('llm', 'model', 'Model') + f('llm', 'effort', 'Plan effort', '', ['low', 'medium', 'high', 'max']) + f('llm', 'quick_add_effort', 'Quick-add effort', '', ['low', 'medium', 'high']))}
+    ${card('Work day', undefined, f('general', 'work_start', 'Starts', '', 'time') + f('general', 'work_end', 'Ends', '', 'time') + f('general', 'default_estimate_minutes', 'Default estimate (min)', 'for a task that has no estimate yet', 'number') + f('general', 'min_block_minutes', 'Smallest block (min)', '', 'number') + f('general', 'replan_drift_minutes', 'Re-plan when late by (min)', 'the next block is this late or early', 'number') + f('general', 'overrun_minutes', 'Re-plan after overrun (min)', '', 'number') + f('general', 'replan_min_interval_minutes', 'Re-plan at most every (min)', '', 'number'))}
+    ${card('Calendar', status.calendar, f('calendar', 'ics_urls', 'iCal feeds', 'one per line. Google Calendar → Settings → your calendar → "Secret address in iCal format"', 'lines') + f('calendar', 'ignore_titles', 'Ignore events titled', 'comma separated') + f('calendar', 'busy_only', 'Only busy events block time', '', 'bool'))}
+    ${card('Toggl', status.toggl, key('toggl', 'API token', '32 hex characters', 'Toggl Track → Profile → API token') + f('toggl', 'tag', 'Tag on timers') + f('toggl', 'project', 'Toggl project', 'optional: file every entry under this Toggl project') + f('toggl', 'journal_description', 'Journal timer name') + f('toggl', 'exercise_description', 'Exercise timer name'))}
+    ${card('Linear', status.linear, key('linear', 'API key', 'lin_api_…', 'Linear → Settings → API → personal API key') + f('linear', 'enable', 'Mirror my issues', '', 'bool') + f('linear', 'sync_minutes', 'Sync every (min)', '', 'number') + f('linear', 'category_name', 'Under project') + f('linear', 'group_by', 'Sub-project per', '', ['project', 'team']))}
+    ${card('Checklist & exercise sheets', status.sheets !== 'none' && !!status.sheets, key('sheets', 'Sheet token', 'the SHEET_TOKEN script property', 'the Apps Script in apps_script/Code.gs, deployed as a web app on the checklist spreadsheet') + f('sheets', 'apps_script_url', 'Apps Script URL', 'the deployment\'s /exec URL: reads both sheets and checks items off') + f('sheets', 'daily_checklist_csv', 'Checklist CSV URL', 'read-only fallback') + f('sheets', 'exercise_csv', 'Exercise CSV URL', 'read-only fallback') + f('sheets', 'cache_minutes', 'Cache (min)', '', 'number') + f('exercise', 'rotation', 'Exercise rotation', 'comma separated, used when no exercise sheet is set') + f('exercise', 'minutes', 'Exercise minutes', '', 'number'))}
+    ${card('Journal', undefined, f('journal', 'app', 'App', 'an app name, or a URL for Roam') + f('journal', 'desktop', 'Switch to desktop', 'Mission Control desktop number (needs its ctrl+N shortcut enabled); 0 = stay', 'number'))}
+    ${card('Snapshots', undefined, f('snapshots', 'enable', 'Daily snapshot', '', 'bool') + f('snapshots', 'time', 'At', '', 'time') + f('snapshots', 'dir', 'Folder', `empty = ${esc(s.paths.snapshots)}`))}
+    <div class="card"><h3>Scheduling rules &amp; heuristics</h3><p class="muted" style="margin:0 0 10px;font-size:13px">Free text that Claude reads when it builds the day. Say how you like your days shaped.</p>
+      <textarea id="rules" style="width:100%;min-height:220px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit">${esc(s.rules)}</textarea></div>
+    <div class="card"><h3>Files</h3><p class="muted" style="margin:0;font-size:13px">Settings: <code>${esc(s.paths.config)}</code><br>Data and snapshots: <code>${esc(s.paths.data)}</code><br>Rules: <code>${esc(s.paths.rules)}</code></p></div>
+    <div class="savebar"><span class="muted" id="testout" style="flex:1;font-size:13px"></span><button class="btn" onclick="testIntegrations()">Test connections</button><button class="btn primary" onclick="saveSettings()">Save settings</button></div>
+  </div>`;
+}
+async function saveSettings() {
+  const cfg = {};
+  document.querySelectorAll('.settings [name]').forEach(el => {
+    const [sec, key] = el.name.split('.'); cfg[sec] = cfg[sec] || {};
+    cfg[sec][key] = el.type === 'checkbox' ? el.checked : el.tagName === 'TEXTAREA' ? el.value.split('\n').map(x => x.trim()).filter(Boolean) : el.value;
+  });
+  try {await api('/settings', 'PUT', {config: cfg, rules: $('#rules').value}); await refreshStatus(); toast('Settings saved'); renderSettings();}
+  catch (e) {toast('Could not save: ' + esc(e.message), 6000);}
+}
+async function saveSecret(name, btn) {
+  const inp = btn.parentElement.querySelector('input'); const value = inp.value.trim(); if (!value) {toast('Paste the key first'); return;}
+  try {const r = await api('/settings/secret', 'POST', {name, value}); inp.value = ''; const chip = $('#sec-' + name); chip.textContent = 'set'; chip.className = 'chip ok'; await refreshStatus(); toast('Saved to your Keychain'); renderSettings();}
+  catch (e) {toast('Could not save: ' + esc(e.message), 6000);}
+}
+async function testIntegrations() {
+  const out = $('#testout'); out.textContent = 'Testing…';
+  try {const r = await api('/settings/test', 'POST'); out.innerHTML = Object.entries(r).map(([k, v]) => `<b>${k}</b> ${esc(v)}`).join(' · ');}
+  catch (e) {out.textContent = 'Test failed: ' + e.message;}
+}
+
 // ------------------------------------------------------------------ snapshots
 // The daily Markdown files, newest first; the chosen one is rendered with the same Markdown as the notes boxes.
 let snapDate = null;
@@ -1439,7 +1497,7 @@ async function renderStats() {
     <h3>Integrations</h3>
     <table>${[['Claude (quick add, scheduling)', status.llm], ['Toggl', status.toggl], ['Linear', status.linear], ['Calendar feeds', status.calendar], ['Checklist / exercise sheets', status.sheets !== 'none' ? status.sheets : false], ['Sheet write-back', status.sheets_writable]].map(([k, v]) => `<tr><td>${k}</td><td>${v ? '<span class="chip ok">on</span>' : '<span class="chip warn">off</span>'}</td></tr>`).join('')}</table>
     <p class="muted"><a href="#plan" onclick="go('plan');return false">Inspect today's internal schedule</a> (debugging only; the feed is the normal interface).</p>
-    <p class="muted">Work day ${status.work_start}–${status.work_end}. Edit config.toml and the rules doc, then <button class="btn small" onclick="api('/refresh','POST').then(()=>toast('Reloaded'))">reload config</button>.</p></div>`;
+    <p class="muted">Work day ${status.work_start}–${status.work_end}. Keys, feeds and the rules document are on the <a href="#settings" onclick="go('settings');return false">Settings</a> page.</p></div>`;
 }
 
 refreshStatus().then(render);

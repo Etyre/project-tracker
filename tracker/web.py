@@ -350,6 +350,73 @@ def create_app() -> FastAPI:
         db.uncomplete_task(tid)
         return {"ok": True, "linear_error": linear.safe_push(tid)}
 
+    # ------------------------------------------------ settings (everything the menu bar item and the files offer)
+    @app.get("/api/settings")
+    def get_settings():
+        return {"config": config.load(), "secrets": config.secret_status(),
+                "rules": config.RULES_PATH.read_text() if config.RULES_PATH.exists() else "",
+                "paths": {"config": str(config.CONFIG_PATH), "data": str(config.APP_SUPPORT), "rules": str(config.RULES_PATH),
+                          "snapshots": str(snapshot.snapshot_dir())}}
+
+    @app.put("/api/settings")
+    def put_settings(body: dict[str, Any]):
+        cfg = config.save(body.get("config") or {})
+        if "rules" in body and isinstance(body["rules"], str):
+            config.RULES_PATH.write_text(body["rules"])
+        calendar_feed._cache.clear()
+        return {"ok": True, "config": cfg}
+
+    @app.post("/api/settings/secret")
+    def put_secret(body: dict[str, str]):
+        name, value = body.get("name", ""), (body.get("value") or "").strip()
+        if name not in config.SECRETS:
+            raise HTTPException(400, "unknown secret")
+        if not value:
+            raise HTTPException(400, "empty value")
+        config.keychain_set(name, value)
+        llm._has_credentials.cache_clear()
+        toggl.me.cache_clear()
+        return {"ok": True, "secrets": config.secret_status()}
+
+    @app.post("/api/settings/test")
+    def test_integrations():
+        """Try each configured integration and say what happened (the `tracker check` command, for the page)."""
+        out: dict[str, str] = {}
+        out["claude"] = "key found" if llm.enabled() else ("off in settings" if not config.load()["llm"]["enable"] else "no API key")
+        if toggl.enabled():
+            try:
+                me = toggl.me()
+                out["toggl"] = f"ok: {me.get('fullname')}"
+            except Exception as e:
+                out["toggl"] = f"error: {e}"
+        else:
+            out["toggl"] = "no API token"
+        if linear.enabled():
+            try:
+                out["linear"] = f"ok: {len(linear.fetch_my_issues())} issues assigned to you"
+            except Exception as e:
+                out["linear"] = f"error: {e}"
+        else:
+            out["linear"] = "off" if not config.load()["linear"]["enable"] else "no API key"
+        urls = config.load()["calendar"]["ics_urls"]
+        if urls:
+            try:
+                out["calendar"] = f"ok: {len(calendar_feed.events_for(dt.date.today()))} events today from {len(urls)} feed(s)"
+            except Exception as e:
+                out["calendar"] = f"error: {e}"
+        else:
+            out["calendar"] = "no feeds"
+        cfg = config.load()["sheets"]
+        if cfg.get("apps_script_url") or cfg["daily_checklist_csv"]:
+            try:
+                c = sheets.daily_checklist()
+                out["sheets"] = f"ok: {len(c.get('items', []))} checklist items ({c.get('source')}), write-back {'on' if sheets.writable() else 'off'}"
+            except Exception as e:
+                out["sheets"] = f"error: {e}"
+        else:
+            out["sheets"] = "not configured"
+        return out
+
     @app.get("/api/snapshots")
     def snapshots():
         return {"dir": str(snapshot.snapshot_dir()), "items": snapshot.list_snapshots()}

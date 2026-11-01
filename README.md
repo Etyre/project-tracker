@@ -30,9 +30,10 @@ open "dist/Task Tracker.app"            # or drag to /Applications; add to Login
 ```
 
 A Finder-launched app does not see your shell environment, so store the keys where the app can find them:
-the menu bar item has **Set Anthropic API Key… / Set Toggl API Token… / Set Linear API Key… / Set Sheets
-Token…** (saved to the login Keychain, service "TaskTracker"), or put them in
-`~/Library/Application Support/TaskTracker/env` as `NAME=value` lines. The bundle references this project
+the **Settings** page in the app (API keys go to the login Keychain, service "TaskTracker"; everything else is
+written to `config.toml`, and the scheduling rules document is edited there too, with a "Test connections"
+button), the menu bar item's **Set … Key…** entries, or `~/Library/Application Support/TaskTracker/env` as
+`NAME=value` lines. The bundle references this project
 directory (its venv and `config.toml`), so rebuild after moving the project. The launcher restarts the app if it
 crashes and logs to `launcher.log` in the data folder.
 
