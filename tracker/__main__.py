@@ -23,6 +23,7 @@ def main(argv=None) -> int:
     p.add_argument("--from-now", action="store_true")
     sub.add_parser("sync-linear", help="pull Linear issues now")
     sub.add_parser("snapshot", help="write today's Markdown snapshot of the outline now")
+    sub.add_parser("open", help="bring the running app's window to the front (starts the app if needed)")
     sub.add_parser("check", help="show which integrations are configured and reachable")
     q = sub.add_parser("quick-add", help="file a task via Claude")
     q.add_argument("text", nargs="+")
@@ -50,6 +51,17 @@ def main(argv=None) -> int:
         for it in plan["items"]:
             print(f"{it['start']}-{it['end']}  {it['kind']:9s} {it['title']}  {('(' + it['note'] + ')') if it['note'] else ''}")
         print("\nExercise today:", plan["exercise"])
+        return 0
+    if cmd == "open":
+        import urllib.request
+        cfg = config.load()["general"]
+        try:
+            urllib.request.urlopen(urllib.request.Request(f"http://{cfg['host']}:{cfg['port']}/api/window", method="POST"), timeout=5).close()
+            print("window shown")
+        except Exception:
+            import subprocess
+            subprocess.run(["open", "-a", "Task Tracker"])
+            print("app launched")
         return 0
     if cmd == "snapshot":
         from . import snapshot

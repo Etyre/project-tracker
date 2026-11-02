@@ -139,6 +139,8 @@ class TaskTrackerApp(rumps.App):
             None,
             rumps.MenuItem("Quit " + APP_NAME, callback=lambda _: rumps.quit_application()),
         ]
+        from . import web
+        web.show_window_hook = lambda fragment=None: AppHelper.callAfter(self.main_window.show, fragment)
         threading.Thread(target=self._serve, daemon=True, name="web").start()
         rumps.Timer(self.refresh, 30).start()
         self._open_when_ready()

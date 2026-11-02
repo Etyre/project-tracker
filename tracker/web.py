@@ -204,8 +204,19 @@ def _checklist_state(date: str) -> dict:
 
 
 # ============================================================ app
+show_window_hook = None   # set by the native app: called with a page fragment to bring the window to the front
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="Task Tracker")
+
+    @app.post("/api/window")
+    def show_window(fragment: str | None = None):
+        """Bring the app window to the front (used by the launcher and `python -m tracker open`)."""
+        if show_window_hook is None:
+            return {"ok": False, "error": "not running as the native app"}
+        show_window_hook(fragment)
+        return {"ok": True}
 
     @app.get("/", response_class=HTMLResponse)
     def index():
