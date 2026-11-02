@@ -420,12 +420,9 @@ def create_app() -> FastAPI:
                 out["linear"] = f"error: {e}"
         else:
             out["linear"] = "off" if not config.load()["linear"]["enable"] else "no API key"
-        urls = config.load()["calendar"]["ics_urls"]
-        if urls:
-            try:
-                out["calendar"] = f"ok: {len(calendar_feed.events_for(dt.date.today()))} events today from {len(urls)} feed(s)"
-            except Exception as e:
-                out["calendar"] = f"error: {e}"
+        checks = calendar_feed.check_feeds()
+        if checks:
+            out["calendar"] = "; ".join(f"ok: {c['events_today']} events today" if c["ok"] else f"{c['url']} {c['error']}" for c in checks)
         else:
             out["calendar"] = "no feeds"
         cfg = config.load()["sheets"]

@@ -69,3 +69,28 @@ def events_for(day: dt.date) -> list[dict]:
             out.append({"title": title, "start": start, "end": end, "all_day": False})
     out.sort(key=lambda e: (e["all_day"], e["start"] or dt.datetime.min.replace(tzinfo=local_tz)))
     return out
+
+
+def check_feeds(day: dt.date | None = None) -> list[dict]:
+    """For the Settings page's connection test: what each configured feed actually returns."""
+    day = day or dt.date.today()
+    out: list[dict] = []
+    for url in config.load()["calendar"].get("ics_urls", []):
+        label = url.split("//", 1)[-1].split("/", 1)[0] + "/…/" + url.rstrip("/").rsplit("/", 1)[-1][:24]
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "task-tracker"}), timeout=30) as r:
+                data = r.read()
+        except Exception as e:
+            out.append({"url": label, "ok": False, "error": f"unreachable: {e}"})
+            continue
+        if data.lstrip()[:1] == b"<" or b"BEGIN:VCALENDAR" not in data[:4000]:
+            out.append({"url": label, "ok": False, "error": "returns a web page, not calendar data. Use the calendar's "
+                        "\"Secret address in iCal format\" from Google Calendar settings (it ends in basic.ics)"})
+            continue
+        try:
+            n = len(recurring_ical_events.of(icalendar.Calendar.from_ical(data)).at(day))
+            _cache[url] = (time.time(), data)
+            out.append({"url": label, "ok": True, "events_today": n})
+        except Exception as e:
+            out.append({"url": label, "ok": False, "error": f"could not parse: {e}"})
+    return out
