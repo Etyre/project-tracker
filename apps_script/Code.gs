@@ -8,13 +8,14 @@
  *       SHEET_TOKEN      = a long random string (`openssl rand -hex 24`)
  *       CHECKLIST_SHEET  = tab name of the daily checklist            (default "Checklist")
  *       EXERCISE_SHEET   = tab name of the exercise log                (default "Exercise")
- *       EXERCISE_SHEET_ID= spreadsheet id if the exercise log is in a different file (optional)
  *       ITEM_COLUMN      = column letter ("G") or header of the column holding the item text (default: first)
  *       HEADER_ROW       = row number holding the date headers (default: found automatically, the first row
  *                          within the top 10 that holds a date; otherwise 1)
  *       MODE             = "date_columns" | "last_done" | "checkbox"   (default "date_columns")
  *  3. Deploy -> New deployment -> Web app. Execute as: Me. Who has access: Anyone.
  *     (The token check is what stops strangers; sheet sharing is unaffected.)
+ *     The manifest (appsscript.json, alongside this file) limits the script to the spreadsheet it lives in:
+ *     the "spreadsheets.currentonly" scope. An exercise sheet in another file needs its own copy of this script.
  *  4. Put the /exec URL in config.toml ([sheets] apps_script_url) and the token in the env as SHEETS_TOKEN
  *     (or Keychain: security add-generic-password -s TaskTracker -a sheets -w).
  *  5. After editing this script: Deploy -> Manage deployments -> Edit -> New version.
@@ -38,10 +39,8 @@ function tokenOk(t) { var want = cfg('SHEET_TOKEN', ''); return want && t === wa
 function checklistSheet() {
   return SpreadsheetApp.getActiveSpreadsheet().getSheetByName(cfg('CHECKLIST_SHEET', 'Checklist'));
 }
-function exerciseSheet() {
-  var id = cfg('EXERCISE_SHEET_ID', '');
-  var ss = id ? SpreadsheetApp.openById(id) : SpreadsheetApp.getActiveSpreadsheet();
-  return ss.getSheetByName(cfg('EXERCISE_SHEET', 'Exercise'));
+function exerciseSheet() {   // a tab in this same file (the script only has access to the spreadsheet it lives in)
+  return SpreadsheetApp.getActiveSpreadsheet().getSheetByName(cfg('EXERCISE_SHEET', 'Exercise'));
 }
 
 function todayKey() {

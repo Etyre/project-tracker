@@ -51,7 +51,10 @@ Google Calendar -> Settings -> your calendar -> *Secret address in iCal format*.
    (and `EXERCISE_SHEET_ID` if the exercise log is a different file), optionally `ITEM_COLUMN` (a column
    letter or header), `HEADER_ROW` (found automatically: the first row holding a date) and `MODE`.
 3. Deploy -> Web app (Execute as me, access Anyone). Put the `/exec` URL in `[sheets] apps_script_url`
-   and the token in `SHEETS_TOKEN`.
+   and the token in `SHEETS_TOKEN`. The manifest `apps_script/appsscript.json` (turn on "Show appsscript.json"
+   in the project settings to paste it) asks only for the `spreadsheets.currentonly` scope, so the script can
+   touch nothing but the spreadsheet it lives in; the exercise sheet must be a tab of the same file, or get its
+   own copy of the script.
 
 Checking a checklist item off in the feed ticks it in the sheet (today's date column, a "Last done" column,
 or a "Done" checkbox, per `MODE`). The scheduler reads every other column (frequency, minutes, when...) as-is,
