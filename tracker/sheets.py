@@ -145,46 +145,54 @@ def _kind_from_session(row: dict) -> str:
     return str(row.get("exercise") or "exercise").strip().lower()
 
 
+def _local_dt(s: str) -> dt.datetime | None:
+    """An ISO timestamp from the exercise app, with or without a zone, as local naive time."""
+    s = str(s or "").strip()
+    if not s:
+        return None
+    try:
+        d = dt.datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return d.astimezone().replace(tzinfo=None) if d.tzinfo else d
+
+
 def exercise_sessions(days: int = 120) -> list[dict]:
-    """Sessions from the exercise logging sheet as plain records, newest first:
-    {kind, exercise, category, date, weekday, minutes, started_at, finished_at, sets_summary, fields_summary, notes}.
-    [] when the sheet is not configured or unreachable (the app then uses its own timers and Toggl)."""
+    """Sessions from the exercise logging sheet, newest first, as plain records:
+    {kind, exercise, category, date, weekday, minutes, started_at, finished_at, sets_summary, notes, source}.
+    Read through the exercise app's own sync script (`?action=export` returns the logged session objects), with no
+    write-back. [] when the URL is not configured or unreachable; the app then uses its own timers and Toggl."""
     url = config.load()["sheets"].get("exercise_script_url") or ""
-    tok = config.secret("sheets")
-    if not url or not tok:
+    if not url:
         return []
-    full = url + ("&" if "?" in url else "?") + urllib.parse.urlencode({"token": tok, "days": days})
+    full = url + ("&" if "?" in url else "?") + "action=export"
     text = _get(full, config.load()["sheets"]["cache_minutes"] * 60)
     if not text:
         return []
     try:
         data = json.loads(text)
     except ValueError:
-        log.warning("exercise log script returned non-JSON")
+        log.warning("exercise log script returned non-JSON (is it the /exec URL?)")
         return []
     if not data.get("ok"):
         log.warning("exercise log script error: %s", data.get("error"))
         return []
+    since = dt.datetime.now() - dt.timedelta(days=days)
     out = []
-    for r in data["sessions"].get("rows", []):
-        started = str(r.get("started_at") or "")[:19]
-        try:
-            st = dt.datetime.fromisoformat(started)
-        except ValueError:
+    for s in data.get("sessions") or []:
+        st = _local_dt(s.get("startedAt") or s.get("started_at"))
+        if st is None or st < since:
             continue
-        mins = r.get("duration_min")
-        try:
-            mins = float(mins)
-        except (TypeError, ValueError):
-            fin = str(r.get("finished_at") or "")[:19]
-            try:
-                mins = (dt.datetime.fromisoformat(fin) - st).total_seconds() / 60
-            except ValueError:
-                mins = 0
-        out.append({"kind": _kind_from_session(r), "exercise": str(r.get("exercise") or ""), "category": str(r.get("category") or ""),
-                    "date": st.date().isoformat(), "weekday": st.strftime("%a"), "minutes": int(round(mins)),
-                    "started_at": started, "finished_at": str(r.get("finished_at") or "")[:19],
-                    "sets_summary": str(r.get("sets_summary") or ""), "fields_summary": str(r.get("fields_summary") or ""),
-                    "notes": str(r.get("notes") or ""), "source": "sheet"})
+        fin = _local_dt(s.get("finishedAt") or s.get("finished_at"))
+        secs = s.get("durationSec")
+        mins = float(secs) / 60 if isinstance(secs, (int, float)) else ((fin - st).total_seconds() / 60 if fin else 0)
+        name = str(s.get("exerciseName") or s.get("exercise") or "")
+        sets = s.get("sets") or []
+        sets_summary = ", ".join(f"{x.get('reps', '?')} x {x.get('weight', '?')}{x.get('unit', '')}" for x in sets if isinstance(x, dict))
+        out.append({"kind": _kind_from_session({"category": s.get("category"), "exercise": name}), "exercise": name,
+                    "category": str(s.get("category") or ""), "date": st.date().isoformat(), "weekday": st.strftime("%a"),
+                    "minutes": int(round(mins)), "started_at": st.isoformat(timespec="seconds"),
+                    "finished_at": fin.isoformat(timespec="seconds") if fin else "", "sets_summary": sets_summary,
+                    "notes": str(s.get("notes") or ""), "source": "sheet"})
     out.sort(key=lambda h: h["started_at"], reverse=True)
     return out

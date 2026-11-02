@@ -36,7 +36,7 @@ def history(days: int = 90) -> list[dict]:
     seen_toggl: set[int] = set()
     logged: set[tuple[str, str]] = set()
     for s in sheets.exercise_sessions(days):
-        out.append({k: s[k] for k in ("kind", "date", "weekday", "minutes", "source")} | {"exercise": s["exercise"], "summary": s["sets_summary"] or s["fields_summary"]})
+        out.append({k: s[k] for k in ("kind", "date", "weekday", "minutes", "source")} | {"exercise": s["exercise"], "summary": s["sets_summary"]})
         logged.add((s["date"], s["kind"]))
     for e in db.rows("SELECT * FROM time_entries WHERE kind='exercise' AND started_at>=? ORDER BY started_at DESC", (since,)):
         mins = int(((e["stopped_at"] or time.time()) - e["started_at"]) / 60)

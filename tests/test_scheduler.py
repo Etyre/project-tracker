@@ -399,15 +399,16 @@ def test_feed_uncomplete_reopens_task_and_block():
 
 def test_exercise_sessions_parse_and_merge(monkeypatch):
     from tracker import exercise, sheets
-    payload = {"ok": True, "sessions": {"headers": [], "rows": [
-        {"exercise": "Chin Ups", "category": "Strength Training", "started_at": "2026-11-02T11:02:45", "finished_at": "2026-11-02T11:50:00", "duration_min": "47.2", "sets_summary": "3 x 8"},
-        {"exercise": "Easy run", "category": "Running", "started_at": "2026-11-01T07:00:00", "finished_at": "", "duration_min": None},
-        {"exercise": "", "category": "", "started_at": "bad"}]}}
-    monkeypatch.setattr(sheets, "_get", lambda url, max_age: __import__("json").dumps(payload))
+    payload = {"ok": True, "sessions": [
+        {"id": "a", "exerciseName": "Chin Ups", "category": "Strength Training", "startedAt": "2026-11-02T11:02:44.677", "finishedAt": "2026-11-02T11:50:00.000", "durationSec": 2835, "sets": [{"reps": 8, "weight": 0, "unit": "lb"}]},
+        {"id": "b", "exerciseName": "Easy run", "category": "Running", "startedAt": "2026-11-01T14:00:00Z", "finishedAt": None, "durationSec": None},
+        {"id": "c", "exerciseName": "Old", "category": "Running", "startedAt": "2020-01-01T10:00:00"},
+        {"id": "d", "exerciseName": "Broken", "startedAt": "nope"}]}
+    monkeypatch.setattr(sheets, "_get", lambda url, max_age: __import__("json").dumps(payload) if "action=export" in url else "")
     monkeypatch.setitem(config.load()["sheets"], "exercise_script_url", "https://example.invalid/exec")
-    monkeypatch.setattr(config, "secret", lambda name: "tok" if name == "sheets" else None)
     sess = sheets.exercise_sessions()
     assert [(x["kind"], x["date"], x["minutes"]) for x in sess] == [("strength", "2026-11-02", 47), ("run", "2026-11-01", 0)]
+    assert sess[0]["sets_summary"] == "8 x 0lb"
     eid = db.start_entry("exercise", "Strength", None, None)          # the app's own timer for the same session
     db.execute("UPDATE time_entries SET started_at=?, stopped_at=? WHERE id=?", (dt.datetime(2026, 11, 2, 11, 0).timestamp(), dt.datetime(2026, 11, 2, 11, 40).timestamp(), eid))
     hist = exercise.history()
