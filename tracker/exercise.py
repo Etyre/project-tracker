@@ -27,15 +27,22 @@ def _kind_of(label: str) -> str:
 
 
 def history(days: int = 90) -> list[dict]:
-    """Exercise sessions, newest first: {kind, date, weekday, minutes, source}."""
+    """Exercise sessions, newest first: {kind, date, weekday, minutes, source}. The exercise logging sheet (parsed
+    by sheets.exercise_sessions) is the primary record; the app's own timers and Toggl entries fill in sessions
+    the sheet does not have (same date and kind = the same session)."""
     global _toggl_cache
     since = time.time() - days * 86400
     out: list[dict] = []
     seen_toggl: set[int] = set()
+    logged: set[tuple[str, str]] = set()
+    for s in sheets.exercise_sessions(days):
+        out.append({k: s[k] for k in ("kind", "date", "weekday", "minutes", "source")} | {"exercise": s["exercise"], "summary": s["sets_summary"] or s["fields_summary"]})
+        logged.add((s["date"], s["kind"]))
     for e in db.rows("SELECT * FROM time_entries WHERE kind='exercise' AND started_at>=? ORDER BY started_at DESC", (since,)):
         mins = int(((e["stopped_at"] or time.time()) - e["started_at"]) / 60)
         d = dt.datetime.fromtimestamp(e["started_at"])
-        out.append({"kind": _kind_of(e["label"]), "date": d.date().isoformat(), "weekday": d.strftime("%a"), "minutes": mins, "source": "app"})
+        if (d.date().isoformat(), _kind_of(e["label"])) not in logged:
+            out.append({"kind": _kind_of(e["label"]), "date": d.date().isoformat(), "weekday": d.strftime("%a"), "minutes": mins, "source": "app"})
         if e["toggl_id"]:
             seen_toggl.add(int(e["toggl_id"]))
     known = {h["kind"] for h in out} | {k.lower() for k in config.load()["exercise"]["rotation"]}
@@ -54,6 +61,8 @@ def history(days: int = 90) -> list[dict]:
                 if dur <= 0:
                     continue
                 d = dt.datetime.fromisoformat(str(t["start"]).replace("Z", "+00:00")).astimezone()
+                if (d.date().isoformat(), _kind_of(desc)) in logged:
+                    continue
                 out.append({"kind": _kind_of(desc), "date": d.date().isoformat(), "weekday": d.strftime("%a"), "minutes": dur // 60, "source": "toggl"})
         except toggl.TogglError as e:
             log.warning("toggl history unavailable: %s", e)
@@ -103,7 +112,6 @@ def decide(date: str | None = None, force: bool = False) -> dict:
             "recent_sessions": hist[:30],
             "typical_minutes_by_kind": {k: typical_minutes(k, hist) for k in sorted({h["kind"] for h in hist})},
             "sessions_this_week": [h for h in hist if dt.date.fromisoformat(h["date"]) >= day - dt.timedelta(days=day.weekday())],
-            "exercise_sheet_csv": sheets.exercise_sheet()[:4000],
         }
         try:
             res = llm.pick_exercise(config.exercise_text(), json.dumps(ctx, indent=1, default=str))

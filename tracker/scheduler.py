@@ -203,7 +203,6 @@ def build(day: dt.date | None = None, from_now: bool = False, until: str | None 
     tasks = candidates(day)
     cl = sheets.daily_checklist()
     cl_text, cl_rows = cl["text"], cl["items"]
-    ex_text = sheets.exercise_sheet()
     done_items = db.checklist_done_today(date) | {r["item"] for r in cl_rows if r.get("done_today")}
     checklist_minutes = 0
     for r in cl_rows:
@@ -245,7 +244,6 @@ def build(day: dt.date | None = None, from_now: bool = False, until: str | None 
             "checklist_items": [r["item"] for r in cl_rows],
             "checklist_items_done_today": sorted(done_items),
             "checklist_block_done_today": checklist_done,
-            "exercise_sheet_csv": ex_text[:6000],
             "recent_exercise": recent_ex,
             "exercise_done_today": exercise_done,
             "exercise_today": {k: decision.get(k) for k in ("kind", "minutes", "reason")},

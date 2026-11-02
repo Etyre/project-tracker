@@ -133,7 +133,10 @@ snapshot at the end. If the app was asleep at that hour the file is written when
 The **Snapshots** tab lists them by day and shows any of them; its **Snapshot now** button (or
 `python -m tracker snapshot`) writes one on demand.
 
-**Exercise** - `Exercise plan.md` (edited on the Settings page) is your brief to Claude: what you do, how to
+**Exercise** - the exercise logging sheet (a Sessions tab written by your exercise app, read through its own
+small script `apps_script/ExerciseLog.gs`, set as "Exercise log script URL" in Settings) is the record: each row's
+category, start time and duration become the history, and the app's timers and Toggl fill in only sessions the
+sheet lacks. `Exercise plan.md` (edited on the Settings page) is your brief to Claude: what you do, how to
 pick today's session, rest days, and when. Once each morning (from 06:00, or when the first plan is built) Claude
 chooses the kind for the day from the brief and your history, and that choice is kept through every re-plan. The
 length is never configured: it is the typical length of that kind in your Toggl history (the app's exercise

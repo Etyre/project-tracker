@@ -131,8 +131,7 @@ SCHEDULE_SYSTEM_PREFIX = """You build a realistic, prioritised plan for the user
 
 You receive: the work-day window, free windows (after calendar meetings), candidate tasks with priority inputs and
 calibrated time estimates, the user's daily checklist sheet, their exercise brief (their own instructions on what
-exercise to do, how long and when), their exercise sheet if they keep one, recent exercise history, and their own
-rules and heuristics document. Produce an ordered list of blocks that exactly fit inside the free
+exercise to do, how long and when), recent exercise history, and their own rules and heuristics document. Produce an ordered list of blocks that exactly fit inside the free
 windows (meetings are added by the system; do not emit them).
 
 Hard constraints:
@@ -209,8 +208,8 @@ def quick_add(text: str, tree_text: str, today: str) -> dict:
 EXERCISE_PICK_SYSTEM = """You are the user's exercise coach, choosing today's session once, in the morning.
 
 You get the user's own brief (what they do, how they want kinds to alternate, rest days, timing) and their recent
-history: sessions with kind, date, weekday and minutes, what has been done this week, and the typical length of
-each kind. Pick the kind for today that best follows the brief given the history; "rest" is a valid answer when
+history (from their exercise log): sessions with kind, date, weekday and minutes, what has been done this week,
+and the typical length of each kind. Pick the kind for today that best follows the brief given the history; "rest" is a valid answer when
 the brief implies one. `minutes` is only a guess for a kind with no history yet (the app otherwise uses the typical
 length from the history). `reason` is one short sentence the user will read.
 

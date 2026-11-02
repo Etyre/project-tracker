@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import csv
 import io
+import datetime as dt
 import json
 import logging
 import time
@@ -127,3 +128,63 @@ def mark_done(item: str, undo: bool = False) -> dict:
 
 def invalidate() -> None:
     _cache.clear()
+
+
+# ---- the exercise logging sheet (a Sessions tab written by the user's exercise app; read-only) -------------
+CATEGORY_KIND = {"strength training": "strength", "strength": "strength", "weights": "strength", "lifting": "strength",
+                 "running": "run", "run": "run", "cardio": "cardio", "mobility": "mobility", "stretching": "mobility",
+                 "yoga": "mobility", "cycling": "cycling", "swimming": "swim", "walking": "walk"}
+
+
+def _kind_from_session(row: dict) -> str:
+    cat = str(row.get("category") or "").strip().lower()
+    if cat in CATEGORY_KIND:
+        return CATEGORY_KIND[cat]
+    if cat:
+        return cat.replace(" training", "")
+    return str(row.get("exercise") or "exercise").strip().lower()
+
+
+def exercise_sessions(days: int = 120) -> list[dict]:
+    """Sessions from the exercise logging sheet as plain records, newest first:
+    {kind, exercise, category, date, weekday, minutes, started_at, finished_at, sets_summary, fields_summary, notes}.
+    [] when the sheet is not configured or unreachable (the app then uses its own timers and Toggl)."""
+    url = config.load()["sheets"].get("exercise_script_url") or ""
+    tok = config.secret("sheets")
+    if not url or not tok:
+        return []
+    full = url + ("&" if "?" in url else "?") + urllib.parse.urlencode({"token": tok, "days": days})
+    text = _get(full, config.load()["sheets"]["cache_minutes"] * 60)
+    if not text:
+        return []
+    try:
+        data = json.loads(text)
+    except ValueError:
+        log.warning("exercise log script returned non-JSON")
+        return []
+    if not data.get("ok"):
+        log.warning("exercise log script error: %s", data.get("error"))
+        return []
+    out = []
+    for r in data["sessions"].get("rows", []):
+        started = str(r.get("started_at") or "")[:19]
+        try:
+            st = dt.datetime.fromisoformat(started)
+        except ValueError:
+            continue
+        mins = r.get("duration_min")
+        try:
+            mins = float(mins)
+        except (TypeError, ValueError):
+            fin = str(r.get("finished_at") or "")[:19]
+            try:
+                mins = (dt.datetime.fromisoformat(fin) - st).total_seconds() / 60
+            except ValueError:
+                mins = 0
+        out.append({"kind": _kind_from_session(r), "exercise": str(r.get("exercise") or ""), "category": str(r.get("category") or ""),
+                    "date": st.date().isoformat(), "weekday": st.strftime("%a"), "minutes": int(round(mins)),
+                    "started_at": started, "finished_at": str(r.get("finished_at") or "")[:19],
+                    "sets_summary": str(r.get("sets_summary") or ""), "fields_summary": str(r.get("fields_summary") or ""),
+                    "notes": str(r.get("notes") or ""), "source": "sheet"})
+    out.sort(key=lambda h: h["started_at"], reverse=True)
+    return out

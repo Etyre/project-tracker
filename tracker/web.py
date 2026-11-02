@@ -426,6 +426,12 @@ def create_app() -> FastAPI:
         else:
             out["calendar"] = "no feeds"
         cfg = config.load()["sheets"]
+        if cfg.get("exercise_script_url"):
+            try:
+                sess = sheets.exercise_sessions()
+                out["exercise_log"] = f"ok: {len(sess)} sessions" + (f", last {sess[0]['date']} {sess[0]['exercise']} ({sess[0]['minutes']} min)" if sess else "")
+            except Exception as e:
+                out["exercise_log"] = f"error: {e}"
         if cfg.get("apps_script_url") or cfg["daily_checklist_csv"]:
             try:
                 c = sheets.daily_checklist()

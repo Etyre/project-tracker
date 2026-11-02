@@ -58,6 +58,7 @@ DEFAULTS: dict[str, Any] = {
     },
     "sheets": {
         "apps_script_url": "",               # the deployed Apps Script's /exec URL (read + write-back)
+        "exercise_script_url": "",           # the exercise logging sheet's own read-only script (/exec URL)
         "daily_checklist_csv": "",           # CSV export URL of the daily checklist sheet
         "exercise_csv": "",                  # CSV export URL of the exercise sheet
         "cache_minutes": 30,
