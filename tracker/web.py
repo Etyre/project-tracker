@@ -177,13 +177,21 @@ def _start_timer(kind: str, label: str, task_id: int | None = None, extra_tags: 
     return {"entry_id": eid, "toggl_id": toggl_id, "toggl_error": err}
 
 
+def _exercise_label(kind: str) -> str:
+    """The timer (and Toggl entry) is named after the kind of exercise chosen for the day: "Run", "Strength"."""
+    k = kind.strip()
+    if k.lower().startswith("exercise:"):
+        k = k[9:].strip()
+    return (k[:1].upper() + k[1:]) if k else "Exercise"
+
+
 def _item_label(it: dict) -> str:
     if it["kind"] == "exercise":
-        return it["title"] if it["title"].lower().startswith("exercise") else f"Exercise: {it['title']}"
+        return _exercise_label(it["title"])
     if it["kind"] == "checklist":
         return "Daily checklist"
     if it["kind"] == "journal":
-        return config.load()["toggl"]["journal_description"]
+        return "Journaling"
     return it["title"]
 
 
@@ -685,7 +693,7 @@ def create_app() -> FastAPI:
     def exercise_start():
         date = db.today()
         kind = _current_exercise(date)
-        res = _start_timer("exercise", f"Exercise: {kind}", None, ["exercise"])
+        res = _start_timer("exercise", _exercise_label(kind), None, ["exercise"])
         it = db.row("SELECT id FROM plan_items WHERE date=? AND kind='exercise' AND status IN ('pending','active')", (date,))
         if it:
             db.set_item_status(it["id"], "active")
@@ -693,7 +701,7 @@ def create_app() -> FastAPI:
 
     @app.post("/api/journal/start")
     def journal_start():
-        res = _start_timer("journal", config.load()["toggl"]["journal_description"], None, ["journal"])
+        res = _start_timer("journal", "Journaling", None, ["journal"])
         err = journal.open_notes_app()
         return {"ok": True, **res, "open_error": err}
 

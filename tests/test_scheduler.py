@@ -354,3 +354,10 @@ def test_schedule_prompt_carries_exercise_brief():
     assert "Mornings for focus." in sys_ and "EXERCISE BRIEF" in sys_ and "strength Tue/Thu" in sys_
     assert sys_.index("===== USER'S RULES") < sys_.index("===== USER'S EXERCISE BRIEF")
     assert "(no brief" in llm.schedule_system("", "")
+
+
+def test_exercise_timer_named_after_kind():
+    from tracker import web
+    assert web._exercise_label("strength") == "Strength"
+    assert web._exercise_label("Exercise: easy run") == "Easy run"
+    assert web._exercise_label("") == "Exercise"

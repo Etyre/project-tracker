@@ -43,8 +43,6 @@ DEFAULTS: dict[str, Any] = {
     "toggl": {
         "tag": "task-tracker",
         "project": "",                       # optional Toggl project name for all entries
-        "journal_description": "Journaling",
-        "exercise_description": "Exercise",
     },
     "linear": {
         "enable": False,
