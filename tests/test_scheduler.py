@@ -361,3 +361,20 @@ def test_exercise_timer_named_after_kind():
     assert web._exercise_label("strength") == "Strength"
     assert web._exercise_label("Exercise: easy run") == "Easy run"
     assert web._exercise_label("") == "Exercise"
+
+
+def test_exercise_decided_once_and_length_from_history(monkeypatch):
+    from tracker import exercise
+    now = dt.datetime.now().timestamp()
+    for i, (kind, mins) in enumerate([("run", 38), ("strength", 61), ("run", 42), ("strength", 58)]):
+        eid = db.start_entry("exercise", kind.capitalize(), None, None)
+        db.execute("UPDATE time_entries SET started_at=?, stopped_at=? WHERE id=?", (now - (i + 1) * 86400, now - (i + 1) * 86400 + mins * 60, eid))
+    hist = exercise.history()
+    assert exercise.typical_minutes("run", hist) == 40 and 58 <= exercise.typical_minutes("strength", hist) <= 61
+    assert exercise.typical_minutes("mobility", hist) is not None            # falls back to any exercise
+    db.set_setting("exercise_decision", "")
+    d1 = exercise.decide("2030-03-03")
+    assert d1["kind"] in ("run", "strength", "mobility") and d1["minutes"] > 0 and d1["date"] == "2030-03-03"
+    monkeypatch.setattr(exercise, "_fallback", lambda hist: (_ for _ in ()).throw(AssertionError("decided twice")))
+    assert exercise.decide("2030-03-03") == d1                              # remembered, not recomputed
+    assert exercise.decided_today() is False

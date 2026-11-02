@@ -13,7 +13,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
-from . import tags, calendar_feed, config, db, estimates, journal, linear, llm, scheduler, sheets, toggl, snapshot
+from . import tags, calendar_feed, config, db, estimates, exercise, journal, linear, llm, scheduler, sheets, toggl, snapshot
 
 log = logging.getLogger("web")
 HTML_PATH = config.ROOT / "tracker" / "dashboard.html"
@@ -196,8 +196,7 @@ def _item_label(it: dict) -> str:
 
 
 def _current_exercise(date: str) -> str:
-    p = db.row("SELECT exercise FROM plans WHERE date=?", (date,))
-    return (p and p["exercise"]) or scheduler.fallback_exercise()
+    return exercise.decide(date)["kind"]
 
 
 def _checklist_state(date: str) -> dict:
@@ -793,6 +792,9 @@ def _loop() -> None:
                 scheduler.build()
             # 5. The daily Markdown snapshot of the outline (once the configured hour has passed)
             snapshot.maybe_snapshot(now)
+            # 6. Today's exercise: decided once, in the morning (from 06:00), and kept for the day
+            if now.hour >= 6 and not exercise.decided_today():
+                exercise.decide(db.today())
         except Exception:
             log.exception("background loop")
         time.sleep(60)

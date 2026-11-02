@@ -130,9 +130,11 @@ The **Snapshots** tab lists them by day and shows any of them; its **Snapshot no
 `python -m tracker snapshot`) writes one on demand.
 
 **Exercise** - `Exercise plan.md` (edited on the Settings page) is your brief to Claude: what you do, how to
-pick today's session, how long, and when. Claude reads it with your recent exercise history (from the app's
-timers) and the exercise sheet, if you keep one, and names the kind in the plan; a rest day means no block.
-Without Claude the plan cycles through `[exercise] rotation`.
+pick today's session, rest days, and when. Once each morning (from 06:00, or when the first plan is built) Claude
+chooses the kind for the day from the brief and your history, and that choice is kept through every re-plan. The
+length is never configured: it is the typical length of that kind in your Toggl history (the app's exercise
+timers plus any Toggl entry tagged "exercise" or named like a known kind). A rest day means no block. Without
+Claude the plan cycles through `[exercise] rotation`.
 
 **Quick add** (⌘K) - free text goes to Claude with the project tree; it returns one or more tasks placed in the
 best project (creating a sub-project only when nothing fits), with deadline / blocking / importance / estimate

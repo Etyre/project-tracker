@@ -143,10 +143,9 @@ Hard constraints:
    or given a partial block (say so in the note).
 5. Checklist items from the sheet: one "checklist" block (or a few) sized from the sheet's minutes if present,
    otherwise ~30 min; skip items already done today. Use the item text as the title list in the note.
-6. One "exercise" block, unless exercise is already done today or the exercise brief says today is a rest day (then
-   none, and set `exercise` to "rest"). Decide the kind, length and time of day from the EXERCISE BRIEF below, applied
-   to the recent exercise history (and the exercise sheet when there is one). Name the kind in the `exercise` field
-   exactly (e.g. "run", "strength"); put the session's details, if the brief implies any, in the block's note.
+6. Today's exercise was decided this morning and is given as `exercise_today` (kind, minutes, reason): schedule
+   exactly one "exercise" block of that kind and length, titled with the kind, at the time of day the EXERCISE BRIEF
+   below prefers. No block when the kind is "rest" or exercise is already done today.
 7. Short "break" blocks are welcome between long focus blocks, but keep them few.
 8. Follow the user's rules and heuristics below; they override these defaults where they conflict.
 
@@ -159,7 +158,6 @@ EXERCISE_HEADER = "\n\n===== USER'S EXERCISE BRIEF =====\n"
 SCHEDULE_SCHEMA = {
     "type": "object",
     "properties": {
-        "exercise": {"type": "string"},
         "rationale": {"type": "string"},
         "items": {
             "type": "array",
@@ -178,7 +176,7 @@ SCHEDULE_SCHEMA = {
             },
         },
     },
-    "required": ["exercise", "rationale", "items"],
+    "required": ["rationale", "items"],
     "additionalProperties": False,
 }
 
@@ -206,6 +204,29 @@ def forecast_estimate(title: str, path: str, description: str, examples: list[di
 def quick_add(text: str, tree_text: str, today: str) -> dict:
     user = f"Today is {today}.\n\n## Project tree\n{tree_text}\n\n## Note from the user\n{text}"
     return structured(QUICK_ADD_SYSTEM, user, QUICK_ADD_SCHEMA, config.load()["llm"]["quick_add_effort"])
+
+
+EXERCISE_PICK_SYSTEM = """You are the user's exercise coach, choosing today's session once, in the morning.
+
+You get the user's own brief (what they do, how they want kinds to alternate, rest days, timing) and their recent
+history: sessions with kind, date, weekday and minutes, what has been done this week, and the typical length of
+each kind. Pick the kind for today that best follows the brief given the history; "rest" is a valid answer when
+the brief implies one. `minutes` is only a guess for a kind with no history yet (the app otherwise uses the typical
+length from the history). `reason` is one short sentence the user will read.
+
+===== USER'S EXERCISE BRIEF =====
+"""
+EXERCISE_PICK_SCHEMA = {
+    "type": "object",
+    "properties": {"kind": {"type": "string"}, "minutes": {"type": "integer", "minimum": 0, "maximum": 300}, "reason": {"type": "string"}},
+    "required": ["kind", "minutes", "reason"],
+    "additionalProperties": False,
+}
+
+
+def pick_exercise(brief: str, context_text: str) -> dict:
+    system = EXERCISE_PICK_SYSTEM + (brief.strip() or "(no brief: alternate kinds sensibly and rest one day a week)")
+    return structured(system, context_text, EXERCISE_PICK_SCHEMA, "medium", max_tokens=2000)
 
 
 def schedule_system(rules: str, exercise_brief: str = "") -> str:

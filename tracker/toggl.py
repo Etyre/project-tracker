@@ -79,6 +79,13 @@ def start(description: str, extra_tags: list[str] | None = None) -> dict:
     return _req("POST", f"/workspaces/{wid}/time_entries", body)
 
 
+def entries(days: int = 90) -> list[dict]:
+    """The user's recent time entries (any source), newest first."""
+    end = dt.date.today() + dt.timedelta(days=1)
+    start = end - dt.timedelta(days=min(days, 90) + 1)
+    return _req("GET", f"/me/time_entries?start_date={start.isoformat()}&end_date={end.isoformat()}") or []
+
+
 def current() -> dict | None:
     return _req("GET", "/me/time_entries/current")
 

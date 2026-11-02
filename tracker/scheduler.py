@@ -9,7 +9,7 @@ import logging
 import threading
 import time
 
-from . import calendar_feed, config, db, estimates, llm, sheets
+from . import calendar_feed, config, db, estimates, exercise as exercise_mod, llm, sheets
 
 log = logging.getLogger("scheduler")
 
@@ -84,17 +84,8 @@ def candidates(today: dt.date, limit: int = 60) -> list[dict]:
 
 
 def fallback_exercise() -> str:
-    cfg = config.load()["exercise"]
-    rotation = cfg["rotation"] or ["exercise"]
-    recent = [e["label"].replace("Exercise: ", "").lower() for e in db.last_exercise_entries(len(rotation))]
-    for kind in rotation:
-        if kind.lower() not in recent:
-            return kind
-    last = recent[0] if recent else None
-    if last in [r.lower() for r in rotation]:
-        i = [r.lower() for r in rotation].index(last)
-        return rotation[(i + 1) % len(rotation)]
-    return rotation[0]
+    """The rotation's next kind (no Claude). Kept for the feed before any decision exists."""
+    return exercise_mod._fallback(exercise_mod.history())["kind"]
 
 
 # ---------------------------------------------------------------- deterministic packer
@@ -225,8 +216,8 @@ def build(day: dt.date | None = None, from_now: bool = False, until: str | None 
                   "date": dt.datetime.fromtimestamp(e["started_at"]).date().isoformat(),
                   "weekday": dt.datetime.fromtimestamp(e["started_at"]).strftime("%a"),
                   "minutes": int(((e["stopped_at"] or time.time()) - e["started_at"]) / 60)} for e in db.last_exercise_entries(14)]
-    exercise = fallback_exercise()
-    ex_minutes = cfg["exercise"]["minutes"]
+    decision = exercise_mod.decide(date)          # once a day, in the morning; re-plans keep it
+    exercise, ex_minutes = decision["kind"], int(decision["minutes"] or 0)
     # keep done/skipped items of an existing plan so a re-plan does not re-schedule finished work
     finished_task_ids = {i["task_id"] for i in prev_items if i["status"] in ("done", "skipped") and i["task_id"]}
     if active and active["task_id"]:
@@ -257,8 +248,7 @@ def build(day: dt.date | None = None, from_now: bool = False, until: str | None 
             "exercise_sheet_csv": ex_text[:6000],
             "recent_exercise": recent_ex,
             "exercise_done_today": exercise_done,
-            "exercise_default_minutes": ex_minutes,
-            "fallback_exercise_suggestion": exercise,
+            "exercise_today": {k: decision.get(k) for k in ("kind", "minutes", "reason")},
             "estimate_calibration": estimates.calibration(),
         }
         try:
@@ -266,12 +256,11 @@ def build(day: dt.date | None = None, from_now: bool = False, until: str | None 
             items = validate(res.get("items", []), windows, {t["id"] for t in tasks})
             if items:
                 source, rationale = "claude", res.get("rationale", "")
-                exercise = res.get("exercise") or exercise
         except (llm.LLMError, ValueError) as e:
             log.warning("LLM scheduling failed, using greedy packer: %s", e)
             rationale = f"(Claude scheduling failed: {e}; deterministic plan shown.)"
     if not items:
-        items = greedy_plan(windows, tasks, checklist_minutes, exercise, ex_minutes, checklist_done, exercise_done)
+        items = greedy_plan(windows, tasks, checklist_minutes, exercise, ex_minutes, checklist_done, exercise_done or exercise == "rest" or ex_minutes <= 0)
         if not rationale:
             rationale = ("Deterministic plan: blocking work and deadlines first, then by importance. "
                          "Configure ANTHROPIC_API_KEY for Claude-built plans.")

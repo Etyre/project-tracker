@@ -61,8 +61,7 @@ DEFAULTS: dict[str, Any] = {
         "cache_minutes": 30,
     },
     "exercise": {
-        "rotation": ["run", "strength", "mobility"],   # fallback when the sheet is not configured
-        "minutes": 45,
+        "rotation": ["run", "strength", "mobility"],   # fallback when Claude is not configured
     },
     "journal": {
         "app": "Logseq",                     # or "Roam Research" / a URL like "https://roamresearch.com/..."
