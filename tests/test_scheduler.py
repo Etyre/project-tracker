@@ -14,7 +14,9 @@ config.APP_SUPPORT = pathlib.Path(_tmp)
 config.DB_PATH = pathlib.Path(_tmp) / "test.sqlite3"
 config.load.cache_clear()
 
-from tracker import db, scheduler, estimates  # noqa: E402
+from tracker import db, scheduler, estimates, llm  # noqa: E402
+
+llm._has_credentials = lambda: False      # tests never call Claude, whatever the Keychain holds
 
 
 def setup_module():

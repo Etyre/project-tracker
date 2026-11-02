@@ -122,6 +122,12 @@ a{color:var(--accent)}
 .feed{display:flex;flex-direction:column;align-items:center;gap:14px;padding-top:24px}
 .page{width:min(900px,100%);min-height:min(640px,calc(100vh - 150px));background:var(--card);border:1px solid var(--line);border-radius:6px;padding:24px 0 28px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.06);display:flex;flex-direction:column}
 .page .main{flex:1;display:flex;flex-direction:column;justify-content:space-evenly;padding:8px 0}
+/* completing a card: it flashes green, then slides off to the right; the next card slides in */
+@keyframes cardDone{0%{transform:none;opacity:1}25%,55%{background:rgba(22,163,74,.22);border-color:#16a34a;transform:none;opacity:1}100%{background:rgba(22,163,74,.22);border-color:#16a34a;transform:translateX(140%) rotate(3deg);opacity:0}}
+.page.done{animation:cardDone .95s cubic-bezier(.55,0,.9,.4) forwards;pointer-events:none}
+@keyframes cardIn{from{transform:translateX(-48px);opacity:0}to{transform:none;opacity:1}}
+.page.enter{animation:cardIn .32s ease-out}
+@media (prefers-reduced-motion:reduce){.page.done{animation:none;opacity:.4}.page.enter{animation:none}}
 .page .date{background:var(--ink);color:var(--bg);padding:10px;font-size:13px;letter-spacing:.14em;text-transform:uppercase;border-radius:5px 5px 0 0}
 .page .kind{margin-top:0;font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);min-height:18px}
 .page .path{color:var(--muted);font-size:14px;margin-top:10px}
@@ -355,13 +361,14 @@ async function renderFeed() {
     body += '</div>';
     const actions = `<div class="actions">
         ${isActive ? `<button class="btn" onclick="stopTimer()">Stop</button>` : `<button class="btn primary" onclick="startItem(${c.id})">Start</button>`}
-        <label class="btn" style="display:flex;gap:6px;align-items:center"><input type="checkbox" onchange="completeItem(${c.id})"> ${c.kind === 'task' ? 'Complete' : 'Done'}</label>
+        <label class="btn" style="display:flex;gap:6px;align-items:center"><input type="checkbox" onchange="completeItem(${c.id}, this)"> ${c.kind === 'task' ? 'Complete' : 'Done'}</label>
       </div>`;
     card = page(body, actions);
   }
   const meeting = f.meeting_now ? `<div class="meeting">In a meeting until ${f.meeting_now.end}: ${esc(f.meeting_now.title)}</div>` : '';
   const note = f.replanning.active ? `<div class="foot"><span>re-planning…</span></div>` : f.plan.off_track ? `<div class="foot"><span>off track, re-plan pending</span></div>` : '';
   m.innerHTML = `<div class="feed">${meeting}${card}${note}</div>`;
+  if (enterNext) {enterNext = false; m.querySelector('.page')?.classList.add('enter');}
   if (f.replanning.active) setTimeout(() => {if (view === 'feed') renderFeed().catch(() => {});}, 5000);
 }
 function altButtons(f) {
@@ -377,7 +384,15 @@ async function rebuild(fromNow) {
   catch (e) {toast('Plan failed: ' + esc(e.message), 8000);}
 }
 async function startItem(id) {const r = await api('/feed/start', 'POST', {item_id: id}); if (r.toggl_error) toast('Toggl: ' + esc(r.toggl_error), 6000); await refreshStatus(); renderFeed();}
-async function completeItem(id) {const r = await api('/feed/complete', 'POST', {item_id: id}); if (r.linear_error) toast('Linear: ' + esc(r.linear_error), 6000); await refreshStatus(); renderFeed();}
+let enterNext = false;
+async function completeItem(id, el) {
+  const page = el?.closest('.page');
+  const req = api('/feed/complete', 'POST', {item_id: id});           // save while the card animates away
+  if (page) {page.classList.add('done'); await new Promise(r => setTimeout(r, 950));}
+  try {const r = await req; if (r.linear_error) toast('Linear: ' + esc(r.linear_error), 6000);}
+  catch (e) {toast(esc(e.message), 6000); page?.classList.remove('done');}
+  await refreshStatus(); enterNext = true; renderFeed();
+}
 async function finishBlock(id) {await api('/feed/finish_block', 'POST', {item_id: id}); await refreshStatus(); renderFeed();}
 async function skipItem(id) {await api('/feed/skip', 'POST', {item_id: id}); await refreshStatus(); renderFeed();}
 async function startExercise() {const r = await api('/exercise/start', 'POST'); if (r.toggl_error) toast('Toggl: ' + esc(r.toggl_error), 6000); else toast(`Exercise timer started: ${esc(r.kind)}`); await refreshStatus(); renderFeed();}
