@@ -154,11 +154,6 @@ a{color:var(--accent)}
 .feed .foot{font-size:12px;color:var(--muted);display:flex;gap:12px;align-items:center}
 .feed .foot button{background:none;border:0;color:var(--muted);text-decoration:underline;cursor:pointer;font-size:12px}
 .meeting{font-size:13px;color:var(--muted)}
-/* a meeting card: tinted, framed in the accent colour, no Start / Complete */
-.page.meeting{background:var(--chip);border-color:var(--accent);border-width:2px}
-.page.meeting .kind{color:var(--accent)}
-.page.meeting .big{color:var(--chip-ink)}
-.page.meeting .until{font-size:16px;color:var(--chip-ink);opacity:.8;margin-top:8px}
 .timeline li{display:grid;grid-template-columns:110px 90px 1fr auto;gap:10px;padding:6px 0;border-bottom:1px solid var(--line);align-items:center}
 .timeline li.done{opacity:.55;text-decoration:line-through}
 .timeline li.skipped{opacity:.4}
@@ -357,10 +352,6 @@ async function renderFeed() {
     const head = late ? 'The work day is over' : f.outside_hours === 'before' ? `The day starts at ${f.work_window[0]}` : 'All done';
     card = page(`<div class="head"><div class="big">${head}</div></div>`,
       `<div class="actions"><button class="btn" onclick="rebuild(true)">${late ? 'Work late' : f.outside_hours === 'before' ? 'Start early' : 'Re-plan'}</button></div>`);
-  } else if (c.kind === 'meeting') {
-    const endMin = +c.end.slice(0, 2) * 60 + +c.end.slice(3, 5), now = new Date(), left = Math.max(1, Math.ceil(endMin - (now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60)));
-    card = page(`<div class="head"><div class="kind">Meeting · ${esc(c.start)}–${esc(c.end)}</div><div class="big">${mdLine(c.title).html}</div><div class="until">Ends in ${left} minute${left === 1 ? '' : 's'}</div></div>`, '');
-    card = card.replace('<div class="page">', '<div class="page meeting">');
   } else {
     const isActive = c.status === 'active';
     const t = c.task;
@@ -379,7 +370,7 @@ async function renderFeed() {
       </div>`;
     card = page(body, actions);
   }
-  const meeting = f.meeting_now && c?.kind !== 'meeting' ? `<div class="meeting">In a meeting until ${f.meeting_now.end}: ${esc(f.meeting_now.title)}</div>` : '';
+  const meeting = f.meeting_now ? `<div class="meeting">In a meeting until ${f.meeting_now.end}: ${esc(f.meeting_now.title)}</div>` : '';
   feedMeetings = {list: f.meetings || [], alert: f.meeting_alert_minutes || 45};
   const note = f.replanning.active ? `<div class="foot"><span>re-planning…</span></div>` : f.plan.off_track ? `<div class="foot"><span>off track, re-plan pending</span></div>` : '';
   m.innerHTML = `<div class="feed"><div class="upcoming">${upcomingText()}</div>${meeting}<div class="stack">${card}</div>${note}</div>`;
@@ -396,11 +387,7 @@ function upcomingText() {
   const mins = Math.max(1, Math.ceil(soon.startMin - nowMin));
   return `${esc(soon.title)} in ${mins} minute${mins === 1 ? '' : 's'}`;
 }
-setInterval(() => {
-  if (view !== 'feed') return;
-  const u = document.querySelector('.feed .upcoming'); if (u) {const t = upcomingText(); if (u.innerHTML !== t) u.innerHTML = t;}
-  const mc = document.querySelector('.page.meeting'); if (mc) renderFeed().catch(() => {});   // the meeting card's countdown, and the card after it
-}, 30000);
+setInterval(() => {const u = document.querySelector('.feed .upcoming'); if (u && view === 'feed') {const t = upcomingText(); if (u.innerHTML !== t) u.innerHTML = t;}}, 30000);
 function altButtons(f) {
   const ex = f.exercise_item;
   const exDone = ex && ex.status === 'done';
