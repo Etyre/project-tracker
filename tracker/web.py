@@ -608,8 +608,9 @@ def create_app() -> FastAPI:
             if i["kind"] == "task" and i["task_id"] and not db.task(i["task_id"]):
                 db.set_item_status(i["id"], "skipped")
                 pending.remove(i)
-        current = active or (pending[0] if pending else None)
         meeting_now = next((i for i in items if i["kind"] == "meeting" and scheduler.parse_hm(i["start"]) <= now_min < scheduler.parse_hm(i["end"])), None)
+        # while a meeting is on (and no timer is running on something else) the meeting itself is the card
+        current = active or meeting_now or (pending[0] if pending else None)
         if current and current["kind"] == "task" and current["task_id"]:
             current = {**current, "task": _tick_task_fields(db.task(current["task_id"])),
                        "path": db.project_path(current["project_id"])}

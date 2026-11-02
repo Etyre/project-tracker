@@ -147,7 +147,9 @@ multiplied by your measured actual/estimate ratio), the checklist, the exercise 
 does the packing when configured; a deterministic packer is the fallback and the validator (anything outside
 the free windows is clamped or dropped).
 
-**The feed** shows one card; completing it flashes it green and slides it away, and the next card takes its place. Above the deck, from `meeting_alert_minutes` (45) before a meeting, a line says "Daily
+**The feed** shows one card; completing it flashes it green and slides it away, and the next card takes its place.
+While a meeting is on, the meeting is the card: tinted and framed in blue, with its times and the minutes left,
+and no Start or Complete; the next task comes back when it ends. Above the deck, from `meeting_alert_minutes` (45) before a meeting, a line says "Daily
 regather in 12 minutes", counting down in whole minutes. The top card is the one the schedule says is next: Start (a Toggl timer tagged `task-tracker`, named
 after the task), a completion checkbox (completes the task, pushes to Linear), "Done for now" for a block of a
 task that continues later, Skip, and at the bottom the alternatives: today's exercise and Journal.
