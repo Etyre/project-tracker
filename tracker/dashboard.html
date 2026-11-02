@@ -127,16 +127,8 @@ a{color:var(--accent)}
 /* completing a card: it flashes green, then slides off to the right; the next card slides in */
 @keyframes cardDone{0%{transform:none;opacity:1}25%,55%{background:var(--done);border-color:#16a34a;transform:none;opacity:1}100%{background:var(--done);border-color:#16a34a;transform:translateX(140%) rotate(3deg);opacity:0}}
 .page.done{animation:cardDone .95s cubic-bezier(.55,0,.9,.4) forwards;pointer-events:none}
-/* the feed is a deck: the next cards sit underneath the top one, their edges just showing; when the top card
-   goes, the one beneath rises into its place */
 .stack{position:relative;width:min(900px,100%)}
-.stack>.page:not(.under){position:relative;z-index:2}
-.page.under{position:absolute;inset:0;z-index:1;transform:translateY(12px) scaleX(.985);pointer-events:none;background:var(--box2);box-shadow:0 1px 2px rgba(0,0,0,.06)}
-.page.under.u2{z-index:0;transform:translateY(24px) scaleX(.97)}
-.page.under .big{color:var(--muted)}
-@keyframes cardRise{from{transform:translateY(12px) scaleX(.985);background:var(--box2)}to{transform:none;background:var(--card)}}
-.page.rise{animation:cardRise .28s ease-out}
-@media (prefers-reduced-motion:reduce){.page.done{animation:none;opacity:.4}.page.rise{animation:none}}
+@media (prefers-reduced-motion:reduce){.page.done{animation:none;opacity:.4}}
 .page .date{background:var(--ink);color:var(--bg);padding:10px;font-size:13px;letter-spacing:.14em;text-transform:uppercase;border-radius:5px 5px 0 0}
 .page .kind{margin-top:0;font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);min-height:18px}
 .page .path{color:var(--muted);font-size:14px;margin-top:10px}
@@ -381,9 +373,7 @@ async function renderFeed() {
   const meeting = f.meeting_now ? `<div class="meeting">In a meeting until ${f.meeting_now.end}: ${esc(f.meeting_now.title)}</div>` : '';
   feedMeetings = {list: f.meetings || [], alert: f.meeting_alert_minutes || 45};
   const note = f.replanning.active ? `<div class="foot"><span>re-planning…</span></div>` : f.plan.off_track ? `<div class="foot"><span>off track, re-plan pending</span></div>` : '';
-  const under = (f.up_next || []).slice(0, 2).map((u, i) => `<div class="page under u${i + 1}" aria-hidden="true"><div class="main"><div class="head"><div class="kind">&nbsp;</div><div class="big">${u.kind === 'checklist' ? 'Daily checklist' : mdLine(u.title).html}</div></div></div></div>`).join('');
-  m.innerHTML = `<div class="feed"><div class="upcoming">${upcomingText()}</div>${meeting}<div class="stack">${card}${under}</div>${note}</div>`;
-  if (riseNext) {riseNext = false; m.querySelector('.stack > .page:not(.under)')?.classList.add('rise');}
+  m.innerHTML = `<div class="feed"><div class="upcoming">${upcomingText()}</div>${meeting}<div class="stack">${card}</div>${note}</div>`;
   if (f.replanning.active) setTimeout(() => {if (view === 'feed') renderFeed().catch(() => {});}, 5000);
 }
 // "Daily regather in 12 minutes": the next meeting starting within the alert window, in whole minutes, re-checked
@@ -411,14 +401,13 @@ async function rebuild(fromNow) {
   catch (e) {toast('Plan failed: ' + esc(e.message), 8000);}
 }
 async function startItem(id) {const r = await api('/feed/start', 'POST', {item_id: id}); if (r.toggl_error) toast('Toggl: ' + esc(r.toggl_error), 6000); await refreshStatus(); renderFeed();}
-let riseNext = false;
 async function completeItem(id, el) {
   const page = el?.closest('.page');
   const req = api('/feed/complete', 'POST', {item_id: id});           // save while the card animates away
   if (page) {await new Promise(r => {page.addEventListener('animationend', r, {once: true}); setTimeout(r, 1200); page.classList.add('done');});}
   try {const r = await req; if (r.linear_error) toast('Linear: ' + esc(r.linear_error), 6000); pushUndo('complete', () => api('/feed/uncomplete', 'POST', {item_id: id}));}
   catch (e) {toast(esc(e.message), 6000); page?.classList.remove('done');}
-  await refreshStatus(); riseNext = true;
+  await refreshStatus();
   renderFeed().catch(e => {toast('Feed: ' + esc(e.message), 6000); page?.classList.remove('done');});
 }
 async function finishBlock(id) {await api('/feed/finish_block', 'POST', {item_id: id}); pushUndo('done for now', () => api('/feed/reset_item', 'POST', {item_id: id})); await refreshStatus(); renderFeed();}
