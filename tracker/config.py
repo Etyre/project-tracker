@@ -11,6 +11,7 @@ from typing import Any
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CONFIG_PATH = pathlib.Path(os.environ.get("TASK_TRACKER_CONFIG") or (ROOT / "config.toml"))
 RULES_PATH = ROOT / "Rules and heuristics for scheduling.md"
+EXERCISE_PATH = ROOT / "Exercise plan.md"          # the user's own brief to Claude on how to schedule exercise
 APP_SUPPORT = pathlib.Path(os.environ.get("TASK_TRACKER_DATA") or (pathlib.Path.home() / "Library" / "Application Support" / "TaskTracker"))
 DB_PATH = APP_SUPPORT / "tracker.sqlite3"
 ENV_FILE = APP_SUPPORT / "env"
@@ -140,6 +141,10 @@ def secret(name: str) -> str | None:
 
 def rules_text() -> str:
     return RULES_PATH.read_text() if RULES_PATH.exists() else ""
+
+
+def exercise_text() -> str:
+    return EXERCISE_PATH.read_text() if EXERCISE_PATH.exists() else ""
 
 
 def keychain_set(account: str, value: str) -> None:

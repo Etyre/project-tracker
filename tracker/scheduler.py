@@ -222,7 +222,9 @@ def build(day: dt.date | None = None, from_now: bool = False, until: str | None 
     if cl_rows and checklist_minutes == 0:
         checklist_minutes = 30
     recent_ex = [{"kind": e["label"].replace("Exercise: ", ""),
-                  "date": dt.datetime.fromtimestamp(e["started_at"]).date().isoformat()} for e in db.last_exercise_entries(7)]
+                  "date": dt.datetime.fromtimestamp(e["started_at"]).date().isoformat(),
+                  "weekday": dt.datetime.fromtimestamp(e["started_at"]).strftime("%a"),
+                  "minutes": int(((e["stopped_at"] or time.time()) - e["started_at"]) / 60)} for e in db.last_exercise_entries(14)]
     exercise = fallback_exercise()
     ex_minutes = cfg["exercise"]["minutes"]
     # keep done/skipped items of an existing plan so a re-plan does not re-schedule finished work
@@ -260,7 +262,7 @@ def build(day: dt.date | None = None, from_now: bool = False, until: str | None 
             "estimate_calibration": estimates.calibration(),
         }
         try:
-            res = llm.schedule(json.dumps(ctx, indent=1, default=str), config.rules_text())
+            res = llm.schedule(json.dumps(ctx, indent=1, default=str), config.rules_text(), config.exercise_text())
             items = validate(res.get("items", []), windows, {t["id"] for t in tasks})
             if items:
                 source, rationale = "claude", res.get("rationale", "")

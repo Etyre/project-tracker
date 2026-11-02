@@ -129,6 +129,11 @@ snapshot at the end. If the app was asleep at that hour the file is written when
 The **Snapshots** tab lists them by day and shows any of them; its **Snapshot now** button (or
 `python -m tracker snapshot`) writes one on demand.
 
+**Exercise** - `Exercise plan.md` (edited on the Settings page) is your brief to Claude: what you do, how to
+pick today's session, how long, and when. Claude reads it with your recent exercise history (from the app's
+timers) and the exercise sheet, if you keep one, and names the kind in the plan; a rest day means no block.
+Without Claude the plan cycles through `[exercise] rotation`.
+
 **Quick add** (⌘K) - free text goes to Claude with the project tree; it returns one or more tasks placed in the
 best project (creating a sub-project only when nothing fits), with deadline / blocking / importance / estimate
 inferred. Without an API key it files into "Inbox".

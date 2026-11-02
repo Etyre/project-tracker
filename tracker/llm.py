@@ -130,8 +130,9 @@ Split the note into several tasks only when it plainly lists separate actions.""
 SCHEDULE_SYSTEM_PREFIX = """You build a realistic, prioritised plan for the user's work day.
 
 You receive: the work-day window, free windows (after calendar meetings), candidate tasks with priority inputs and
-calibrated time estimates, the user's daily checklist sheet, their exercise sheet, recent exercise history, and
-their own rules and heuristics document. Produce an ordered list of blocks that exactly fit inside the free
+calibrated time estimates, the user's daily checklist sheet, their exercise brief (their own instructions on what
+exercise to do, how long and when), their exercise sheet if they keep one, recent exercise history, and their own
+rules and heuristics document. Produce an ordered list of blocks that exactly fit inside the free
 windows (meetings are added by the system; do not emit them).
 
 Hard constraints:
@@ -142,8 +143,10 @@ Hard constraints:
    or given a partial block (say so in the note).
 5. Checklist items from the sheet: one "checklist" block (or a few) sized from the sheet's minutes if present,
    otherwise ~30 min; skip items already done today. Use the item text as the title list in the note.
-6. One "exercise" block of the kind that the exercise sheet / history implies should come next; name the kind in the
-   `exercise` field exactly (e.g. "run", "strength").
+6. One "exercise" block, unless exercise is already done today or the exercise brief says today is a rest day (then
+   none, and set `exercise` to "rest"). Decide the kind, length and time of day from the EXERCISE BRIEF below, applied
+   to the recent exercise history (and the exercise sheet when there is one). Name the kind in the `exercise` field
+   exactly (e.g. "run", "strength"); put the session's details, if the brief implies any, in the block's note.
 7. Short "break" blocks are welcome between long focus blocks, but keep them few.
 8. Follow the user's rules and heuristics below; they override these defaults where they conflict.
 
@@ -151,6 +154,7 @@ Output JSON only, matching the schema. `rationale` is 2-4 sentences the user wil
 
 ===== USER'S RULES AND HEURISTICS =====
 """
+EXERCISE_HEADER = "\n\n===== USER'S EXERCISE BRIEF =====\n"
 
 SCHEDULE_SCHEMA = {
     "type": "object",
@@ -204,6 +208,10 @@ def quick_add(text: str, tree_text: str, today: str) -> dict:
     return structured(QUICK_ADD_SYSTEM, user, QUICK_ADD_SCHEMA, config.load()["llm"]["quick_add_effort"])
 
 
-def schedule(context_text: str, rules: str) -> dict:
-    system = SCHEDULE_SYSTEM_PREFIX + (rules.strip() or "(no rules document yet)")
-    return structured(system, context_text, SCHEDULE_SCHEMA, config.load()["llm"]["effort"], max_tokens=16000)
+def schedule_system(rules: str, exercise_brief: str = "") -> str:
+    return (SCHEDULE_SYSTEM_PREFIX + (rules.strip() or "(no rules document yet)") + EXERCISE_HEADER
+            + (exercise_brief.strip() or "(no brief: pick whatever the exercise sheet or history implies; otherwise alternate kinds)"))
+
+
+def schedule(context_text: str, rules: str, exercise_brief: str = "") -> dict:
+    return structured(schedule_system(rules, exercise_brief), context_text, SCHEDULE_SCHEMA, config.load()["llm"]["effort"], max_tokens=16000)

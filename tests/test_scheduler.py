@@ -346,3 +346,11 @@ def test_settings_save_roundtrip(tmp_path, monkeypatch):
     assert data["general"]["work_start"] == "08:30" and data["calendar"]["ics_urls"][1] == "https://b/y.ics"
     assert set(config.secret_status()) == {"anthropic", "toggl", "linear", "sheets"}
     config.load.cache_clear()
+
+
+def test_schedule_prompt_carries_exercise_brief():
+    from tracker import llm
+    sys_ = llm.schedule_system("Mornings for focus.", "Run Mon/Wed/Fri, strength Tue/Thu, 40 minutes.")
+    assert "Mornings for focus." in sys_ and "EXERCISE BRIEF" in sys_ and "strength Tue/Thu" in sys_
+    assert sys_.index("===== USER'S RULES") < sys_.index("===== USER'S EXERCISE BRIEF")
+    assert "(no brief" in llm.schedule_system("", "")

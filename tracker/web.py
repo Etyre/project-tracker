@@ -367,6 +367,7 @@ def create_app() -> FastAPI:
     def get_settings():
         return {"config": config.load(), "secrets": config.secret_status(),
                 "rules": config.RULES_PATH.read_text() if config.RULES_PATH.exists() else "",
+                "exercise_brief": config.exercise_text(),
                 "paths": {"config": str(config.CONFIG_PATH), "data": str(config.APP_SUPPORT), "rules": str(config.RULES_PATH),
                           "snapshots": str(snapshot.snapshot_dir())}}
 
@@ -375,6 +376,8 @@ def create_app() -> FastAPI:
         cfg = config.save(body.get("config") or {})
         if "rules" in body and isinstance(body["rules"], str):
             config.RULES_PATH.write_text(body["rules"])
+        if "exercise_brief" in body and isinstance(body["exercise_brief"], str):
+            config.EXERCISE_PATH.write_text(body["exercise_brief"])
         calendar_feed._cache.clear()
         return {"ok": True, "config": cfg}
 
