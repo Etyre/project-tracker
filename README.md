@@ -153,6 +153,12 @@ multiplied by your measured actual/estimate ratio), the checklist, the exercise 
 does the packing when configured; a deterministic packer is the fallback and the validator (anything outside
 the free windows is clamped or dropped).
 
+**Toggl filing** - every timer the app starts is filed under the right Toggl project and tags a moment after it
+starts: a description you have tracked before gets the project and tags it had last time; otherwise Claude
+chooses from your own projects (with the descriptions you filed under each) and says "none" when it is not clear.
+Exercise timers are named "going to do squats", "going to do cardio interval training": the session Claude
+picked for the day, with travel time inside the timer. Off with `[toggl] auto_project = false`.
+
 **The feed** shows one card; completing it flashes it green and slides it away, and the next card takes its place. Above the deck, from `meeting_alert_minutes` (45) before a meeting, a line says "Daily
 regather in 12 minutes", counting down in whole minutes. The top card is the one the schedule says is next: Start (a Toggl timer tagged `task-tracker`, named
 after the task), a completion checkbox (completes the task, pushes to Linear), "Done for now" for a block of a

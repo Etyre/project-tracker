@@ -210,15 +210,16 @@ EXERCISE_PICK_SYSTEM = """You are the user's exercise coach, choosing today's se
 You get the user's own brief (what they do, how they want kinds to alternate, rest days, timing) and their recent
 history (from their exercise log): sessions with kind, date, weekday and minutes, what has been done this week,
 and the typical length of each kind. Pick the kind for today that best follows the brief given the history; "rest" is a valid answer when
-the brief implies one. `minutes` is only a guess for a kind with no history yet (the app otherwise uses the typical
-length from the history). `reason` is one short sentence the user will read.
+the brief implies one. `title` is the session as the user would log it, lower case, specific: "squats", "cardio
+interval training", "easy run" (for rest: "rest"). `minutes` is only a guess for a kind with no history yet (the app
+otherwise uses the typical length from the history). `reason` is one short sentence the user will read.
 
 ===== USER'S EXERCISE BRIEF =====
 """
 EXERCISE_PICK_SCHEMA = {
     "type": "object",
-    "properties": {"kind": {"type": "string"}, "minutes": {"type": "integer", "minimum": 0, "maximum": 300}, "reason": {"type": "string"}},
-    "required": ["kind", "minutes", "reason"],
+    "properties": {"kind": {"type": "string"}, "title": {"type": "string"}, "minutes": {"type": "integer", "minimum": 0, "maximum": 300}, "reason": {"type": "string"}},
+    "required": ["kind", "title", "minutes", "reason"],
     "additionalProperties": False,
 }
 
@@ -226,6 +227,29 @@ EXERCISE_PICK_SCHEMA = {
 def pick_exercise(brief: str, context_text: str) -> dict:
     system = EXERCISE_PICK_SYSTEM + (brief.strip() or "(no brief: alternate kinds sensibly and rest one day a week)")
     return structured(system, context_text, EXERCISE_PICK_SCHEMA, "medium", max_tokens=2000)
+
+
+TOGGL_PICK_SYSTEM = """You file a Toggl Track time entry under the right project, the way the user files their own.
+
+You get the new entry's description and context (the task's place in their project tree, or the kind of block), the
+user's Toggl projects with example descriptions they filed under each, and the tags they use. Choose the project
+whose examples this entry plainly belongs with; say "high" confidence only when the history or the context makes it
+clear. When it is not clear, answer with project null and confidence "low": no project is better than a wrong one.
+Tags: only names from the list, and only when the examples show the user tags entries like this one."""
+TOGGL_PICK_SCHEMA = {
+    "type": "object",
+    "properties": {"project": {"type": ["string", "null"]}, "tags": {"type": "array", "items": {"type": "string"}},
+                   "confidence": {"type": "string", "enum": ["high", "low"]}, "reason": {"type": "string"}},
+    "required": ["project", "tags", "confidence", "reason"],
+    "additionalProperties": False,
+}
+
+
+def pick_toggl(description: str, context: str, projects: list[dict], tags: list[str]) -> dict:
+    plist = "\n".join(f"- {p['name']} ({p['count']} recent entries): " + "; ".join(p["examples"][:8]) for p in projects[:40])
+    user = (f"## New entry\n{description}\nContext: {context or '(none)'}\n\n## The user's Toggl projects\n{plist}\n\n"
+            f"## Tags in use\n{', '.join(tags) or '(none)'}")
+    return structured(TOGGL_PICK_SYSTEM, user, TOGGL_PICK_SCHEMA, "low", max_tokens=1000)
 
 
 def schedule_system(rules: str, exercise_brief: str = "") -> str:

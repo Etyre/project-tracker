@@ -43,6 +43,7 @@ DEFAULTS: dict[str, Any] = {
     },
     "toggl": {
         "tag": "task-tracker",
+        "auto_project": True,                # file each timer under the Toggl project its history / Claude implies
         "project": "",                       # optional Toggl project name for all entries
     },
     "linear": {

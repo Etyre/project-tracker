@@ -358,11 +358,11 @@ def test_schedule_prompt_carries_exercise_brief():
     assert "(no brief" in llm.schedule_system("", "")
 
 
-def test_exercise_timer_named_after_kind():
+def test_exercise_timer_named_going_to_do():
     from tracker import web
-    assert web._exercise_label("strength") == "Strength"
-    assert web._exercise_label("Exercise: easy run") == "Easy run"
-    assert web._exercise_label("") == "Exercise"
+    db.set_setting("exercise_decision", "")
+    label = web._exercise_label("strength")          # today's decision (rotation in tests) with the travel-time phrasing
+    assert label.startswith("going to do ") and len(label) > len("going to do ")
 
 
 def test_exercise_decided_once_and_length_from_history(monkeypatch):
@@ -414,3 +414,23 @@ def test_exercise_sessions_parse_and_merge(monkeypatch):
     hist = exercise.history()
     same_day = [h for h in hist if h["date"] == "2026-11-02" and h["kind"] == "strength"]
     assert len(same_day) == 1 and same_day[0]["source"] == "sheet" and same_day[0]["minutes"] == 47
+
+
+def test_toggl_history_index_and_exact_match(monkeypatch):
+    from tracker import toggl, web
+    monkeypatch.setattr(toggl, "_req", lambda m, path, body=None: [{"id": 1, "name": "Palisade"}, {"id": 2, "name": "Personal"}] if path == "/me/projects" else None)
+    monkeypatch.setattr(toggl, "entries", lambda days=90: [
+        {"description": "Going to do squats", "project_id": 2, "tags": ["exercise"], "start": "2026-11-01T20:00:00+00:00"},
+        {"description": "going to do squats", "project_id": 1, "tags": [], "start": "2026-10-01T20:00:00+00:00"},
+        {"description": "Strategy sync", "project_id": 1, "tags": ["meeting"], "start": "2026-11-02T14:00:00+00:00"},
+        {"description": "", "project_id": None, "tags": [], "start": "2026-11-02T15:00:00+00:00"}])
+    toggl._index_cache = None
+    idx = toggl.history_index()
+    assert idx["exact"]["going to do squats"] == {"project_id": 2, "project": "Personal", "tags": ["exercise"]}   # newest wins
+    assert [p["name"] for p in idx["projects"]][:2] == ["Palisade", "Personal"] and "meeting" in idx["tags"]
+    c = toggl.classify("GOING TO DO SQUATS")
+    assert (c["project"], c["tags"], c["source"]) == ("Personal", ["exercise"], "history")
+    assert toggl.classify("Something never tracked")["source"] == "none"       # Claude is off in tests: no project
+    assert web._going_to("squats") == "going to do squats" and web._going_to("Exercise: cardio") == "going to do cardio"
+    assert web._going_to("Going to do a run") == "Going to do a run"
+    toggl._index_cache = None

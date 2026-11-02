@@ -89,7 +89,7 @@ def _fallback(hist: list[dict]) -> dict:
         last = recent[0] if recent else None
         lower = [r.lower() for r in rotation]
         kind = rotation[(lower.index(last) + 1) % len(rotation)] if last in lower else rotation[0]
-    return {"kind": kind, "minutes": typical_minutes(kind, hist) or LAST_RESORT_MINUTES, "reason": "rotation (Claude not configured)"}
+    return {"kind": kind, "title": kind, "minutes": typical_minutes(kind, hist) or LAST_RESORT_MINUTES, "reason": "rotation (Claude not configured)"}
 
 
 def decide(date: str | None = None, force: bool = False) -> dict:
@@ -119,7 +119,7 @@ def decide(date: str | None = None, force: bool = False) -> dict:
             mins = typical_minutes(kind, hist) if kind != "rest" else 0
             if mins is None:
                 mins = int(res.get("minutes") or 0) or LAST_RESORT_MINUTES
-            decision = {"kind": kind, "minutes": mins, "reason": str(res.get("reason") or "")}
+            decision = {"kind": kind, "title": str(res.get("title") or kind).strip().lower() or kind, "minutes": mins, "reason": str(res.get("reason") or "")}
         except (llm.LLMError, ValueError) as e:
             log.warning("exercise decision failed, using rotation: %s", e)
     if decision is None:

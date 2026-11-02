@@ -165,7 +165,7 @@ def _stop_timer() -> dict | None:
     return {"stopped": e["id"], "toggl_error": err}
 
 
-def _start_timer(kind: str, label: str, task_id: int | None = None, extra_tags: list[str] | None = None) -> dict:
+def _start_timer(kind: str, label: str, task_id: int | None = None, extra_tags: list[str] | None = None, context: str = "") -> dict:
     _stop_timer()
     toggl_id, err = None, None
     if toggl.enabled():
@@ -174,15 +174,38 @@ def _start_timer(kind: str, label: str, task_id: int | None = None, extra_tags: 
         except toggl.TogglError as ex:
             err = str(ex)
     eid = db.start_entry(kind, label, task_id, toggl_id)
+    if toggl_id and config.load()["toggl"].get("auto_project", True):
+        if not context and task_id:
+            t = db.task(task_id)
+            context = "task in project " + " / ".join(db.project_path(t["project_id"])) if t else ""
+        threading.Thread(target=_file_timer, args=(toggl_id, label, context or kind), daemon=True, name="toggl-file").start()
     return {"entry_id": eid, "toggl_id": toggl_id, "toggl_error": err}
 
 
+def _file_timer(toggl_id: int, label: str, context: str) -> None:
+    """After a timer starts: give the Toggl entry the project and tags it should have (history, else Claude)."""
+    try:
+        c = toggl.classify(label, context)
+        tags = list(dict.fromkeys([t for t in [config.load()["toggl"]["tag"], *c["tags"]] if t]))
+        if c["project_id"] or c["tags"]:
+            toggl.update_entry(toggl_id, c["project_id"], tags)
+        log.info("toggl entry %s filed: project=%s tags=%s (%s)", toggl_id, c["project"], tags, c["source"])
+    except Exception:
+        log.exception("filing toggl entry %s", toggl_id)
+
+
+def _going_to(title: str) -> str:
+    """The exercise timer's name: the session with its travel time, as the user phrases it in Toggl."""
+    t = (title or "exercise").strip()
+    if t.lower().startswith("exercise:"):
+        t = t[9:].strip()
+    return t if t.lower().startswith("going to") else "going to do " + t
+
+
 def _exercise_label(kind: str) -> str:
-    """The timer (and Toggl entry) is named after the kind of exercise chosen for the day: "Run", "Strength"."""
-    k = kind.strip()
-    if k.lower().startswith("exercise:"):
-        k = k[9:].strip()
-    return (k[:1].upper() + k[1:]) if k else "Exercise"
+    """The exercise timer is named for the day's session ("going to do squats"), falling back to the kind."""
+    d = exercise.decide(db.today())
+    return _going_to(d.get("title") or kind)
 
 
 def _item_label(it: dict) -> str:
@@ -643,7 +666,8 @@ def create_app() -> FastAPI:
         if not it:
             raise HTTPException(404)
         res = _start_timer(it["kind"] if it["kind"] in ("task", "exercise", "checklist", "journal") else "task",
-                           _item_label(it), it["task_id"], [it["kind"]] if it["kind"] != "task" else None)
+                           _item_label(it), it["task_id"], [it["kind"]] if it["kind"] != "task" else None,
+                           context={"exercise": "exercise session, travel included", "checklist": "daily checklist", "journal": "journaling"}.get(it["kind"], "")),
         db.set_item_status(it["id"], "active")
         return {"ok": True, **res}
 
@@ -716,7 +740,7 @@ def create_app() -> FastAPI:
     def exercise_start():
         date = db.today()
         kind = _current_exercise(date)
-        res = _start_timer("exercise", _exercise_label(kind), None, ["exercise"])
+        res = _start_timer("exercise", _exercise_label(kind), None, ["exercise"], context="exercise session, travel included")
         it = db.row("SELECT id FROM plan_items WHERE date=? AND kind='exercise' AND status IN ('pending','active')", (date,))
         if it:
             db.set_item_status(it["id"], "active")
@@ -724,7 +748,7 @@ def create_app() -> FastAPI:
 
     @app.post("/api/journal/start")
     def journal_start():
-        res = _start_timer("journal", "Journaling", None, ["journal"])
+        res = _start_timer("journal", "Journaling", None, ["journal"], context="journaling")
         err = journal.open_notes_app()
         return {"ok": True, **res, "open_error": err}
 
