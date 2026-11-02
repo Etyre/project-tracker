@@ -110,7 +110,8 @@ on the lines: you navigate with the arrow keys and type.
   and Cmd+E opens a dates-and-priority dialog for all of them; project lines in the selection are left alone.
   "Edit multiple" at the top switches to a selection mode where clicking any lines (not only a run) adds and
   removes them; the Tags… and Dates & priority… buttons beside the count apply to them, Done or Escape leaves.
-- Cmd+Z undoes the last change on the page, as many steps back as you like.
+- Cmd+Z undoes the last change on the page, as many steps back as you like. The feed has its own history:
+  there Cmd+Z reverses the last completion, skip, "done for now" or checklist tick.
 - Paste a bulleted or indented list into any line and it lands in the outline with its nesting: the first
   line goes into the text at the cursor, the rest become lines below it.
 - Drag the handle to reorder; rows move live under the pointer, and dragging to the right over a row nests
@@ -146,7 +147,9 @@ multiplied by your measured actual/estimate ratio), the checklist, the exercise 
 does the packing when configured; a deterministic packer is the fallback and the validator (anything outside
 the free windows is clamped or dropped).
 
-**The feed** shows the one card the schedule says is next: Start (a Toggl timer tagged `task-tracker`, named
+**The feed** is a deck of cards, the next one showing beneath the top one; completing the top card flashes it green
+and slides it away. Above the deck, from `meeting_alert_minutes` (45) before a meeting, a line says "Daily
+regather in 12 minutes", counting down in whole minutes. The top card is the one the schedule says is next: Start (a Toggl timer tagged `task-tracker`, named
 after the task), a completion checkbox (completes the task, pushes to Linear), "Done for now" for a block of a
 task that continues later, Skip, and at the bottom the alternatives: today's exercise and Journal.
 The checklist card lists the sheet's items with checkboxes.

@@ -28,6 +28,7 @@ DEFAULTS: dict[str, Any] = {
         "replan_drift_minutes": 20,          # re-plan when the next block is this late (or early)
         "overrun_minutes": 30,               # ... or the active block has run this far past its end
         "replan_min_interval_minutes": 10,   # never auto re-plan more often than this
+        "meeting_alert_minutes": 45,         # the feed shows "X in N minutes" this long before a meeting
     },
     "snapshots": {
         "enable": True,

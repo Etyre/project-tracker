@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Task Tracker</title>
 <style>
-:root{--box:#fff;--box2:#f3f5f8;--bg:#f6f7f9;--card:#fff;--ink:#1b1f24;--muted:#6b7280;--line:#e5e7eb;--accent:#2563eb;--accent-ink:#fff;--ok:#16a34a;--warn:#d97706;--bad:#dc2626;--chip:#eef2ff;--chip-ink:#3730a3;--hover:#f1f5f9}
-@media (prefers-color-scheme:dark){:root{--box:#171a21;--box2:#0f1115;--bg:#0f1115;--card:#171a21;--ink:#e6e8ec;--muted:#9aa3b2;--line:#2a2f3a;--accent:#60a5fa;--accent-ink:#0b1220;--chip:#1e2740;--chip-ink:#c7d2fe;--hover:#1e2330}}
+:root{--box:#fff;--box2:#f3f5f8;--bg:#f6f7f9;--card:#fff;--ink:#1b1f24;--muted:#6b7280;--line:#e5e7eb;--accent:#2563eb;--accent-ink:#fff;--ok:#16a34a;--warn:#d97706;--bad:#dc2626;--chip:#eef2ff;--chip-ink:#3730a3;--hover:#f1f5f9;--done:#dcfce7}
+@media (prefers-color-scheme:dark){:root{--box:#171a21;--box2:#0f1115;--bg:#0f1115;--card:#171a21;--ink:#e6e8ec;--muted:#9aa3b2;--line:#2a2f3a;--accent:#60a5fa;--accent-ink:#0b1220;--chip:#1e2740;--chip-ink:#c7d2fe;--hover:#1e2330;--done:#1d4d2e}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
 body{display:flex;min-height:100vh}
@@ -119,15 +119,24 @@ code{font-size:.9em;padding:1px 4px;border-radius:3px;background:var(--hover)}
 .dropzone.over{height:4px;background:var(--accent);border-radius:2px}
 a{color:var(--accent)}
 /* feed: one centered card, like a tear-off calendar page */
-.feed{display:flex;flex-direction:column;align-items:center;gap:14px;padding-top:24px}
+.feed{display:flex;flex-direction:column;align-items:center;gap:14px;padding-top:12px}
+/* the line above the deck: the next meeting, once it is close */
+.feed .upcoming{min-height:26px;font-size:15px;color:var(--accent);font-weight:600;margin-bottom:6px}
 .page{width:min(900px,100%);min-height:min(640px,calc(100vh - 150px));background:var(--card);border:1px solid var(--line);border-radius:6px;padding:24px 0 28px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.06);display:flex;flex-direction:column}
 .page .main{flex:1;display:flex;flex-direction:column;justify-content:space-evenly;padding:8px 0}
 /* completing a card: it flashes green, then slides off to the right; the next card slides in */
-@keyframes cardDone{0%{transform:none;opacity:1}25%,55%{background:rgba(22,163,74,.22);border-color:#16a34a;transform:none;opacity:1}100%{background:rgba(22,163,74,.22);border-color:#16a34a;transform:translateX(140%) rotate(3deg);opacity:0}}
+@keyframes cardDone{0%{transform:none;opacity:1}25%,55%{background:var(--done);border-color:#16a34a;transform:none;opacity:1}100%{background:var(--done);border-color:#16a34a;transform:translateX(140%) rotate(3deg);opacity:0}}
 .page.done{animation:cardDone .95s cubic-bezier(.55,0,.9,.4) forwards;pointer-events:none}
-@keyframes cardIn{from{transform:translateX(-48px);opacity:0}to{transform:none;opacity:1}}
-.page.enter{animation:cardIn .32s ease-out}
-@media (prefers-reduced-motion:reduce){.page.done{animation:none;opacity:.4}.page.enter{animation:none}}
+/* the feed is a deck: the next cards sit underneath the top one, their edges just showing; when the top card
+   goes, the one beneath rises into its place */
+.stack{position:relative;width:min(900px,100%)}
+.stack>.page:not(.under){position:relative;z-index:2}
+.page.under{position:absolute;inset:0;z-index:1;transform:translateY(12px) scaleX(.985);pointer-events:none;background:var(--box2);box-shadow:0 1px 2px rgba(0,0,0,.06)}
+.page.under.u2{z-index:0;transform:translateY(24px) scaleX(.97)}
+.page.under .big{color:var(--muted)}
+@keyframes cardRise{from{transform:translateY(12px) scaleX(.985);background:var(--box2)}to{transform:none;background:var(--card)}}
+.page.rise{animation:cardRise .28s ease-out}
+@media (prefers-reduced-motion:reduce){.page.done{animation:none;opacity:.4}.page.rise{animation:none}}
 .page .date{background:var(--ink);color:var(--bg);padding:10px;font-size:13px;letter-spacing:.14em;text-transform:uppercase;border-radius:5px 5px 0 0}
 .page .kind{margin-top:0;font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);min-height:18px}
 .page .path{color:var(--muted);font-size:14px;margin-top:10px}
@@ -254,13 +263,17 @@ const collapsedTasks = new Set(JSON.parse(localStorage.getItem('collapsedTasks')
 const saveFold = () => localStorage.setItem('collapsedTasks', JSON.stringify([...collapsedTasks]));
 // undo: every mutation from the projects page pushes its inverse; Cmd/Ctrl+Z (outside a text field that has
 // been typed in) pops and runs it.
-const undoStack = [];
+// Each page has its own history: Cmd+Z on the feed undoes the last feed action (complete, skip, tick), on the
+// projects page the last outline change.
+const undoStack = [], feedUndo = [];
+const stackFor = () => view === 'feed' ? feedUndo : undoStack;
 function pushUndo(label, fn, mergeWithPrevious) {   // merge: this and the previous step undo together (e.g. a split line)
-  if (mergeWithPrevious && undoStack.length) {const prev = undoStack.pop(); undoStack.push({label: 'split', fn: async () => {await fn(); await prev.fn();}}); return;}
-  undoStack.push({label, fn}); if (undoStack.length > 100) undoStack.shift();
+  const st = stackFor();
+  if (mergeWithPrevious && st.length) {const prev = st.pop(); st.push({label: 'split', fn: async () => {await fn(); await prev.fn();}}); return;}
+  st.push({label, fn}); if (st.length > 100) st.shift();
 }
 async function undo() {
-  const u = undoStack.pop(); if (!u) {toast('Nothing to undo'); return;}
+  const u = stackFor().pop(); if (!u) {toast(view === 'feed' ? 'Nothing to undo on the feed' : 'Nothing to undo'); return;}
   await new Promise(r => setTimeout(r, 150));   // let a blurred editor finish its own save first
   try {await u.fn(); toast('Undid ' + esc(u.label));} catch (e) {toast('Could not undo ' + esc(u.label) + ': ' + esc(e.message), 6000);}
   render();
@@ -366,11 +379,25 @@ async function renderFeed() {
     card = page(body, actions);
   }
   const meeting = f.meeting_now ? `<div class="meeting">In a meeting until ${f.meeting_now.end}: ${esc(f.meeting_now.title)}</div>` : '';
+  feedMeetings = {list: f.meetings || [], alert: f.meeting_alert_minutes || 45};
   const note = f.replanning.active ? `<div class="foot"><span>re-planning…</span></div>` : f.plan.off_track ? `<div class="foot"><span>off track, re-plan pending</span></div>` : '';
-  m.innerHTML = `<div class="feed">${meeting}${card}${note}</div>`;
-  if (enterNext) {enterNext = false; m.querySelector('.page')?.classList.add('enter');}
+  const under = (f.up_next || []).slice(0, 2).map((u, i) => `<div class="page under u${i + 1}" aria-hidden="true"><div class="main"><div class="head"><div class="kind">&nbsp;</div><div class="big">${u.kind === 'checklist' ? 'Daily checklist' : mdLine(u.title).html}</div></div></div></div>`).join('');
+  m.innerHTML = `<div class="feed"><div class="upcoming">${upcomingText()}</div>${meeting}<div class="stack">${card}${under}</div>${note}</div>`;
+  if (riseNext) {riseNext = false; m.querySelector('.stack > .page:not(.under)')?.classList.add('rise');}
   if (f.replanning.active) setTimeout(() => {if (view === 'feed') renderFeed().catch(() => {});}, 5000);
 }
+// "Daily regather in 12 minutes": the next meeting starting within the alert window, in whole minutes, re-checked
+// twice a minute so the number moves without ever showing seconds
+let feedMeetings = {list: [], alert: 45};
+function upcomingText() {
+  const now = new Date(), nowMin = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
+  const soon = feedMeetings.list.map(m => ({...m, startMin: +m.start.slice(0, 2) * 60 + +m.start.slice(3, 5)}))
+    .filter(m => m.startMin >= nowMin - 0.5 && m.startMin - nowMin <= feedMeetings.alert).sort((a, b) => a.startMin - b.startMin)[0];
+  if (!soon) return '';
+  const mins = Math.max(1, Math.ceil(soon.startMin - nowMin));
+  return `${esc(soon.title)} in ${mins} minute${mins === 1 ? '' : 's'}`;
+}
+setInterval(() => {const u = document.querySelector('.feed .upcoming'); if (u && view === 'feed') {const t = upcomingText(); if (u.innerHTML !== t) u.innerHTML = t;}}, 30000);
 function altButtons(f) {
   const ex = f.exercise_item;
   const exDone = ex && ex.status === 'done';
@@ -384,23 +411,25 @@ async function rebuild(fromNow) {
   catch (e) {toast('Plan failed: ' + esc(e.message), 8000);}
 }
 async function startItem(id) {const r = await api('/feed/start', 'POST', {item_id: id}); if (r.toggl_error) toast('Toggl: ' + esc(r.toggl_error), 6000); await refreshStatus(); renderFeed();}
-let enterNext = false;
+let riseNext = false;
 async function completeItem(id, el) {
   const page = el?.closest('.page');
   const req = api('/feed/complete', 'POST', {item_id: id});           // save while the card animates away
-  if (page) {page.classList.add('done'); await new Promise(r => setTimeout(r, 950));}
-  try {const r = await req; if (r.linear_error) toast('Linear: ' + esc(r.linear_error), 6000);}
+  if (page) {await new Promise(r => {page.addEventListener('animationend', r, {once: true}); setTimeout(r, 1200); page.classList.add('done');});}
+  try {const r = await req; if (r.linear_error) toast('Linear: ' + esc(r.linear_error), 6000); pushUndo('complete', () => api('/feed/uncomplete', 'POST', {item_id: id}));}
   catch (e) {toast(esc(e.message), 6000); page?.classList.remove('done');}
-  await refreshStatus(); enterNext = true; renderFeed();
+  await refreshStatus(); riseNext = true;
+  renderFeed().catch(e => {toast('Feed: ' + esc(e.message), 6000); page?.classList.remove('done');});
 }
-async function finishBlock(id) {await api('/feed/finish_block', 'POST', {item_id: id}); await refreshStatus(); renderFeed();}
-async function skipItem(id) {await api('/feed/skip', 'POST', {item_id: id}); await refreshStatus(); renderFeed();}
+async function finishBlock(id) {await api('/feed/finish_block', 'POST', {item_id: id}); pushUndo('done for now', () => api('/feed/reset_item', 'POST', {item_id: id})); await refreshStatus(); renderFeed();}
+async function skipItem(id) {await api('/feed/skip', 'POST', {item_id: id}); pushUndo('skip', () => api('/feed/reset_item', 'POST', {item_id: id})); await refreshStatus(); renderFeed();}
 async function startExercise() {const r = await api('/exercise/start', 'POST'); if (r.toggl_error) toast('Toggl: ' + esc(r.toggl_error), 6000); else toast(`Exercise timer started: ${esc(r.kind)}`); await refreshStatus(); renderFeed();}
 async function startJournal() {const r = await api('/journal/start', 'POST'); toast(r.open_error ? 'Journal timer started; ' + esc(r.open_error) : 'Journal timer started', 5000); await refreshStatus(); renderFeed();}
 async function checkItem(box, item) {
   box.disabled = true;
   try {const r = await api('/checklist/done', 'POST', {item, undo: !box.checked});
-    if (r.sheet && !r.sheet.ok) toast('Logged locally; sheet: ' + esc(r.sheet.error), 6000);}
+    if (r.sheet && !r.sheet.ok) toast('Logged locally; sheet: ' + esc(r.sheet.error), 6000);
+    const ticked = box.checked; pushUndo((ticked ? 'tick ' : 'untick ') + item, () => api('/checklist/done', 'POST', {item, undo: ticked}));}
   catch (e) {toast(esc(e.message)); box.checked = !box.checked;}
   box.disabled = false;
 }
@@ -1448,7 +1477,7 @@ async function renderSettings() {
   const card = (title, status, body, intro) => `<div class="card"><h3>${title}${status === undefined ? '' : `<span class="chip ${status ? 'ok' : 'warn'}">${status ? 'on' : 'off'}</span>`}</h3>${intro ? `<p class="muted" style="margin:0 0 10px;font-size:13px">${intro}</p>` : ''}<div class="form">${body}</div></div>`;
   m.innerHTML = `<div class="settings">
     ${card('Claude', status.llm, key('anthropic', 'API key', 'sk-ant-…') + f('llm', 'enable', 'Use Claude', 'quick-add filing, estimates and the day plan; without it everything falls back to rules', 'bool') + f('llm', 'model', 'Model') + f('llm', 'effort', 'Plan effort', '', ['low', 'medium', 'high', 'max']) + f('llm', 'quick_add_effort', 'Quick-add effort', '', ['low', 'medium', 'high']))}
-    ${card('Work day', undefined, f('general', 'work_start', 'Starts', '', 'time') + f('general', 'work_end', 'Ends', '', 'time') + f('general', 'default_estimate_minutes', 'Default estimate (min)', 'for a task that has no estimate yet', 'number') + f('general', 'min_block_minutes', 'Smallest block (min)', '', 'number') + f('general', 'replan_drift_minutes', 'Re-plan when late by (min)', 'the next block is this late or early', 'number') + f('general', 'overrun_minutes', 'Re-plan after overrun (min)', '', 'number') + f('general', 'replan_min_interval_minutes', 'Re-plan at most every (min)', '', 'number'))}
+    ${card('Work day', undefined, f('general', 'work_start', 'Starts', '', 'time') + f('general', 'work_end', 'Ends', '', 'time') + f('general', 'default_estimate_minutes', 'Default estimate (min)', 'for a task that has no estimate yet', 'number') + f('general', 'min_block_minutes', 'Smallest block (min)', '', 'number') + f('general', 'replan_drift_minutes', 'Re-plan when late by (min)', 'the next block is this late or early', 'number') + f('general', 'overrun_minutes', 'Re-plan after overrun (min)', '', 'number') + f('general', 'replan_min_interval_minutes', 'Re-plan at most every (min)', '', 'number') + f('general', 'meeting_alert_minutes', 'Meeting reminder (min before)', 'the feed shows "meeting in N minutes" from this far out', 'number'))}
     ${card('Calendar', status.calendar, f('calendar', 'ics_urls', 'iCal feeds', 'one per line. Google Calendar → Settings → your calendar → "Secret address in iCal format"', 'lines') + f('calendar', 'ignore_titles', 'Ignore events titled', 'comma separated') + f('calendar', 'busy_only', 'Only busy events block time', '', 'bool'))}
     ${card('Toggl', status.toggl, key('toggl', 'API token', '32 hex characters', 'Toggl Track → Profile → API token') + f('toggl', 'tag', 'Tag on timers') + f('toggl', 'project', 'Toggl project', 'optional: file every entry under this Toggl project'))}
     ${card('Linear', status.linear, key('linear', 'API key', 'lin_api_…', 'Linear → Settings → API → personal API key') + f('linear', 'enable', 'Mirror my issues', '', 'bool') + f('linear', 'sync_minutes', 'Sync every (min)', '', 'number') + f('linear', 'category_name', 'Under project') + f('linear', 'group_by', 'Sub-project per', '', ['project', 'team']))}

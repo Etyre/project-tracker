@@ -607,6 +607,10 @@ def create_app() -> FastAPI:
         items = p["items"]
         active = next((i for i in items if i["status"] == "active"), None)
         pending = [i for i in items if i["status"] == "pending" and i["kind"] != "meeting"]
+        for i in list(pending):                       # a block whose task was deleted since the plan was built
+            if i["kind"] == "task" and i["task_id"] and not db.task(i["task_id"]):
+                db.set_item_status(i["id"], "skipped")
+                pending.remove(i)
         current = active or (pending[0] if pending else None)
         meeting_now = next((i for i in items if i["kind"] == "meeting" and scheduler.parse_hm(i["start"]) <= now_min < scheduler.parse_hm(i["end"])), None)
         if current and current["kind"] == "task" and current["task_id"]:
@@ -622,6 +626,8 @@ def create_app() -> FastAPI:
             "plan": {"built_at": p["built_at"], "rationale": p["rationale"], "source": p["raw"].get("source"),
                      "work_start": p["work_start"], "work_end": p["work_end"], "off_track": scheduler.off_track()},
             "current": current, "meeting_now": meeting_now,
+            "meetings": [{"title": i["title"], "start": i["start"], "end": i["end"]} for i in items if i["kind"] == "meeting"],
+            "meeting_alert_minutes": cfg["meeting_alert_minutes"],
             "up_next": [i for i in pending if not current or i["id"] != current["id"]][:5],
             "progress": {"done": done, "total": total},
             "exercise_item": next((i for i in items if i["kind"] == "exercise"), None),
@@ -655,6 +661,21 @@ def create_app() -> FastAPI:
             err = linear.safe_push(it["task_id"])
             for other in db.rows("SELECT id FROM plan_items WHERE task_id=? AND status='pending'", (it["task_id"],)):
                 db.set_item_status(other["id"], "done")
+        return {"ok": True, "linear_error": err}
+
+    @app.post("/api/feed/uncomplete")
+    def feed_uncomplete(r: ItemRef):
+        """Undo of the card's checkbox: the block (and any sibling blocks of the task) back to pending, the task reopened."""
+        it = db.plan_item(r.item_id)
+        if not it:
+            raise HTTPException(404)
+        db.set_item_status(it["id"], "pending")
+        err = None
+        if it["kind"] == "task" and it["task_id"]:
+            db.uncomplete_task(it["task_id"])
+            err = linear.safe_push(it["task_id"])
+            for other in db.rows("SELECT id FROM plan_items WHERE task_id=? AND status='done' AND date=?", (it["task_id"], it["date"])):
+                db.set_item_status(other["id"], "pending")
         return {"ok": True, "linear_error": err}
 
     @app.post("/api/feed/finish_block")

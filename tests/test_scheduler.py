@@ -380,3 +380,18 @@ def test_exercise_decided_once_and_length_from_history(monkeypatch):
     monkeypatch.setattr(exercise, "_fallback", lambda hist: (_ for _ in ()).throw(AssertionError("decided twice")))
     assert exercise.decide("2030-03-03") == d1                              # remembered, not recomputed
     assert exercise.decided_today() is False
+
+
+def test_feed_uncomplete_reopens_task_and_block():
+    from fastapi.testclient import TestClient
+    from tracker import web
+    c = TestClient(web.create_app())
+    pid = db.create_project("Feed undo")
+    tid = db.create_task(pid, "Undo me", estimate_minutes=30)
+    date = db.today()
+    db.save_plan(date, "09:00", "17:00", "run", "", [dict(kind="task", task_id=tid, title="Undo me", start="09:00", end="09:30", minutes=30, note="")], {})
+    item = db.rows("SELECT id FROM plan_items WHERE task_id=?", (tid,))[0]["id"]
+    assert c.post("/api/feed/complete", json={"item_id": item}).status_code == 200
+    assert db.task(tid)["completed_at"] and db.plan_item(item)["status"] == "done"
+    assert c.post("/api/feed/uncomplete", json={"item_id": item}).status_code == 200
+    assert db.task(tid)["completed_at"] is None and db.plan_item(item)["status"] == "pending"
