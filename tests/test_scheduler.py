@@ -441,7 +441,7 @@ def test_toggl_history_index_and_exact_match(monkeypatch):
 def test_exercise_rules_engine():
     from tracker import exercise
     rules = exercise.parse_rules(pathlib.Path(config.EXERCISE_PATH).read_text())
-    assert [(r["name"], r["period"], r["gap"], r["ideal"]) for r in rules["required"]] == [("squats", 7, 3, (3, 4)), ("cardio interval training", 4, 2, (2, 3))]
+    assert [(r["name"], r["period"], r["gap"], r["ideal"]) for r in rules["required"]] == [("squats", 7, 3, (4, 4)), ("cardio interval training", 4, 2, (2, 3))]
     assert rules["never_adjacent"] == [["deadlifts", "squats"]] and rules["fill"] == ["benchpress", "deadlifts", "shoulder press"]
     today = dt.date(2026, 11, 10)
     H = lambda name, days_ago, kind="strength": {"kind": kind, "exercise": name, "date": (today - dt.timedelta(days=days_ago)).isoformat(), "weekday": "", "minutes": 40, "source": "sheet"}
@@ -451,11 +451,13 @@ def test_exercise_rules_engine():
     # squats overdue but deadlifts were yesterday: never back to back, so cardio (also overdue) instead
     d = exercise.rules_decide(rules, [H("Deadlifts", 1), H("Cardio Interval Training", 4, "cardio"), H("Squats", 9)], today)
     assert d["title"] == "cardio interval training"
-    # ideal cadence: squats 3 days ago (ideal 3-4) and cardio 2 days ago (ideal 2-3): cardio is further through its window? both at the start -> squats (longer since)
+    # ideal cadence: squats 3 days ago are allowed but not yet wanted (ideal 4); cardio 2 days ago is at the start of its window
     d = exercise.rules_decide(rules, [H("Cardio Interval Training", 2, "cardio"), H("Squats", 3)], today)
-    assert d["title"] == "squats"
-    d = exercise.rules_decide(rules, [H("Cardio Interval Training", 3, "cardio"), H("Squats", 3)], today)
-    assert d["title"] == "cardio interval training"          # cardio at the top of its ideal window
+    assert d["title"] == "cardio interval training"
+    d = exercise.rules_decide(rules, [H("Cardio Interval Training", 2, "cardio"), H("Squats", 4)], today)
+    assert d["title"] == "squats"                           # squats at their ideal day beat cardio at the start of its window
+    d = exercise.rules_decide(rules, [H("Cardio Interval Training", 3, "cardio"), H("Squats", 4)], today)
+    assert d["title"] == "squats"                           # both at the top of their windows: the one done longer ago
     # nothing wanted: the fill-in done longest ago; deadlifts avoided the day before squats' deadline
     hist = [H("Cardio Interval Training", 1, "cardio"), H("Squats", 2), H("Benchpress", 3), H("Shoulder Press", 5), H("Deadlifts", 9)]
     assert exercise.rules_decide(rules, hist, today)["title"] == "deadlifts"

@@ -116,12 +116,12 @@ def parse_rules(text: str) -> dict:
         else:
             least = re.search(r"at least (?:once )?(?:every (\d+) days?|a week|once a week)", body)
             most = re.search(r"(?:at most|no more than) (?:once )?(?:every (\d+) days?|every other day)", body)
-            ideal = re.search(r"ideal(?:ly)?[^0-9]*(\d+)\s*(?:-|–|to)\s*(\d+) days?", body)
+            ideal = re.search(r"ideal(?:ly)?[^0-9]*(\d+)(?:\s*(?:-|–|to)\s*(\d+))? days?", body)
             if not least and not most and not ideal:
                 continue
             period = (int(least.group(1)) if least.group(1) else 7) if least else None
             gap = (int(most.group(1)) if most.group(1) else 2) if most else 1
-            lo, hi = (int(ideal.group(1)), int(ideal.group(2))) if ideal else (gap, period or gap)
+            lo, hi = (int(ideal.group(1)), int(ideal.group(2) or ideal.group(1))) if ideal else (gap, period or gap)
             rules["required"].append({"name": name, "period": period, "gap": gap, "ideal": (max(lo, gap), max(hi, lo))})
     return rules
 
