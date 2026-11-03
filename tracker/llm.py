@@ -17,15 +17,25 @@ class LLMError(RuntimeError):
     pass
 
 
-@lru_cache(maxsize=1)
+_creds_ok = False
+
+
 def _has_credentials() -> bool:
-    if config.secret("anthropic") or os.environ.get("ANTHROPIC_AUTH_TOKEN"):
+    """Only a positive answer is remembered: a check that fails (e.g. the Keychain not answering in the first
+    second after launch) is tried again next time."""
+    global _creds_ok
+    if _creds_ok:
         return True
-    try:                      # an `ant auth login` profile - the SDK's zero-arg client resolves it
-        c = anthropic.Anthropic()
-        return bool(c.api_key or getattr(c, "auth_token", None) or getattr(c, "credentials", None))
-    except Exception:
-        return False
+    ok = bool(config.secret("anthropic") or os.environ.get("ANTHROPIC_AUTH_TOKEN"))
+    if not ok:
+        config.secret.cache_clear()
+        try:                      # an `ant auth login` profile - the SDK's zero-arg client resolves it
+            c = anthropic.Anthropic()
+            ok = bool(c.api_key or getattr(c, "auth_token", None) or getattr(c, "credentials", None))
+        except Exception:
+            ok = False
+    _creds_ok = ok
+    return ok
 
 
 def enabled() -> bool:
@@ -212,7 +222,7 @@ history (from their exercise log): sessions with kind, date, weekday and minutes
 and the typical length of each kind. Pick the kind for today that best follows the brief given the history. There
 are no rest days: every day gets a session (a light one, such as mobility or an easy walk, when the body needs it).
 `title` is the session as the user would log it, lower case, specific: "squats", "cardio interval training",
-"easy run". `minutes` is only a guess for a kind with no history yet (the app
+"easy run"; prefer the names in `known_exercises` (what their exercise log and brief call things). `minutes` is only a guess for a kind with no history yet (the app
 otherwise uses the typical length from the history). `reason` is one short sentence the user will read.
 
 ===== USER'S EXERCISE BRIEF =====

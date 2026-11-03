@@ -421,7 +421,7 @@ def create_app() -> FastAPI:
         if not value:
             raise HTTPException(400, "empty value")
         config.keychain_set(name, value)
-        llm._has_credentials.cache_clear()
+        llm._creds_ok = False
         toggl.me.cache_clear()
         return {"ok": True, "secrets": config.secret_status()}
 

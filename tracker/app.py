@@ -254,7 +254,7 @@ class TaskTrackerApp(rumps.App):
             return
         config.keychain_set(account, value)
         from . import llm, toggl
-        llm._has_credentials.cache_clear()
+        llm._creds_ok = False
         toggl.me.cache_clear()
         rumps.notification(APP_NAME, "Saved", f"{title} stored in the Keychain.")
         self.refresh(None)

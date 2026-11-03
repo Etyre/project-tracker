@@ -80,16 +80,30 @@ def typical_minutes(kind: str, hist: list[dict] | None = None) -> int | None:
     return int(statistics.median(any_[:10])) if any_ else None
 
 
+def known_exercises(hist: list[dict]) -> list[str]:
+    """The user's own vocabulary: distinct session names from the exercise log, most recent first."""
+    out: list[str] = []
+    for h in hist:
+        name = (h.get("exercise") or h.get("kind") or "").strip().lower()
+        if name and name not in out:
+            out.append(name)
+    return out
+
+
 def _fallback(hist: list[dict]) -> dict:
-    cfg = config.load()["exercise"]
-    rotation = cfg["rotation"] or ["exercise"]
+    """Without Claude: the logged session the user has gone longest without; the config rotation only when
+    there is no history at all."""
+    names = known_exercises(hist)
+    if names:
+        title = names[-1]                                      # least recently done
+        kind = next((h["kind"] for h in hist if (h.get("exercise") or h.get("kind") or "").strip().lower() == title), title)
+        return {"kind": kind, "title": title, "minutes": typical_minutes(kind, hist) or LAST_RESORT_MINUTES,
+                "reason": "least recently done in your log (Claude was not available)", "provisional": True}
+    rotation = config.load()["exercise"]["rotation"] or ["exercise"]
     recent = [h["kind"] for h in hist[:len(rotation)]]
-    kind = next((k for k in rotation if k.lower() not in recent), None)
-    if kind is None:
-        last = recent[0] if recent else None
-        lower = [r.lower() for r in rotation]
-        kind = rotation[(lower.index(last) + 1) % len(rotation)] if last in lower else rotation[0]
-    return {"kind": kind, "title": kind, "minutes": typical_minutes(kind, hist) or LAST_RESORT_MINUTES, "reason": "rotation (Claude not configured)"}
+    kind = next((k for k in rotation if k.lower() not in recent), rotation[0])
+    return {"kind": kind, "title": kind, "minutes": typical_minutes(kind, hist) or LAST_RESORT_MINUTES,
+            "reason": "rotation (Claude was not available)", "provisional": True}
 
 
 def decide(date: str | None = None, force: bool = False) -> dict:
@@ -99,8 +113,8 @@ def decide(date: str | None = None, force: bool = False) -> dict:
     if cur and not force:
         try:
             d = json.loads(cur)
-            if d.get("date") == date and d.get("title"):      # a decision from before session titles is remade
-                return d
+            if d.get("date") == date and d.get("title") and not (d.get("provisional") and llm.enabled()):
+                return d                                       # a fallback decision is remade once Claude is reachable
         except ValueError:
             pass
     hist = history()
@@ -112,6 +126,7 @@ def decide(date: str | None = None, force: bool = False) -> dict:
             "recent_sessions": hist[:30],
             "typical_minutes_by_kind": {k: typical_minutes(k, hist) for k in sorted({h["kind"] for h in hist})},
             "sessions_this_week": [h for h in hist if dt.date.fromisoformat(h["date"]) >= day - dt.timedelta(days=day.weekday())],
+            "known_exercises": known_exercises(hist),
         }
         try:
             res = llm.pick_exercise(config.exercise_text(), json.dumps(ctx, indent=1, default=str))

@@ -17,6 +17,7 @@ config.load.cache_clear()
 from tracker import db, scheduler, estimates, llm  # noqa: E402
 
 llm._has_credentials = lambda: False      # tests never call Claude, whatever the Keychain holds
+llm.enabled = lambda: False
 
 
 def setup_module():
@@ -434,3 +435,14 @@ def test_toggl_history_index_and_exact_match(monkeypatch):
     assert web._going_to("squats") == "going to do squats" and web._going_to("Exercise: cardio") == "going to do cardio"
     assert web._going_to("Going to do a run") == "Going to do a run"
     toggl._index_cache = None
+
+
+def test_exercise_fallback_uses_logged_vocabulary(monkeypatch):
+    from tracker import exercise
+    hist = [{"kind": "strength", "exercise": "Pull Ups", "date": "2026-11-03", "weekday": "Tue", "minutes": 30, "source": "sheet"},
+            {"kind": "cardio", "exercise": "Cardio interval training", "date": "2026-11-01", "weekday": "Sun", "minutes": 25, "source": "sheet"},
+            {"kind": "strength", "exercise": "Squats", "date": "2026-10-30", "weekday": "Thu", "minutes": 50, "source": "sheet"}]
+    assert exercise.known_exercises(hist) == ["pull ups", "cardio interval training", "squats"]
+    d = exercise._fallback(hist)
+    assert d["title"] == "squats" and d["kind"] == "strength" and d["minutes"] == 50 and d["provisional"]
+    assert exercise._fallback([])["title"] in config.load()["exercise"]["rotation"]
