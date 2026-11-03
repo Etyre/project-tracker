@@ -1,4 +1,4 @@
-"""Today's exercise: decided once a day, in the morning, by Claude from the user's brief and their history.
+"""Today's exercise: decided once a day, in the morning, by the user's own rules applied to their exercise log.
 
 The kind (run, strength, …) is chosen at most once per date and remembered, so re-planning the day never
 changes it. The length is never configured: it is the typical length of that kind in the user's own history,
@@ -9,6 +9,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
+import re
 import statistics
 import time
 
@@ -90,61 +91,206 @@ def known_exercises(hist: list[dict]) -> list[str]:
     return out
 
 
+RULE_LINE = re.compile(r"^\s*(?P<name>[^:#]+?)\s*:\s*(?P<body>.+?)\s*$")
+
+
+def parse_rules(text: str) -> dict:
+    """The exercise rules, one per line, in plain phrases (anything else is ignored):
+        squats: at least every 7 days, at most every 3 days, ideally every 3-4 days
+        cardio interval training: at least every 4 days, at most every 2 days, ideally every 2-3 days
+        never back to back: deadlifts, squats
+        fill: benchpress, deadlifts, shoulder press
+    "at least every N days" is the deadline, "at most every M days" the minimum gap, "ideally every A-B days" the
+    cadence to aim for (defaults to the gap..deadline window). "never back to back" names pairs that may not fall
+    on successive days. "fill" (or "around") lists what to do on days nothing is wanted, least recently done first."""
+    rules = {"required": [], "never_adjacent": [], "fill": []}
+    for line in (text or "").splitlines():
+        m = RULE_LINE.match(line)
+        if not m:
+            continue
+        name, body = m.group("name").strip().lower(), m.group("body").strip().lower()
+        if name in ("never back to back", "never on successive days", "not back to back"):
+            rules["never_adjacent"].append([x.strip() for x in re.split(r",|\band\b", body) if x.strip()])
+        elif name in ("fill", "around", "otherwise", "fill-in"):
+            rules["fill"] = [x.strip() for x in re.split(r",|\band\b", body) if x.strip()]
+        else:
+            least = re.search(r"at least (?:once )?(?:every (\d+) days?|a week|once a week)", body)
+            most = re.search(r"(?:at most|no more than) (?:once )?(?:every (\d+) days?|every other day)", body)
+            ideal = re.search(r"ideal(?:ly)?[^0-9]*(\d+)\s*(?:-|–|to)\s*(\d+) days?", body)
+            if not least and not most and not ideal:
+                continue
+            period = (int(least.group(1)) if least.group(1) else 7) if least else None
+            gap = (int(most.group(1)) if most.group(1) else 2) if most else 1
+            lo, hi = (int(ideal.group(1)), int(ideal.group(2))) if ideal else (gap, period or gap)
+            rules["required"].append({"name": name, "period": period, "gap": gap, "ideal": (max(lo, gap), max(hi, lo))})
+    return rules
+
+
+def _same(a: str, b: str) -> bool:
+    """'squats' matches 'Squats', 'squat', 'back squats'; 'cardio interval training' matches 'Cardio Interval Training'."""
+    a, b = a.lower().strip(), b.lower().strip()
+    if not a or not b:
+        return False
+    stem = lambda w: re.sub(r"(es|s)$", "", w)
+    return stem(a) == stem(b) or a in b or b in a or (len(a.split()) == 1 and stem(a) in [stem(w) for w in b.split()]) or (len(b.split()) == 1 and stem(b) in [stem(w) for w in a.split()])
+
+
+def _days_since(name: str, hist: list[dict], today: dt.date) -> int | None:
+    for h in hist:                                      # newest first
+        if _same(name, h.get("exercise") or h.get("kind") or ""):
+            return (today - dt.date.fromisoformat(h["date"])).days
+    return None
+
+
+def rules_decide(rules: dict, hist: list[dict], today: dt.date) -> dict:
+    """Today's session from the rules and the log.
+    1. Anything past its deadline (or never done) that is allowed today: the one done longest ago.
+    2. Else anything inside its ideal window: the one furthest through the window (closest to its upper bound).
+    3. Else the fill-in done longest ago.
+    Never-back-to-back pairs are kept apart, including not doing one the day before the other reaches its deadline."""
+    hist = sorted(hist, key=lambda h: h["date"], reverse=True)
+    yesterday = (today - dt.timedelta(days=1)).isoformat()
+    done_yesterday = [h.get("exercise") or h.get("kind") or "" for h in hist if h["date"] == yesterday]
+
+    def blocked(name: str) -> str | None:
+        for pair in rules["never_adjacent"]:
+            if any(_same(name, p) for p in pair):
+                for other in pair:
+                    if not _same(other, name) and any(_same(other, y) for y in done_yesterday):
+                        return other
+        return None
+
+    overdue, wanted = [], []
+    for r in rules["required"]:
+        since = _days_since(r["name"], hist, today)
+        if blocked(r["name"]) or (since is not None and since < r["gap"]):
+            continue
+        if since is None or (r["period"] is not None and since >= r["period"]):
+            overdue.append((since if since is not None else 10**6, r))
+        elif since >= r["ideal"][0]:
+            lo, hi = r["ideal"]
+            wanted.append(((since - lo + 1) / (hi - lo + 1), since, r))
+    if overdue:
+        overdue.sort(key=lambda x: -x[0])
+        since, r = overdue[0]
+        why = "never logged" if since >= 10**6 else f"{since} days since last, deadline every {r['period']} days"
+        reason = f"{r['name']}: {why}"
+        if len(overdue) > 1:
+            reason += f"; {', '.join(o[1]['name'] for o in overdue[1:])} also overdue, done more recently"
+        return {"title": r["name"], "reason": reason}
+    if wanted:
+        wanted.sort(key=lambda x: (-x[0], -x[1]))
+        _, since, r = wanted[0]
+        return {"title": r["name"], "reason": f"{r['name']}: {since} days since last, ideal cadence every {r['ideal'][0]}-{r['ideal'][1]} days"}
+    deadline_tomorrow = [r["name"] for r in rules["required"] if r["period"] is not None
+                         and (lambda s: s is not None and s + 1 >= r["period"])(_days_since(r["name"], hist, today))]
+
+    def clashes_tomorrow(name: str) -> bool:
+        for pair in rules["never_adjacent"]:
+            if any(_same(name, p) for p in pair):
+                for other in pair:
+                    if not _same(other, name) and any(_same(other, d) for d in deadline_tomorrow):
+                        return True
+        return False
+
+    options = [((lambda s: s if s is not None else 10**6)(_days_since(n, hist, today)), n) for n in rules["fill"] if not blocked(n) and not clashes_tomorrow(n)]
+    if options:
+        options.sort(key=lambda x: -x[0])
+        since, name = options[0]
+        return {"title": name, "reason": f"nothing due; {name} done longest ago" + (f" ({since} days)" if since < 10**6 else " (never)")}
+    for r in rules["required"]:
+        s_ = _days_since(r["name"], hist, today)
+        if not blocked(r["name"]) and (s_ is None or s_ >= r["gap"]):
+            return {"title": r["name"], "reason": f"{r['name']}: nothing else listed"}
+    return {"title": "", "reason": "no rules matched"}
+
+
 def _fallback(hist: list[dict]) -> dict:
-    """Without Claude: the logged session the user has gone longest without; the config rotation only when
-    there is no history at all."""
+    """No rules written yet: the logged session the user has gone longest without, else the config rotation."""
     names = known_exercises(hist)
     if names:
-        title = names[-1]                                      # least recently done
+        title = names[-1]
         kind = next((h["kind"] for h in hist if (h.get("exercise") or h.get("kind") or "").strip().lower() == title), title)
-        return {"kind": kind, "title": title, "minutes": typical_minutes(kind, hist) or LAST_RESORT_MINUTES,
-                "reason": "least recently done in your log (Claude was not available)", "provisional": True}
+        return {"kind": kind, "title": title, "minutes": typical_minutes(kind, hist) or LAST_RESORT_MINUTES, "reason": "least recently done in your log (no rules written yet)"}
     rotation = config.load()["exercise"]["rotation"] or ["exercise"]
     recent = [h["kind"] for h in hist[:len(rotation)]]
     kind = next((k for k in rotation if k.lower() not in recent), rotation[0])
-    return {"kind": kind, "title": kind, "minutes": typical_minutes(kind, hist) or LAST_RESORT_MINUTES,
-            "reason": "rotation (Claude was not available)", "provisional": True}
+    return {"kind": kind, "title": kind, "minutes": typical_minutes(kind, hist) or LAST_RESORT_MINUTES, "reason": "rotation (no rules written yet)"}
+
+
+def notes_text(text: str) -> str:
+    """The lines of the Exercise box that are not rules (and not the bracketed help): what Claude reads."""
+    out = []
+    for line in (text or "").splitlines():
+        if line.strip().startswith("[") or not line.strip():
+            continue
+        m = RULE_LINE.match(line)
+        if m and (m.group("name").strip().lower() in ("never back to back", "never on successive days", "not back to back", "fill", "around", "otherwise", "fill-in")
+                  or re.search(r"at least|at most|no more than|ideal", m.group("body").lower())):
+            continue
+        out.append(line.strip())
+    return "\n".join(out)
+
+
+def _review(decision: dict, hist: list[dict], date: str) -> dict:
+    """Claude may override the rules' pick, rarely: only when the user's notes or the log clearly call for it."""
+    if not llm.enabled():
+        return decision
+    notes = notes_text(config.exercise_text())
+    try:
+        ctx = {"date": date, "weekday": dt.date.fromisoformat(date).strftime("%A"), "recent_sessions": hist[:20],
+               "known_exercises": known_exercises(hist)}
+        res = llm.review_exercise(decision, notes, json.dumps(ctx, default=str))
+    except Exception as e:
+        log.warning("exercise review failed, keeping the rules' pick: %s", e)
+        return decision
+    title = str(res.get("title") or "").strip().lower()
+    if res.get("keep", True) or not title or title == decision["title"]:
+        return decision
+    kind = _kind_for(title, hist)
+    same = [h["minutes"] for h in hist if _same(title, h.get("exercise") or "") and h["minutes"] >= 5]
+    mins = int(statistics.median(same[:10])) if same else (typical_minutes(kind, hist) or LAST_RESORT_MINUTES)
+    return {"kind": kind, "title": title, "minutes": mins, "reason": f"Claude overrode the rules ({decision['title']}): {res.get('reason') or ''}".strip(), "overrode": decision["title"]}
+
+
+def _kind_for(title: str, hist: list[dict]) -> str:
+    for h in hist:
+        if _same(title, h.get("exercise") or ""):
+            return h["kind"]
+    return title
 
 
 def decide(date: str | None = None, force: bool = False) -> dict:
-    """Today's exercise: {date, kind, minutes, reason, decided_at}. Decided once per date and remembered."""
+    """Today's exercise: {date, kind, title, minutes, reason, decided_at}. Decided once per date from the rules in
+    the Exercise box (no model involved) and remembered; the length is the typical length of that session in the
+    log (any exercise of the same kind, else the last resort)."""
     date = date or db.today()
     cur = db.get_setting("exercise_decision")
     if cur and not force:
         try:
             d = json.loads(cur)
-            if d.get("date") == date and d.get("title") and not (d.get("provisional") and llm.enabled()):
-                return d                                       # a fallback decision is remade once Claude is reachable
+            if d.get("date") == date and d.get("title"):
+                return d
         except ValueError:
             pass
     hist = history()
-    decision: dict | None = None
-    if llm.enabled():
-        day = dt.date.fromisoformat(date)
-        ctx = {
-            "date": date, "weekday": day.strftime("%A"),
-            "recent_sessions": hist[:30],
-            "typical_minutes_by_kind": {k: typical_minutes(k, hist) for k in sorted({h["kind"] for h in hist})},
-            "sessions_this_week": [h for h in hist if dt.date.fromisoformat(h["date"]) >= day - dt.timedelta(days=day.weekday())],
-            "known_exercises": known_exercises(hist),
-        }
-        try:
-            res = llm.pick_exercise(config.exercise_text(), json.dumps(ctx, indent=1, default=str))
-            kind = str(res.get("kind") or "").strip().lower()
-            if not kind or kind == "rest":                        # there are no rest days: fall back to the rotation
-                kind = _fallback(hist)["kind"]
-                res = {**res, "title": kind, "reason": str(res.get("reason") or "") + " (no rest days: next in rotation)"}
-            mins = typical_minutes(kind, hist)
-            if mins is None:
-                mins = int(res.get("minutes") or 0) or LAST_RESORT_MINUTES
-            decision = {"kind": kind, "title": str(res.get("title") or kind).strip().lower() or kind, "minutes": mins, "reason": str(res.get("reason") or "")}
-        except (llm.LLMError, ValueError) as e:
-            log.warning("exercise decision failed, using rotation: %s", e)
-    if decision is None:
+    rules = parse_rules(config.exercise_text())
+    if rules["required"] or rules["fill"]:
+        pick = rules_decide(rules, history(), dt.date.fromisoformat(date))
+        title = pick["title"]
+        if title:
+            kind = _kind_for(title, hist)
+            same = [h["minutes"] for h in hist if _same(title, h.get("exercise") or "") and h["minutes"] >= 5]
+            mins = int(statistics.median(same[:10])) if same else (typical_minutes(kind, hist) or LAST_RESORT_MINUTES)
+            decision = {"kind": kind, "title": title, "minutes": mins, "reason": pick["reason"]}
+            decision = _review(decision, hist, date)
+        else:
+            decision = _fallback(hist)
+    else:
         decision = _fallback(hist)
     decision.update({"date": date, "decided_at": time.time()})
     db.set_setting("exercise_decision", json.dumps(decision))
-    log.info("exercise for %s: %s (%s min) - %s", date, decision["kind"], decision["minutes"], decision["reason"])
+    log.info("exercise for %s: %s (%s min) - %s", date, decision["title"], decision["minutes"], decision["reason"])
     return decision
 
 

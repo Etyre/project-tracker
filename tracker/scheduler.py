@@ -246,7 +246,7 @@ def build(day: dt.date | None = None, from_now: bool = False, until: str | None 
             "checklist_block_done_today": checklist_done,
             "recent_exercise": recent_ex,
             "exercise_done_today": exercise_done,
-            "exercise_today": {k: decision.get(k) for k in ("kind", "minutes", "reason")},
+            "exercise_today": {k: decision.get(k) for k in ("kind", "title", "minutes", "reason")},
             "estimate_calibration": estimates.calibration(),
         }
         try:

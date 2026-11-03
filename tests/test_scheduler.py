@@ -351,12 +351,11 @@ def test_settings_save_roundtrip(tmp_path, monkeypatch):
     config.load.cache_clear()
 
 
-def test_schedule_prompt_carries_exercise_brief():
+def test_schedule_prompt_carries_exercise_notes():
     from tracker import llm
-    sys_ = llm.schedule_system("Mornings for focus.", "Run Mon/Wed/Fri, strength Tue/Thu, 40 minutes.")
-    assert "Mornings for focus." in sys_ and "EXERCISE BRIEF" in sys_ and "strength Tue/Thu" in sys_
-    assert sys_.index("===== USER'S RULES") < sys_.index("===== USER'S EXERCISE BRIEF")
-    assert "(no brief" in llm.schedule_system("", "")
+    sys_ = llm.schedule_system("Mornings for focus.", "Timing: early afternoon.")
+    assert "Mornings for focus." in sys_ and "EXERCISE NOTES" in sys_ and "early afternoon" in sys_
+    assert sys_.index("===== USER'S RULES") < sys_.index("===== USER'S EXERCISE NOTES")
 
 
 def test_exercise_timer_named_going_to_do():
@@ -377,7 +376,7 @@ def test_exercise_decided_once_and_length_from_history(monkeypatch):
     assert exercise.typical_minutes("mobility", hist) is not None            # falls back to any exercise
     db.set_setting("exercise_decision", "")
     d1 = exercise.decide("2030-03-03")
-    assert d1["kind"] in ("run", "strength", "mobility") and d1["minutes"] > 0 and d1["date"] == "2030-03-03"
+    assert d1["kind"] and d1["title"] and d1["minutes"] > 0 and d1["date"] == "2030-03-03"
     monkeypatch.setattr(exercise, "_fallback", lambda hist: (_ for _ in ()).throw(AssertionError("decided twice")))
     assert exercise.decide("2030-03-03") == d1                              # remembered, not recomputed
     assert exercise.decided_today() is False
@@ -437,12 +436,52 @@ def test_toggl_history_index_and_exact_match(monkeypatch):
     toggl._index_cache = None
 
 
-def test_exercise_fallback_uses_logged_vocabulary(monkeypatch):
+
+
+def test_exercise_rules_engine():
     from tracker import exercise
-    hist = [{"kind": "strength", "exercise": "Pull Ups", "date": "2026-11-03", "weekday": "Tue", "minutes": 30, "source": "sheet"},
-            {"kind": "cardio", "exercise": "Cardio interval training", "date": "2026-11-01", "weekday": "Sun", "minutes": 25, "source": "sheet"},
-            {"kind": "strength", "exercise": "Squats", "date": "2026-10-30", "weekday": "Thu", "minutes": 50, "source": "sheet"}]
-    assert exercise.known_exercises(hist) == ["pull ups", "cardio interval training", "squats"]
-    d = exercise._fallback(hist)
-    assert d["title"] == "squats" and d["kind"] == "strength" and d["minutes"] == 50 and d["provisional"]
-    assert exercise._fallback([])["title"] in config.load()["exercise"]["rotation"]
+    rules = exercise.parse_rules(pathlib.Path(config.EXERCISE_PATH).read_text())
+    assert [(r["name"], r["period"], r["gap"], r["ideal"]) for r in rules["required"]] == [("squats", 7, 3, (3, 4)), ("cardio interval training", 4, 2, (2, 3))]
+    assert rules["never_adjacent"] == [["deadlifts", "squats"]] and rules["fill"] == ["benchpress", "deadlifts", "shoulder press"]
+    today = dt.date(2026, 11, 10)
+    H = lambda name, days_ago, kind="strength": {"kind": kind, "exercise": name, "date": (today - dt.timedelta(days=days_ago)).isoformat(), "weekday": "", "minutes": 40, "source": "sheet"}
+    # both past their deadline: the one done longest ago first
+    d = exercise.rules_decide(rules, [H("Cardio Interval Training", 5, "cardio"), H("Squats", 8)], today)
+    assert d["title"] == "squats" and "8 days" in d["reason"]
+    # squats overdue but deadlifts were yesterday: never back to back, so cardio (also overdue) instead
+    d = exercise.rules_decide(rules, [H("Deadlifts", 1), H("Cardio Interval Training", 4, "cardio"), H("Squats", 9)], today)
+    assert d["title"] == "cardio interval training"
+    # ideal cadence: squats 3 days ago (ideal 3-4) and cardio 2 days ago (ideal 2-3): cardio is further through its window? both at the start -> squats (longer since)
+    d = exercise.rules_decide(rules, [H("Cardio Interval Training", 2, "cardio"), H("Squats", 3)], today)
+    assert d["title"] == "squats"
+    d = exercise.rules_decide(rules, [H("Cardio Interval Training", 3, "cardio"), H("Squats", 3)], today)
+    assert d["title"] == "cardio interval training"          # cardio at the top of its ideal window
+    # nothing wanted: the fill-in done longest ago; deadlifts avoided the day before squats' deadline
+    hist = [H("Cardio Interval Training", 1, "cardio"), H("Squats", 2), H("Benchpress", 3), H("Shoulder Press", 5), H("Deadlifts", 9)]
+    assert exercise.rules_decide(rules, hist, today)["title"] == "deadlifts"
+    hist2 = [H("Cardio Interval Training", 1, "cardio"), H("Squats", 6), H("Benchpress", 3), H("Shoulder Press", 5), H("Deadlifts", 9)]
+    assert exercise.rules_decide(rules, hist2, today)["title"] == "squats"   # 6 days: past the ideal window, not yet the deadline, but wanted
+    hist3 = [H("Cardio Interval Training", 1, "cardio"), H("Squats", 1), H("Benchpress", 3), H("Shoulder Press", 5), H("Deadlifts", 9)]
+    assert exercise.rules_decide(rules, hist3, today)["title"] == "shoulder press"   # deadlifts blocked: squats were yesterday
+    # never logged: due at once
+    assert exercise.rules_decide(rules, [], today)["title"] == "squats"
+    assert exercise._same("squats", "Back Squats") and exercise._same("Squat", "squats") and not exercise._same("squats", "deadlifts")
+    assert not exercise._same("squats", "cardio interval training")
+
+
+def test_exercise_decide_uses_rules_and_log_lengths(monkeypatch):
+    from tracker import exercise
+    today = dt.date.today()
+    monkeypatch.setattr(exercise, "history", lambda days=90: [
+        {"kind": "cardio", "exercise": "Cardio interval training", "date": (today - dt.timedelta(days=1)).isoformat(), "weekday": "", "minutes": 25, "source": "sheet"},
+        {"kind": "strength", "exercise": "Squats", "date": (today - dt.timedelta(days=9)).isoformat(), "weekday": "", "minutes": 52, "source": "sheet"},
+        {"kind": "strength", "exercise": "Squats", "date": (today - dt.timedelta(days=16)).isoformat(), "weekday": "", "minutes": 48, "source": "sheet"}])
+    db.set_setting("exercise_decision", "")
+    d = exercise.decide(force=True)
+    assert d["title"] == "squats" and d["kind"] == "strength" and d["minutes"] == 50 and "9 days" in d["reason"]
+
+
+def test_exercise_notes_exclude_rule_lines():
+    from tracker import exercise
+    txt = "[help]\nsquats: at least every 7 days\nfill: a, b\nnever back to back: a, b\nMy knee is sore this week.\nTiming: afternoons.\n"
+    assert exercise.notes_text(txt) == "My knee is sore this week.\nTiming: afternoons."

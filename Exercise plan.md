@@ -1,12 +1,8 @@
-Priorities:
+[One rule per line. "at least every N days" is the deadline, "at most every N days" the minimum gap, "ideally every A-B days" the cadence to aim for. When several are past their deadline the one done longest ago goes first. "never back to back" keeps two things off successive days. "fill" is what to do on days nothing is wanted, least recently done first. Other lines are notes for the day plan (timing), not rules.]
 
-High level priorities: 
-1. I want to do squats at least once a week, and no more than once every 3 days.
-2. I want to do cardio interval training at least every 4 days, and no more than every other day. 
-3. If I am past the deadline for both squats and cardio interval training, prioritize whichever one I did less recently. 
+squats: at least every 7 days, at most every 3 days, ideally every 3-4 days
+cardio interval training: at least every 4 days, at most every 2 days, ideally every 2-3 days
+never back to back: deadlifts, squats
+fill: benchpress, deadlifts, shoulder press
 
-Medium priorities:
-1. I want to do 3 to 5 hours of zone 2 cardio a week.
-2. Around my other exercise, I want to do benchpress, deadlifts, and shoulder press.
-3. I never want to do deadlifts or squats back to back on sucessive days. 
-
+Timing: early afternoon is best; before 10:00 only if the afternoon is full of meetings.

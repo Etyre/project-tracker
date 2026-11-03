@@ -136,9 +136,15 @@ The **Snapshots** tab lists them by day and shows any of them; its **Snapshot no
 **Exercise** - the exercise logging sheet written by your exercise app is the record. Its own sync script answers
 `?action=export` with the logged sessions; paste that script's /exec URL as "Exercise log script URL" in Settings
 and each session's category, start time and duration become the history (read-only), with the app's timers and
-Toggl filling in only sessions the sheet lacks. `Exercise plan.md` (edited on the Settings page) is your brief to Claude: what you do, how to
-pick today's session, and when. Once each morning (from 06:00, or when the first plan is built) Claude
-chooses the kind for the day from the brief and your history, and that choice is kept through every re-plan. The
+Toggl filling in only sessions the sheet lacks. `Exercise plan.md` (the Exercise box on the Settings page) holds your rules, one per line:
+`squats: at least every 7 days, at most every 3 days`, `cardio interval training: at least every 4 days, at most
+every 2 days`, `never back to back: deadlifts, squats`, `fill: benchpress, deadlifts, shoulder press`. Once each
+morning (from 06:00, or when the first plan is built) the app applies them to the log with no model involved:
+required items are due when their period has elapsed and allowed after their gap, the one done longest ago goes
+first, never-back-to-back pairs are kept apart (including the day before the other falls due), and on days nothing
+is due the fill-in done longest ago is picked. Claude then reviews the pick and may override it, rarely, when the other lines in the box or the
+log clearly call for it (soreness, travel, a session you ask for); those lines are also the day plan's timing
+notes. The choice is kept through every re-plan. The
 length is never configured: it is the typical length of that kind in your Toggl history (the app's exercise
 timers plus any Toggl entry tagged "exercise" or named like a known kind). Every day has a session. Without
 Claude the plan cycles through `[exercise] rotation`.

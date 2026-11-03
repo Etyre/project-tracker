@@ -103,7 +103,7 @@ QUICK_ADD_SCHEMA = {
                     "deadline": {"type": ["string", "null"], "description": "YYYY-MM-DD or null"},
                     "blocking": {"type": "boolean"},
                     "blocking_for": {"type": "string"},
-                    "importance": {"type": ["integer", "null"], "minimum": 1, "maximum": 5},
+                    "importance": {"type": ["integer", "null"]},
                     "estimate_minutes": {"type": ["integer", "null"]},
                     "chunkable": {"type": "boolean"},
                 },
@@ -152,9 +152,9 @@ Hard constraints:
    or given a partial block (say so in the note).
 5. Checklist items from the sheet: one "checklist" block (or a few) sized from the sheet's minutes if present,
    otherwise ~30 min; skip items already done today. Use the item text as the title list in the note.
-6. Today's exercise was decided this morning and is given as `exercise_today` (kind, minutes, reason): schedule
-   exactly one "exercise" block of that kind and length, titled with the kind, at the time of day the EXERCISE BRIEF
-   below prefers. No block only when exercise is already done today; every day has a session.
+6. Today's exercise was decided this morning by the user's own rules and is given as `exercise_today` (kind, title,
+   minutes, reason): schedule exactly one "exercise" block of that length, titled with the title, at the time of day
+   the EXERCISE NOTES below prefer. No block only when exercise is already done today; every day has a session.
 7. Short "break" blocks are welcome between long focus blocks, but keep them few.
 8. Follow the user's rules and heuristics below; they override these defaults where they conflict.
 
@@ -162,7 +162,7 @@ Output JSON only, matching the schema. `rationale` is 2-4 sentences the user wil
 
 ===== USER'S RULES AND HEURISTICS =====
 """
-EXERCISE_HEADER = "\n\n===== USER'S EXERCISE BRIEF =====\n"
+EXERCISE_HEADER = "\n\n===== USER'S EXERCISE NOTES (rules are applied by the app; read these for timing) =====\n"
 
 SCHEDULE_SCHEMA = {
     "type": "object",
@@ -192,7 +192,7 @@ SCHEDULE_SCHEMA = {
 
 ESTIMATE_SCHEMA = {
     "type": "object",
-    "properties": {"estimate_minutes": {"type": "integer", "minimum": 5, "maximum": 600}},
+    "properties": {"estimate_minutes": {"type": "integer"}},
     "required": ["estimate_minutes"],
     "additionalProperties": False,
 }
@@ -207,7 +207,7 @@ def forecast_estimate(title: str, path: str, description: str, examples: list[di
     ex = "\n".join(f"- {e['title']}: {round(e['actual'])} min (forecast was {e['est']})" for e in examples[:12])
     user = (f"## Task\n{title}\nProject: {path or '(none)'}\n{('Notes: ' + description) if description else ''}\n\n"
             f"## Recent completed tasks\n{ex or '(none yet)'}")
-    return int(structured(ESTIMATE_SYSTEM, user, ESTIMATE_SCHEMA, "low", max_tokens=2000)["estimate_minutes"])
+    return max(5, min(600, int(structured(ESTIMATE_SYSTEM, user, ESTIMATE_SCHEMA, "low", max_tokens=2000)["estimate_minutes"])))
 
 
 def quick_add(text: str, tree_text: str, today: str) -> dict:
@@ -215,57 +215,28 @@ def quick_add(text: str, tree_text: str, today: str) -> dict:
     return structured(QUICK_ADD_SYSTEM, user, QUICK_ADD_SCHEMA, config.load()["llm"]["quick_add_effort"])
 
 
-EXERCISE_PICK_SYSTEM = """You are the user's exercise coach, choosing today's session once, in the morning.
-
-You get the user's own brief (what they do, how they want kinds to alternate, timing) and their recent
-history (from their exercise log): sessions with kind, date, weekday and minutes, what has been done this week,
-and the typical length of each kind. Pick the kind for today that best follows the brief given the history. There
-are no rest days: every day gets a session (a light one, such as mobility or an easy walk, when the body needs it).
-`title` is the session as the user would log it, lower case, specific: "squats", "cardio interval training",
-"easy run"; prefer the names in `known_exercises` (what their exercise log and brief call things). `minutes` is only a guess for a kind with no history yet (the app
-otherwise uses the typical length from the history). `reason` is one short sentence the user will read.
-
-===== USER'S EXERCISE BRIEF =====
-"""
-EXERCISE_PICK_SCHEMA = {
+EXERCISE_REVIEW_SYSTEM = """The user's exercise for today was chosen by their own rules (cadences, gaps, never-back-to-back pairs)
+applied to their exercise log. You review that choice. Keep it unless the user's notes below, or something plain in the
+recent log, clearly call for a different session today (an injury or soreness they mention, travel, a session they
+asked for explicitly, a rule the notes state that the app's rule lines cannot express). Overriding should be rare; when
+you do, name a session in their own vocabulary and give one short reason they will read. `keep` true means no change."""
+EXERCISE_REVIEW_SCHEMA = {
     "type": "object",
-    "properties": {"kind": {"type": "string"}, "title": {"type": "string"}, "minutes": {"type": "integer", "minimum": 0, "maximum": 300}, "reason": {"type": "string"}},
-    "required": ["kind", "title", "minutes", "reason"],
+    "properties": {"keep": {"type": "boolean"}, "title": {"type": "string"}, "reason": {"type": "string"}},
+    "required": ["keep", "title", "reason"],
     "additionalProperties": False,
 }
 
 
-def pick_exercise(brief: str, context_text: str) -> dict:
-    system = EXERCISE_PICK_SYSTEM + (brief.strip() or "(no brief: alternate kinds sensibly)")
-    return structured(system, context_text, EXERCISE_PICK_SCHEMA, "medium", max_tokens=2000)
-
-
-TOGGL_PICK_SYSTEM = """You file a Toggl Track time entry under the right project, the way the user files their own.
-
-You get the new entry's description and context (the task's place in their project tree, or the kind of block), the
-user's Toggl projects with example descriptions they filed under each, and the tags they use. Choose the project
-whose examples this entry plainly belongs with; say "high" confidence only when the history or the context makes it
-clear. When it is not clear, answer with project null and confidence "low": no project is better than a wrong one.
-Tags: only names from the list, and only when the examples show the user tags entries like this one."""
-TOGGL_PICK_SCHEMA = {
-    "type": "object",
-    "properties": {"project": {"type": ["string", "null"]}, "tags": {"type": "array", "items": {"type": "string"}},
-                   "confidence": {"type": "string", "enum": ["high", "low"]}, "reason": {"type": "string"}},
-    "required": ["project", "tags", "confidence", "reason"],
-    "additionalProperties": False,
-}
-
-
-def pick_toggl(description: str, context: str, projects: list[dict], tags: list[str]) -> dict:
-    plist = "\n".join(f"- {p['name']} ({p['count']} recent entries): " + "; ".join(p["examples"][:8]) for p in projects[:40])
-    user = (f"## New entry\n{description}\nContext: {context or '(none)'}\n\n## The user's Toggl projects\n{plist}\n\n"
-            f"## Tags in use\n{', '.join(tags) or '(none)'}")
-    return structured(TOGGL_PICK_SYSTEM, user, TOGGL_PICK_SCHEMA, "low", max_tokens=1000)
+def review_exercise(pick: dict, notes: str, context_text: str) -> dict:
+    user = (f"## The rules' choice for today\n{pick['title']}: {pick['reason']}\n\n## The user's notes\n{notes.strip() or '(none)'}\n\n"
+            f"## Log and context\n{context_text}")
+    return structured(EXERCISE_REVIEW_SYSTEM, user, EXERCISE_REVIEW_SCHEMA, "low", max_tokens=1000)
 
 
 def schedule_system(rules: str, exercise_brief: str = "") -> str:
     return (SCHEDULE_SYSTEM_PREFIX + (rules.strip() or "(no rules document yet)") + EXERCISE_HEADER
-            + (exercise_brief.strip() or "(no brief: pick whatever the exercise sheet or history implies; otherwise alternate kinds)"))
+            + (exercise_brief.strip() or "(none)"))
 
 
 def schedule(context_text: str, rules: str, exercise_brief: str = "") -> dict:
