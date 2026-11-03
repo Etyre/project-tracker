@@ -99,7 +99,7 @@ def decide(date: str | None = None, force: bool = False) -> dict:
     if cur and not force:
         try:
             d = json.loads(cur)
-            if d.get("date") == date:
+            if d.get("date") == date and d.get("title"):      # a decision from before session titles is remade
                 return d
         except ValueError:
             pass

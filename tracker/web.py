@@ -219,7 +219,9 @@ def _item_label(it: dict) -> str:
 
 
 def _current_exercise(date: str) -> str:
-    return exercise.decide(date)["kind"]
+    """What the feed's exercise button says: the day's session ("squats"), "rest" on a rest day."""
+    d = exercise.decide(date)
+    return d.get("title") or d["kind"]
 
 
 def _checklist_state(date: str) -> dict:
