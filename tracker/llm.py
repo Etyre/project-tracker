@@ -144,7 +144,7 @@ Hard constraints:
    otherwise ~30 min; skip items already done today. Use the item text as the title list in the note.
 6. Today's exercise was decided this morning and is given as `exercise_today` (kind, minutes, reason): schedule
    exactly one "exercise" block of that kind and length, titled with the kind, at the time of day the EXERCISE BRIEF
-   below prefers. No block when the kind is "rest" or exercise is already done today.
+   below prefers. No block only when exercise is already done today; every day has a session.
 7. Short "break" blocks are welcome between long focus blocks, but keep them few.
 8. Follow the user's rules and heuristics below; they override these defaults where they conflict.
 
@@ -207,11 +207,12 @@ def quick_add(text: str, tree_text: str, today: str) -> dict:
 
 EXERCISE_PICK_SYSTEM = """You are the user's exercise coach, choosing today's session once, in the morning.
 
-You get the user's own brief (what they do, how they want kinds to alternate, rest days, timing) and their recent
+You get the user's own brief (what they do, how they want kinds to alternate, timing) and their recent
 history (from their exercise log): sessions with kind, date, weekday and minutes, what has been done this week,
-and the typical length of each kind. Pick the kind for today that best follows the brief given the history; "rest" is a valid answer when
-the brief implies one. `title` is the session as the user would log it, lower case, specific: "squats", "cardio
-interval training", "easy run" (for rest: "rest"). `minutes` is only a guess for a kind with no history yet (the app
+and the typical length of each kind. Pick the kind for today that best follows the brief given the history. There
+are no rest days: every day gets a session (a light one, such as mobility or an easy walk, when the body needs it).
+`title` is the session as the user would log it, lower case, specific: "squats", "cardio interval training",
+"easy run". `minutes` is only a guess for a kind with no history yet (the app
 otherwise uses the typical length from the history). `reason` is one short sentence the user will read.
 
 ===== USER'S EXERCISE BRIEF =====
@@ -225,7 +226,7 @@ EXERCISE_PICK_SCHEMA = {
 
 
 def pick_exercise(brief: str, context_text: str) -> dict:
-    system = EXERCISE_PICK_SYSTEM + (brief.strip() or "(no brief: alternate kinds sensibly and rest one day a week)")
+    system = EXERCISE_PICK_SYSTEM + (brief.strip() or "(no brief: alternate kinds sensibly)")
     return structured(system, context_text, EXERCISE_PICK_SCHEMA, "medium", max_tokens=2000)
 
 

@@ -258,7 +258,7 @@ def build(day: dt.date | None = None, from_now: bool = False, until: str | None 
             log.warning("LLM scheduling failed, using greedy packer: %s", e)
             rationale = f"(Claude scheduling failed: {e}; deterministic plan shown.)"
     if not items:
-        items = greedy_plan(windows, tasks, checklist_minutes, exercise, ex_minutes, checklist_done, exercise_done or exercise == "rest" or ex_minutes <= 0)
+        items = greedy_plan(windows, tasks, checklist_minutes, exercise, ex_minutes, checklist_done, exercise_done or ex_minutes <= 0)
         if not rationale:
             rationale = ("Deterministic plan: blocking work and deadlines first, then by importance. "
                          "Configure ANTHROPIC_API_KEY for Claude-built plans.")

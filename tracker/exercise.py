@@ -1,6 +1,6 @@
 """Today's exercise: decided once a day, in the morning, by Claude from the user's brief and their history.
 
-The kind (run, strength, rest, …) is chosen at most once per date and remembered, so re-planning the day never
+The kind (run, strength, …) is chosen at most once per date and remembered, so re-planning the day never
 changes it. The length is never configured: it is the typical length of that kind in the user's own history,
 which is the app's exercise timers plus any Toggl entries tagged "exercise" (or named like a known kind).
 """
@@ -115,8 +115,11 @@ def decide(date: str | None = None, force: bool = False) -> dict:
         }
         try:
             res = llm.pick_exercise(config.exercise_text(), json.dumps(ctx, indent=1, default=str))
-            kind = str(res.get("kind") or "").strip().lower() or "rest"
-            mins = typical_minutes(kind, hist) if kind != "rest" else 0
+            kind = str(res.get("kind") or "").strip().lower()
+            if not kind or kind == "rest":                        # there are no rest days: fall back to the rotation
+                kind = _fallback(hist)["kind"]
+                res = {**res, "title": kind, "reason": str(res.get("reason") or "") + " (no rest days: next in rotation)"}
+            mins = typical_minutes(kind, hist)
             if mins is None:
                 mins = int(res.get("minutes") or 0) or LAST_RESORT_MINUTES
             decision = {"kind": kind, "title": str(res.get("title") or kind).strip().lower() or kind, "minutes": mins, "reason": str(res.get("reason") or "")}

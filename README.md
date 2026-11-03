@@ -137,10 +137,10 @@ The **Snapshots** tab lists them by day and shows any of them; its **Snapshot no
 `?action=export` with the logged sessions; paste that script's /exec URL as "Exercise log script URL" in Settings
 and each session's category, start time and duration become the history (read-only), with the app's timers and
 Toggl filling in only sessions the sheet lacks. `Exercise plan.md` (edited on the Settings page) is your brief to Claude: what you do, how to
-pick today's session, rest days, and when. Once each morning (from 06:00, or when the first plan is built) Claude
+pick today's session, and when. Once each morning (from 06:00, or when the first plan is built) Claude
 chooses the kind for the day from the brief and your history, and that choice is kept through every re-plan. The
 length is never configured: it is the typical length of that kind in your Toggl history (the app's exercise
-timers plus any Toggl entry tagged "exercise" or named like a known kind). A rest day means no block. Without
+timers plus any Toggl entry tagged "exercise" or named like a known kind). Every day has a session. Without
 Claude the plan cycles through `[exercise] rotation`.
 
 **Quick add** (⌘K) - free text goes to Claude with the project tree; it returns one or more tasks placed in the
