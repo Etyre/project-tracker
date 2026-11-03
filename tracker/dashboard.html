@@ -392,7 +392,7 @@ function altButtons(f) {
   const ex = f.exercise_item;
   const exDone = ex && ex.status === 'done';
   return `<div class="alts">
-    <button class="btn alt" ${exDone || f.exercise === 'rest' ? 'disabled' : ''} onclick="startExercise()">${exDone ? esc(ex.title) + ' (done)' : f.exercise === 'rest' ? 'Rest day' : 'Going to do ' + esc(f.exercise)}</button>
+    <button class="btn alt" ${exDone || f.exercise === 'rest' ? 'disabled' : ''} onclick="startExercise()">${exDone ? esc(ex.title) + ' (done)' : f.exercise === 'rest' ? 'Rest day' : esc(f.exercise.charAt(0).toUpperCase() + f.exercise.slice(1))}</button>
     <button class="btn alt" onclick="startJournal()">Journal</button></div>`;
 }
 async function rebuild(fromNow) {
@@ -412,7 +412,7 @@ async function completeItem(id, el) {
 }
 async function finishBlock(id) {await api('/feed/finish_block', 'POST', {item_id: id}); pushUndo('done for now', () => api('/feed/reset_item', 'POST', {item_id: id})); await refreshStatus(); renderFeed();}
 async function skipItem(id) {await api('/feed/skip', 'POST', {item_id: id}); pushUndo('skip', () => api('/feed/reset_item', 'POST', {item_id: id})); await refreshStatus(); renderFeed();}
-async function startExercise() {const r = await api('/exercise/start', 'POST'); if (r.toggl_error) toast('Toggl: ' + esc(r.toggl_error), 6000); else toast(`Timer started: going to do ${esc(r.kind)}`); await refreshStatus(); renderFeed();}
+async function startExercise() {const r = await api('/exercise/start', 'POST'); if (r.toggl_error) toast('Toggl: ' + esc(r.toggl_error), 6000); else toast(`Timer started: ${esc(r.kind)}`); await refreshStatus(); renderFeed();}
 async function startJournal() {const r = await api('/journal/start', 'POST'); toast(r.open_error ? 'Journal timer started; ' + esc(r.open_error) : 'Journal timer started', 5000); await refreshStatus(); renderFeed();}
 async function checkItem(box, item) {
   box.disabled = true;
