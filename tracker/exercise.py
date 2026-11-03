@@ -181,7 +181,8 @@ def rules_decide(rules: dict, hist: list[dict], today: dt.date) -> dict:
     if wanted:
         wanted.sort(key=lambda x: (-x[0], -x[1]))
         _, since, r = wanted[0]
-        return {"title": r["name"], "reason": f"{r['name']}: {since} days since last, ideal cadence every {r['ideal'][0]}-{r['ideal'][1]} days"}
+        lo, hi = r["ideal"]
+        return {"title": r["name"], "reason": f"{r['name']}: {since} days since last, ideal cadence every {lo if lo == hi else f'{lo}-{hi}'} days"}
     deadline_tomorrow = [r["name"] for r in rules["required"] if r["period"] is not None
                          and (lambda s: s is not None and s + 1 >= r["period"])(_days_since(r["name"], hist, today))]
 
