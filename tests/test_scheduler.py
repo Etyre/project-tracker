@@ -366,7 +366,7 @@ def test_exercise_timer_named_going_to_do():
 
 
 def test_exercise_decided_once_and_length_from_history(monkeypatch):
-    from tracker import exercise
+    from tracker import exercise, tags
     now = dt.datetime.now().timestamp()
     for i, (kind, mins) in enumerate([("run", 38), ("strength", 61), ("run", 42), ("strength", 58)]):
         eid = db.start_entry("exercise", kind.capitalize(), None, None)
@@ -439,7 +439,7 @@ def test_toggl_history_index_and_exact_match(monkeypatch):
 
 
 def test_exercise_rules_engine():
-    from tracker import exercise
+    from tracker import exercise, tags
     rules = exercise.parse_rules(pathlib.Path(config.EXERCISE_PATH).read_text())
     assert [(r["name"], r["period"], r["gap"], r["ideal"]) for r in rules["required"]] == [("squats", 7, 3, (4, 4)), ("cardio interval training", 4, 2, (2, 3))]
     assert rules["never_adjacent"] == [["deadlifts", "squats"]] and rules["fill"] == ["benchpress", "deadlifts", "shoulder press"]
@@ -472,7 +472,7 @@ def test_exercise_rules_engine():
 
 
 def test_exercise_decide_uses_rules_and_log_lengths(monkeypatch):
-    from tracker import exercise
+    from tracker import exercise, tags
     today = dt.date.today()
     monkeypatch.setattr(exercise, "history", lambda days=90: [
         {"kind": "cardio", "exercise": "Cardio interval training", "date": (today - dt.timedelta(days=1)).isoformat(), "weekday": "", "minutes": 25, "source": "sheet"},
@@ -484,7 +484,7 @@ def test_exercise_decide_uses_rules_and_log_lengths(monkeypatch):
 
 
 def test_exercise_notes_exclude_rule_lines():
-    from tracker import exercise
+    from tracker import exercise, tags
     txt = "[help]\nsquats: at least every 7 days\nfill: a, b\nnever back to back: a, b\nMy knee is sore this week.\nTiming: afternoons.\n"
     assert exercise.notes_text(txt) == "My knee is sore this week.\nTiming: afternoons."
 
@@ -524,3 +524,16 @@ def test_completed_tasks_stay_until_archived():
     assert len(next(p for p in db.project_tree() if p["id"] == pid)["tasks"]) == 2
     db.uncomplete_task(b)
     assert db.task(b)["completed_at"] is None and db.task(b)["archived_at"] is None
+
+
+def test_stale_exercise_decision_is_redecided():
+    """A remembered pick from before the rules existed (the old rotation's "run") does not survive the day."""
+    from tracker import exercise, tags
+    rules = exercise.parse_rules("squats: at least every 7 days, at most every 3 days, ideally every 4 days\n"
+                                 "fill: benchpress, deadlifts")
+    assert not exercise._from_rules({"title": "run", "reason": "rotation (Claude not configured)"}, rules)
+    assert exercise._from_rules({"title": "squats", "reason": "squats overdue"}, rules)
+    assert exercise._from_rules({"title": "Deadlifts", "reason": "fill"}, rules)
+    assert exercise._from_rules({"title": "yoga", "reason": "Claude overrode the rules", "overrode": "squats"}, rules)
+    assert exercise._from_rules({"title": "run"}, exercise.parse_rules(""))   # no rules yet: anything stands
+    assert tags.parse_tags("Write up #deadline:tomorrow", today=dt.date(2026, 11, 4)) == ("Write up", {"deadline": "2026-11-05"})

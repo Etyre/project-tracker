@@ -667,6 +667,15 @@ def plan_item(iid: int) -> dict | None:
     return row("SELECT * FROM plan_items WHERE id=?", (iid,))
 
 
+def retitle_exercise_blocks(date: str, title: str) -> int:
+    """Rename the day's not-yet-started exercise blocks after the exercise decision changed. Returns how many."""
+    with _write_lock:
+        cur = connect().execute("UPDATE plan_items SET title=? WHERE date=? AND kind='exercise' AND status='pending' AND title<>?",
+                                (title, date, title))
+        connect().commit()
+        return max(0, cur.rowcount)
+
+
 def set_item_status(iid: int, status: str) -> None:
     execute("UPDATE plan_items SET status=? WHERE id=?", (status, iid))
 

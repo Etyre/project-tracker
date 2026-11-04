@@ -266,16 +266,16 @@ def decide(date: str | None = None, force: bool = False) -> dict:
     the Exercise box (no model involved) and remembered; the length is the typical length of that session in the
     log (any exercise of the same kind, else the last resort)."""
     date = date or db.today()
+    rules = parse_rules(config.exercise_text())
     cur = db.get_setting("exercise_decision")
     if cur and not force:
         try:
             d = json.loads(cur)
-            if d.get("date") == date and d.get("title"):
+            if d.get("date") == date and d.get("title") and _from_rules(d, rules):
                 return d
         except ValueError:
             pass
     hist = history()
-    rules = parse_rules(config.exercise_text())
     if rules["required"] or rules["fill"]:
         pick = rules_decide(rules, history(), dt.date.fromisoformat(date))
         title = pick["title"]
@@ -291,8 +291,18 @@ def decide(date: str | None = None, force: bool = False) -> dict:
         decision = _fallback(hist)
     decision.update({"date": date, "decided_at": time.time()})
     db.set_setting("exercise_decision", json.dumps(decision))
+    db.retitle_exercise_blocks(date, decision["title"])      # a plan built on an older decision shows the new one
     log.info("exercise for %s: %s (%s min) - %s", date, decision["title"], decision["minutes"], decision["reason"])
     return decision
+
+
+def _from_rules(decision: dict, rules: dict) -> bool:
+    """A remembered decision counts only if today's rules could have produced it (or Claude overrode them); a pick
+    from before the rules were written, e.g. the old rotation's "run", is decided again."""
+    names = [r["name"] for r in rules["required"]] + list(rules["fill"])
+    if not names:
+        return True
+    return bool(decision.get("overrode")) or any(_same(decision["title"], n) for n in names)
 
 
 def decided_today() -> bool:

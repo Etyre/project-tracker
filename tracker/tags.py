@@ -2,7 +2,7 @@
 
     #p1 … #p5             priority, #p1 highest (importance 5 … 1)
     #today  #tomorrow     deadline
-    #due:fri  #due:nov3  #due:2026-11-03  #due:3nov  #due:11-03
+    #due:fri  #due:nov3  #due:2026-11-03  #due:3nov  #due:11-03   (#deadline:… is the same)
     #blocking  #blocking:Sam
     #onesitting           cannot be split across sittings (#splittable undoes it)
     #p0  #nodue  #notblocking   clear the priority / deadline / blocking flag (handy on a multi-selection)
@@ -76,7 +76,7 @@ def parse_tags(title: str, today: dt.date | None = None) -> tuple[str, dict]:
             fields["blocking_for"] = ""
         elif name in ("today", "tomorrow") and not arg:
             fields["deadline"] = parse_date(name, today)
-        elif name == "due" and arg:
+        elif name in ("due", "deadline") and arg:
             if arg.lower() in ("none", "never", "-"):
                 fields["deadline"] = None
                 return ""
