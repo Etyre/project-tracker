@@ -11,7 +11,7 @@ SQLite in `~/Library/Application Support/TaskTracker/`.
 ## Setup
 
 ```bash
-cd task-tracker-and-organizer
+cd project-tracker-and-organizer
 # .venv already created with Python 3.12; otherwise:
 #   /opt/homebrew/bin/python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt
 export ANTHROPIC_API_KEY=sk-ant-...     # quick-add filing + intelligent scheduling
