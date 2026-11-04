@@ -170,8 +170,8 @@ chooses from your own projects (with the descriptions you filed under each) and 
 Exercise timers are named "going to do squats", "going to do cardio interval training": the session Claude
 picked for the day, with travel time inside the timer. Off with `[toggl] auto_project = false`.
 
-**The feed** shows one card; completing it flashes it green and slides it away, and the next card takes its place. Above the deck, from `meeting_alert_minutes` (45) before a meeting, a line says "Daily
-regather in 12 minutes", counting down in whole minutes. The top card is the one the schedule says is next: Start (a Toggl timer tagged `task-tracker`, named
+**The feed** shows one card; completing it flashes it green and slides it away, and the next card takes its place. Above the deck, from `meeting_alert_minutes` (45; 0 = any meeting still to come today) before a meeting, a line
+says "12 minutes until Daily regather", counting down in whole minutes (hours and minutes when it is over an hour away). The top card is the one the schedule says is next: Start (a Toggl timer tagged `task-tracker`, named
 after the task), a completion checkbox (completes the task, pushes to Linear), "Done for now" for a block of a
 task that continues later, Skip, and at the bottom the alternatives: today's exercise and Journal.
 The checklist card lists the sheet's items with checkboxes.

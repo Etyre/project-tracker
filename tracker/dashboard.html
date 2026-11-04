@@ -372,7 +372,7 @@ async function renderFeed() {
     card = page(body, actions);
   }
   const meeting = f.meeting_now ? `<div class="meeting">In a meeting until ${f.meeting_now.end}: ${esc(f.meeting_now.title)}</div>` : '';
-  feedMeetings = {list: f.meetings || [], alert: f.meeting_alert_minutes || 45};
+  feedMeetings = {list: f.meetings || [], alert: f.meeting_alert_minutes ?? 45};   // 0: any meeting still to come today
   const note = f.replanning.active ? `<div class="foot"><span>re-planning…</span></div>` : f.plan.off_track ? `<div class="foot"><span>off track, re-plan pending</span></div>` : '';
   m.innerHTML = `<div class="feed"><div class="upcoming">${upcomingText()}</div>${meeting}<div class="stack">${card}</div>${note}</div>`;
   if (f.replanning.active) setTimeout(() => {if (view === 'feed') renderFeed().catch(() => {});}, 5000);
@@ -383,10 +383,12 @@ let feedMeetings = {list: [], alert: 45};
 function upcomingText() {
   const now = new Date(), nowMin = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
   const soon = feedMeetings.list.map(m => ({...m, startMin: +m.start.slice(0, 2) * 60 + +m.start.slice(3, 5)}))
-    .filter(m => m.startMin >= nowMin - 0.5 && m.startMin - nowMin <= feedMeetings.alert).sort((a, b) => a.startMin - b.startMin)[0];
+    .filter(m => m.startMin >= nowMin - 0.5 && (!feedMeetings.alert || m.startMin - nowMin <= feedMeetings.alert)).sort((a, b) => a.startMin - b.startMin)[0];
   if (!soon) return '';
-  const mins = Math.max(1, Math.ceil(soon.startMin - nowMin));
-  return `${esc(soon.title)} in ${mins} minute${mins === 1 ? '' : 's'}`;
+  const mins = Math.max(1, Math.ceil(soon.startMin - nowMin)), h = Math.floor(mins / 60), m = mins % 60;
+  const n = (x, w) => `${x} ${w}${x === 1 ? '' : 's'}`;
+  const left = h ? n(h, 'hour') + (m ? ' ' + n(m, 'minute') : '') : n(mins, 'minute');
+  return `${left} until ${esc(soon.title)}`;
 }
 setInterval(() => {const u = document.querySelector('.feed .upcoming'); if (u && view === 'feed') {const t = upcomingText(); if (u.innerHTML !== t) u.innerHTML = t;}}, 30000);
 function altButtons(f) {
@@ -1470,7 +1472,7 @@ async function renderSettings() {
     let input;
     if (type === 'bool') input = `<input type="checkbox" name="${id}" ${v ? 'checked' : ''}>`;
     else if (type === 'lines') input = `<textarea name="${id}" rows="3" style="min-height:60px">${esc((v || []).join('\n'))}</textarea>`;
-    else if (Array.isArray(type)) input = `<select name="${id}">${type.map(o => `<option value="${o}" ${String(v) === String(o) ? 'selected' : ''}>${o}</option>`).join('')}</select>`;
+    else if (Array.isArray(type)) input = `<select name="${id}">${type.map(o => Array.isArray(o) ? o : [o, o]).map(([val, lab]) => `<option value="${val}" ${String(v) === String(val) ? 'selected' : ''}>${lab}</option>`).join('')}</select>`;
     else input = `<input name="${id}" type="${type || 'text'}" value="${esc(Array.isArray(v) ? v.join(', ') : (v ?? ''))}">`;
     return `<label>${label}</label>${input}${help ? `<div class="help">${help}</div>` : ''}`;
   };
@@ -1479,7 +1481,7 @@ async function renderSettings() {
   const card = (title, status, body, intro) => `<div class="card"><h3>${title}${status === undefined ? '' : `<span class="chip ${status ? 'ok' : 'warn'}">${status ? 'on' : 'off'}</span>`}</h3>${intro ? `<p class="muted" style="margin:0 0 10px;font-size:13px">${intro}</p>` : ''}<div class="form">${body}</div></div>`;
   m.innerHTML = `<div class="settings">
     ${card('Claude', status.llm, key('anthropic', 'API key', 'sk-ant-…') + f('llm', 'enable', 'Use Claude', 'quick-add filing, estimates and the day plan; without it everything falls back to rules', 'bool') + f('llm', 'model', 'Model') + f('llm', 'effort', 'Plan effort', '', ['low', 'medium', 'high', 'max']) + f('llm', 'quick_add_effort', 'Quick-add effort', '', ['low', 'medium', 'high']))}
-    ${card('Work day', undefined, f('general', 'work_start', 'Starts', '', 'time') + f('general', 'work_end', 'Ends', '', 'time') + f('general', 'default_estimate_minutes', 'Default estimate (min)', 'for a task that has no estimate yet', 'number') + f('general', 'min_block_minutes', 'Smallest block (min)', '', 'number') + f('general', 'replan_drift_minutes', 'Re-plan when late by (min)', 'the next block is this late or early', 'number') + f('general', 'overrun_minutes', 'Re-plan after overrun (min)', '', 'number') + f('general', 'replan_min_interval_minutes', 'Re-plan at most every (min)', '', 'number') + f('general', 'meeting_alert_minutes', 'Meeting reminder (min before)', 'the feed shows "meeting in N minutes" from this far out', 'number'))}
+    ${card('Work day', undefined, f('general', 'work_start', 'Starts', '', 'time') + f('general', 'work_end', 'Ends', '', 'time') + f('general', 'default_estimate_minutes', 'Default estimate (min)', 'for a task that has no estimate yet', 'number') + f('general', 'min_block_minutes', 'Smallest block (min)', '', 'number') + f('general', 'replan_drift_minutes', 'Re-plan when late by (min)', 'the next block is this late or early', 'number') + f('general', 'overrun_minutes', 'Re-plan after overrun (min)', '', 'number') + f('general', 'replan_min_interval_minutes', 'Re-plan at most every (min)', '', 'number') + f('general', 'meeting_alert_minutes', 'Meeting reminder', 'the feed shows "N minutes until <meeting>" from this far out', [[15, '15 minutes before'], [30, '30 minutes before'], [45, '45 minutes before'], [60, '1 hour before'], [90, '1½ hours before'], [120, '2 hours before'], [0, 'for any upcoming meeting today']]))}
     ${card('Calendar', status.calendar, f('calendar', 'ics_urls', 'iCal feeds', 'one per line. Google Calendar → Settings → your calendar → "Secret address in iCal format"', 'lines') + f('calendar', 'ignore_titles', 'Ignore events titled', 'comma separated') + f('calendar', 'busy_only', 'Only busy events block time', '', 'bool'))}
     ${card('Toggl', status.toggl, key('toggl', 'API token', '32 hex characters', 'Toggl Track → Profile → API token') + f('toggl', 'tag', 'Tag on timers') + f('toggl', 'project', 'Toggl project', 'optional: file every entry under this Toggl project') + f('toggl', 'auto_project', 'Pick project and tags', 'a description you tracked before gets its last project and tags; otherwise Claude picks from your projects, or none when unsure', 'bool'))}
     ${card('Linear', status.linear, key('linear', 'API key', 'lin_api_…', 'Linear → Settings → API → personal API key') + f('linear', 'enable', 'Mirror my issues', '', 'bool') + f('linear', 'sync_minutes', 'Sync every (min)', '', 'number') + f('linear', 'category_name', 'Under project') + f('linear', 'group_by', 'Sub-project per', '', ['project', 'team']))}
