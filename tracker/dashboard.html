@@ -166,6 +166,7 @@ a{color:var(--accent)}
 .modal .card{width:min(640px,94vw);max-height:90vh;overflow:auto}
 .form{display:grid;grid-template-columns:140px 1fr;gap:8px 12px;align-items:center}
 .form input,.form select,.form textarea{width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit}
+.form input:disabled{opacity:.45;color:var(--muted)}
 .form textarea{min-height:110px}
 .form .full{grid-column:1/-1}
 .settings .card{margin-bottom:14px}.settings h3{margin:0 0 10px}.settings h3 .chip{margin-left:8px;font-weight:500;vertical-align:middle}
@@ -1496,6 +1497,9 @@ async function renderSettings() {
     <div class="card"><h3>Files</h3><p class="muted" style="margin:0;font-size:13px">Settings: <code>${esc(s.paths.config)}</code><br>Data and snapshots: <code>${esc(s.paths.data)}</code><br>Rules: <code>${esc(s.paths.rules)}</code></p></div>
     <div class="savebar"><span class="muted" id="testout" style="flex:1;font-size:13px"></span><button class="btn" onclick="testIntegrations()">Test connections</button><button class="btn primary" onclick="saveSettings()">Save settings</button></div>
   </div>`;
+  // "All meetings today" makes the minutes box moot: grey it out while the box is ticked
+  const allDay = m.querySelector('[name="general.meeting_alert_all_day"]'), lead = m.querySelector('[name="general.meeting_alert_minutes"]');
+  if (allDay && lead) {const sync = () => lead.disabled = allDay.checked; allDay.addEventListener('change', sync); sync();}
 }
 async function saveSettings() {
   const cfg = {};
