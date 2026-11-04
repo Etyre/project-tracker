@@ -1,4 +1,4 @@
-# Task Tracker
+# Project Tracker
 
 A personal GTD system with a project hierarchy, a Claude-powered quick-add, and a **feed** that serves you one
 card at a time, chosen from an internal schedule that is rebuilt from your calendar, daily checklist, exercise
