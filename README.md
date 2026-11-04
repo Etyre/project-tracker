@@ -56,8 +56,9 @@ Google Calendar -> Settings -> your calendar -> *Secret address in iCal format*.
    touch nothing but the spreadsheet it lives in; the exercise sheet must be a tab of the same file, or get its
    own copy of the script.
 
-Checking a checklist item off in the feed ticks it in the sheet (today's date column, a "Last done" column,
-or a "Done" checkbox, per `MODE`). The scheduler reads every other column (frequency, minutes, when...) as-is,
+Rows listed under "Rows with their own card" in Settings (`[sheets] card_items`, e.g. `Anki review: 20`) are
+daily routines: each gets its own feed card every day, and marking it done ticks it in the sheet (today's date
+column, a "Last done" column, or a "Done" checkbox, per `MODE`). The rest of the checklist is left to the sheet. The scheduler reads every other column (frequency, minutes, when...) as-is,
 so you can lay the sheet out however you like: date headers may sit below other rows, real date cells work,
 hidden rows are skipped, and a row is checkable only where today's cell is a checkbox (a formula row shows
 its computed state, a heading or dropdown row is shown as text). Without the script, `daily_checklist_csv` /

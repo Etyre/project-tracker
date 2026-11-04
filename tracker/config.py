@@ -63,6 +63,7 @@ DEFAULTS: dict[str, Any] = {
         "daily_checklist_csv": "",           # CSV export URL of the daily checklist sheet
         "exercise_csv": "",                  # CSV export URL of the exercise sheet
         "cache_minutes": 30,
+        "card_items": ["Anki review: 20"],   # checklist rows that get their own feed card every day ("name: minutes")
     },
     "exercise": {
         "rotation": ["run", "strength", "mobility"],   # fallback when Claude is not configured

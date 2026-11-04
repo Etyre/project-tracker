@@ -211,8 +211,8 @@ def _exercise_label(kind: str) -> str:
 def _item_label(it: dict) -> str:
     if it["kind"] == "exercise":
         return _exercise_label(it["title"])
-    if it["kind"] == "checklist":
-        return "Daily checklist"
+    if it["kind"] in ("checklist", "routine"):
+        return it["title"] if it["kind"] == "routine" else "Daily checklist"
     if it["kind"] == "journal":
         return "Journaling"
     return it["title"]
@@ -667,9 +667,9 @@ def create_app() -> FastAPI:
         it = db.plan_item(r.item_id)
         if not it:
             raise HTTPException(404)
-        res = _start_timer(it["kind"] if it["kind"] in ("task", "exercise", "checklist", "journal") else "task",
+        res = _start_timer(it["kind"] if it["kind"] in ("task", "exercise", "routine", "journal") else "task",
                            _item_label(it), it["task_id"], [it["kind"]] if it["kind"] != "task" else None,
-                           context={"exercise": "exercise session, travel included", "checklist": "daily checklist", "journal": "journaling"}.get(it["kind"], "")),
+                           context={"exercise": "exercise session, travel included", "routine": "daily routine from the checklist", "journal": "journaling"}.get(it["kind"], "")),
         db.set_item_status(it["id"], "active")
         return {"ok": True, **res}
 
@@ -685,6 +685,12 @@ def create_app() -> FastAPI:
         db.set_item_status(it["id"], "done")
         err = None
         scheduler.maybe_replan()
+        if it["kind"] == "routine":            # a checklist row: tick it in the sheet
+            date = db.today()
+            if it["title"] not in db.checklist_done_today(date):
+                db.log_checklist(date, it["title"])
+            sheet = sheets.mark_done(it["title"]) if sheets.writable() else {"ok": False, "error": "write-back not configured"}
+            return {"ok": True, "linear_error": None, "sheet": sheet}
         if it["kind"] == "task" and it["task_id"]:
             db.complete_task(it["task_id"])
             err = linear.safe_push(it["task_id"])
@@ -700,6 +706,10 @@ def create_app() -> FastAPI:
             raise HTTPException(404)
         db.set_item_status(it["id"], "pending")
         err = None
+        if it["kind"] == "routine":
+            db.execute("DELETE FROM checklist_log WHERE date=? AND item=?", (db.today(), it["title"]))
+            if sheets.writable():
+                sheets.mark_done(it["title"], undo=True)
         if it["kind"] == "task" and it["task_id"]:
             db.uncomplete_task(it["task_id"])
             err = linear.safe_push(it["task_id"])

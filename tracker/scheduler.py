@@ -89,22 +89,20 @@ def fallback_exercise() -> str:
 
 
 # ---------------------------------------------------------------- deterministic packer
-def greedy_plan(windows: list[tuple[int, int]], tasks: list[dict], checklist_minutes: int, exercise: str,
-                exercise_minutes: int, checklist_done: bool, exercise_done: bool = False) -> list[dict]:
+def greedy_plan(windows: list[tuple[int, int]], tasks: list[dict], routines: list[dict], exercise: str,
+                exercise_minutes: int, exercise_done: bool = False) -> list[dict]:
     minb = config.load()["general"]["min_block_minutes"]
     items: list[dict] = []
     remaining = {t["id"]: t["expected_minutes"] for t in tasks}
     placed_exercise = exercise_done
-    placed_checklist = checklist_done or checklist_minutes <= 0
+    todo_routines = list(routines)           # each gets its own block, first thing in the day
     for wi, (ws, we) in enumerate(windows):
         cur = ws
         tail: list[dict] = []
-        if not placed_checklist and we - cur >= min(checklist_minutes, minb):
-            m = min(checklist_minutes, we - cur)
-            items.append(dict(kind="checklist", task_id=None, title="Daily checklist", start=hm(cur), end=hm(cur + m),
-                              minutes=m, note="Items from the daily checklist sheet"))
+        while todo_routines and we - cur >= min(todo_routines[0]["minutes"], minb):
+            r = todo_routines.pop(0); m = min(r["minutes"], we - cur)
+            items.append(dict(kind="routine", task_id=None, title=r["title"], start=hm(cur), end=hm(cur + m), minutes=m, note="daily routine from the checklist"))
             cur += m
-            placed_checklist = True
         # exercise: at the start of the first window after midday that fits; failing that, at the END of the
         # last window (so a single long window still gets its focus work first)
         if not placed_exercise and we - cur >= exercise_minutes:
@@ -201,16 +199,7 @@ def build(day: dt.date | None = None, from_now: bool = False, until: str | None 
     events = calendar_feed.events_for(day)
     windows = free_windows(day, events, start_min, we)
     tasks = candidates(day)
-    cl = sheets.daily_checklist()
-    cl_text, cl_rows = cl["text"], cl["items"]
-    done_items = db.checklist_done_today(date) | {r["item"] for r in cl_rows if r.get("done_today")}
-    checklist_minutes = 0
-    for r in cl_rows:
-        for k, v in r.items():
-            if k.lower() in ("minutes", "min", "mins", "duration") and str(v).replace(".", "").isdigit():
-                checklist_minutes += int(float(v))
-    if cl_rows and checklist_minutes == 0:
-        checklist_minutes = 30
+    routines = sheets.routines_for_today()
     recent_ex = [{"kind": e["label"].replace("Exercise: ", ""),
                   "date": dt.datetime.fromtimestamp(e["started_at"]).date().isoformat(),
                   "weekday": dt.datetime.fromtimestamp(e["started_at"]).strftime("%a"),
@@ -221,8 +210,8 @@ def build(day: dt.date | None = None, from_now: bool = False, until: str | None 
     finished_task_ids = {i["task_id"] for i in prev_items if i["status"] in ("done", "skipped") and i["task_id"]}
     if active and active["task_id"]:
         finished_task_ids.add(active["task_id"])
-    checklist_done = any(i["kind"] == "checklist" and i["status"] in ("done", "active") for i in prev_items) \
-        or (bool(cl_rows) and all(r["item"] in done_items for r in cl_rows))
+    settled = {i["title"].strip().lower() for i in prev_items if i["kind"] == "routine" and i["status"] in ("done", "active", "skipped")}
+    routines = [r for r in routines if r["title"].strip().lower() not in settled]
     exercise_done = any(i["kind"] == "exercise" and i["status"] in ("done", "active") for i in prev_items)
     tasks = [t for t in tasks if t["id"] not in finished_task_ids]
 
@@ -240,10 +229,7 @@ def build(day: dt.date | None = None, from_now: bool = False, until: str | None 
                                          "chunkable", "expected_minutes", "score")}
                       | {"description": (t["description"] or "")[:300], "age_days": int((now.timestamp() - t["created_at"]) / 86400)}
                       for t in tasks],
-            "daily_checklist_csv": cl_text[:6000],
-            "checklist_items": [r["item"] for r in cl_rows],
-            "checklist_items_done_today": sorted(done_items),
-            "checklist_block_done_today": checklist_done,
+            "routines_today": routines,
             "recent_exercise": recent_ex,
             "exercise_done_today": exercise_done,
             "exercise_today": {k: decision.get(k) for k in ("kind", "title", "minutes", "reason")},
@@ -258,7 +244,7 @@ def build(day: dt.date | None = None, from_now: bool = False, until: str | None 
             log.warning("LLM scheduling failed, using greedy packer: %s", e)
             rationale = f"(Claude scheduling failed: {e}; deterministic plan shown.)"
     if not items:
-        items = greedy_plan(windows, tasks, checklist_minutes, exercise, ex_minutes, checklist_done, exercise_done or ex_minutes <= 0)
+        items = greedy_plan(windows, tasks, routines, exercise, ex_minutes, exercise_done or ex_minutes <= 0)
         if not rationale:
             rationale = ("Deterministic plan: blocking work and deadlines first, then by importance. "
                          "Configure ANTHROPIC_API_KEY for Claude-built plans.")

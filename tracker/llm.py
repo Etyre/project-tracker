@@ -140,7 +140,7 @@ Split the note into several tasks only when it plainly lists separate actions.""
 SCHEDULE_SYSTEM_PREFIX = """You build a realistic, prioritised plan for the user's work day.
 
 You receive: the work-day window, free windows (after calendar meetings), candidate tasks with priority inputs and
-calibrated time estimates, the user's daily checklist sheet, their exercise brief (their own instructions on what
+calibrated time estimates, the user's daily routines (from their checklist), their exercise brief (their own instructions on what
 exercise to do, how long and when), recent exercise history, and their own rules and heuristics document. Produce an ordered list of blocks that exactly fit inside the free
 windows (meetings are added by the system; do not emit them).
 
@@ -150,8 +150,8 @@ Hard constraints:
 3. Everything must fit: never schedule more than the time available. Leave the rest for another day.
 4. A task marked not-chunkable needs a single block at least as long as its estimate; chunkable tasks may be split
    or given a partial block (say so in the note).
-5. Checklist items from the sheet: one "checklist" block (or a few) sized from the sheet's minutes if present,
-   otherwise ~30 min; skip items already done today. Use the item text as the title list in the note.
+5. `routines_today` are daily routines from the user's checklist that are not yet done: give EACH its own "routine"
+   block, titled exactly with its title and about its minutes long; they are short and should all be placed.
 6. Today's exercise was decided this morning by the user's own rules and is given as `exercise_today` (kind, title,
    minutes, reason): schedule exactly one "exercise" block of that length, titled with the title, at the time of day
    the EXERCISE NOTES below prefer. No block only when exercise is already done today; every day has a session.
@@ -173,7 +173,7 @@ SCHEDULE_SCHEMA = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "kind": {"type": "string", "enum": ["task", "checklist", "exercise", "journal", "break"]},
+                    "kind": {"type": "string", "enum": ["task", "routine", "exercise", "journal", "break"]},
                     "task_id": {"type": ["integer", "null"]},
                     "title": {"type": "string"},
                     "start": {"type": "string", "pattern": "^[0-2][0-9]:[0-5][0-9]$"},

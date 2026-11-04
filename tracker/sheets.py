@@ -15,7 +15,7 @@ import time
 import urllib.parse
 import urllib.request
 
-from . import config
+from . import config, db
 
 log = logging.getLogger("sheets")
 _cache: dict[str, tuple[float, object]] = {}
@@ -195,4 +195,37 @@ def exercise_sessions(days: int = 120) -> list[dict]:
                     "finished_at": fin.isoformat(timespec="seconds") if fin else "", "sets_summary": sets_summary,
                     "notes": str(s.get("notes") or ""), "source": "sheet"})
     out.sort(key=lambda h: h["started_at"], reverse=True)
+    return out
+
+
+# ---- checklist rows that are daily routines with their own feed card ------------------------------------
+def card_items() -> list[dict]:
+    """[sheets] card_items lines ("Anki review: 20") as [{title, minutes}]; minutes default to 20."""
+    out = []
+    for line in config.load()["sheets"].get("card_items") or []:
+        line = str(line).strip()
+        if not line:
+            continue
+        title, _, mins = line.rpartition(":")
+        if not title or not mins.strip().isdigit():
+            title, mins = line, "20"
+        out.append({"title": title.strip(), "minutes": max(5, int(mins.strip()))})
+    return out
+
+
+def routines_for_today() -> list[dict]:
+    """Today's routine cards: the configured items, minus any already ticked in the sheet or logged here today.
+    Items are matched to sheet rows loosely (case, spaces); an item the sheet does not list is still scheduled."""
+    rows = {r["item"].strip().lower(): r for r in daily_checklist()["items"]}
+    done = {x.strip().lower() for x in db.checklist_done_today(db.today())}
+    out = []
+    for c in card_items():
+        key = c["title"].strip().lower()
+        row = rows.get(key) or next((r for k, r in rows.items() if k.startswith(key) or key.startswith(k)), None)
+        if row:
+            c = {**c, "title": row["item"].strip(), "done": bool(row.get("done_today")) or row["item"].strip().lower() in done}
+        else:
+            c = {**c, "done": key in done}
+        if not c["done"]:
+            out.append(c)
     return out

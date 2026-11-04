@@ -49,7 +49,7 @@ def test_priority_order():
 def test_greedy_plan_fits_and_splits():
     windows = [(540, 660), (720, 840)]      # 9-11, 12-14
     tasks = scheduler.candidates(dt.date.today())
-    items = scheduler.greedy_plan(windows, tasks, checklist_minutes=20, exercise="run", exercise_minutes=45, checklist_done=False)
+    items = scheduler.greedy_plan(windows, tasks, [{"title": "Anki review", "minutes": 20}], exercise="run", exercise_minutes=45)
     for it in items:
         s, e = scheduler.parse_hm(it["start"]), scheduler.parse_hm(it["end"])
         assert any(ws <= s < e <= we for ws, we in windows), it
@@ -57,7 +57,7 @@ def test_greedy_plan_fits_and_splits():
     spans = sorted((scheduler.parse_hm(i["start"]), scheduler.parse_hm(i["end"])) for i in items)
     assert all(spans[i][1] <= spans[i + 1][0] for i in range(len(spans) - 1))
     kinds = [i["kind"] for i in items]
-    assert "checklist" in kinds and "exercise" in kinds
+    assert "routine" in kinds and "exercise" in kinds and items[0]["title"] == "Anki review"
     assert not any(i["title"] == "Long non-chunkable" for i in items)   # 600 min never fits
 
 
@@ -128,7 +128,7 @@ def test_off_track_and_replan_pins_active_block():
     assert len(kept) == 1 and kept[0]["task_id"] == first["task_id"]
     assert not any(i["task_id"] == first["task_id"] and i["status"] == "pending" for i in plan2["items"])
     for i in plan2["items"]:
-        if i["status"] == "pending":
+        if i["status"] == "pending" and i["kind"] != "meeting":      # meetings come from the real calendar
             assert scheduler.parse_hm(i["start"]) >= scheduler.parse_hm(kept[0]["end"])
 
 
@@ -487,3 +487,23 @@ def test_exercise_notes_exclude_rule_lines():
     from tracker import exercise
     txt = "[help]\nsquats: at least every 7 days\nfill: a, b\nnever back to back: a, b\nMy knee is sore this week.\nTiming: afternoons.\n"
     assert exercise.notes_text(txt) == "My knee is sore this week.\nTiming: afternoons."
+
+
+def test_routine_cards_from_checklist(monkeypatch):
+    from fastapi.testclient import TestClient
+    from tracker import sheets, web
+    monkeypatch.setitem(config.load()["sheets"], "card_items", ["Anki review: 20", "Writing - 40 minutes", "Nope: x"])
+    assert sheets.card_items() == [{"title": "Anki review", "minutes": 20}, {"title": "Writing - 40 minutes", "minutes": 20}, {"title": "Nope: x", "minutes": 20}]
+    monkeypatch.setattr(sheets, "daily_checklist", lambda: {"items": [{"item": "Anki Review", "done_today": False}, {"item": "Writing - 40 minutes", "done_today": True}], "source": "test"})
+    monkeypatch.setattr(sheets, "writable", lambda: False)
+    db.execute("DELETE FROM checklist_log")
+    assert [r["title"] for r in sheets.routines_for_today()] == ["Anki Review", "Nope: x"]
+    # completing the routine's card logs the tick; undo clears it
+    date = db.today()
+    db.save_plan(date, "09:00", "17:00", "run", "", [dict(kind="routine", task_id=None, title="Anki Review", start="09:00", end="09:20", minutes=20, note="")], {})
+    item = db.rows("SELECT id FROM plan_items WHERE kind='routine' AND date=?", (date,))[0]["id"]
+    c = TestClient(web.create_app())
+    assert c.post("/api/feed/complete", json={"item_id": item}).status_code == 200
+    assert "Anki Review" in db.checklist_done_today(date) and [r["title"] for r in sheets.routines_for_today()] == ["Nope: x"]
+    assert c.post("/api/feed/uncomplete", json={"item_id": item}).status_code == 200
+    assert "Anki Review" not in db.checklist_done_today(date)
