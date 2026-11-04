@@ -104,6 +104,7 @@ code{font-size:.9em;padding:1px 4px;border-radius:3px;background:var(--hover)}
 .task .tools{display:flex;gap:2px;opacity:.25}
 .task:hover .tools{opacity:1}
 .task.done .title{text-decoration:line-through;color:var(--muted)}
+.task.done .chip{background:var(--hover);color:var(--muted);opacity:.7}   /* completed-on date: quiet grey, no colour */
 .proj.archived>.phead h3{color:var(--muted);font-style:italic}
 .filters{display:flex;gap:14px;align-items:center;font-size:14px}
 .filterwrap{position:relative}
@@ -581,7 +582,7 @@ function taskHTML(t) {
     <input type="checkbox" ${done ? 'checked' : ''} title="${done ? 'Restore' : 'Complete'}" onchange="${done ? `uncomplete(${t.id})` : `completeTask(${t.id}, this)`}">
     <div class="body" onmousedown="if (event.shiftKey) event.preventDefault()" onclick="if (event.shiftKey) {event.stopPropagation(); extendSelTo(this.closest('.task'));} else if (!event.target.closest('a') && !selecting()) {clearSel(); this.closest('.task').focus();}" ondblclick="if (!event.target.closest('a, input, textarea, .notes')) {event.preventDefault(); toggleTask(${t.id});}">
 <span class="title ${t.linear_id ? 'lin' : ''} ${mdLine(t.title).level ? 'md-h' + mdLine(t.title).level : ''}" onclick="event.stopPropagation(); if (!selecting()) editTaskTitle(${t.id}, null, caretFromClick(event, this))" title="Click to edit, double-click for notes" ondblclick="event.stopPropagation()">${mdLine(t.title).html}</span>
-      <span style="margin-left:6px">${done ? `<span class="chip ok">completed ${fmtDay(t.completed_at)}</span>` : chips(t)}</span>
+      <span style="margin-left:6px">${done ? `<span class="chip">completed ${fmtDay(t.completed_at)}</span>` : chips(t)}</span>
       ${open ? taskNotesHTML(t) : ''}
     </div>
   </div>
