@@ -82,9 +82,10 @@ are the bold lines. Every project heading gets a box, with sub-projects as boxes
 nested tasks are simply indented. Inside an opened project its own tasks sit below its sub-projects; in the list they come first. There are no buttons
 on the lines: you navigate with the arrow keys and type.
 
-- Click a line, or arrow onto it, and it is open for editing (click on the text to put the caret there). Completed
-  lines are only highlighted. Double-click a task to open its notes box and double-click a project to open just
-  that project (Back button and breadcrumb at the top).
+- Click a task line, or arrow onto it, and it is open for editing (click on the text to put the caret there).
+  Project lines and completed tasks are only highlighted; click a selected project's name again to rename it, or
+  rename it inside the opened project. Double-click a task to open its notes box and double-click a project to
+  open just that project (Back button and breadcrumb at the top).
 - Enter opens a new line below (the first child when the line shows children); on a project line it opens the
   project's first task. Enter in the middle of a line splits it. Enter on an empty new line steps it out one
   level: out of a sub-task, then out of the project as a new project line beside it (so a top-level project is

@@ -555,10 +555,10 @@ function projectHTML(p, root) {
   const count = countTasks(p);
   const archived = !!p.archived_at;
   return `<div class="proj ${root ? 'root' : ''} ${archived ? 'archived' : ''}" data-pid="${p.id}" data-parent="${p.parent_id ?? ''}">
-    <div class="phead" tabindex="0" onmousedown="if (event.shiftKey) event.preventDefault()" onclick="if (event.shiftKey) extendSelTo(this); else if (!event.target.closest('input, textarea, button')) {clearSel(); if (!selecting()) editProjectName(${p.id}, null, 1e9);}" ondblclick="if (!event.target.closest('input, textarea')) {event.preventDefault(); openProject(${p.id});}">
+    <div class="phead" tabindex="0" onmousedown="if (event.shiftKey) event.preventDefault()" onclick="if (event.shiftKey) extendSelTo(this); else if (!event.target.closest('input, textarea')) clearSel()" ondblclick="if (!event.target.closest('input, textarea')) {event.preventDefault(); openProject(${p.id});}">
       <span class="handle" draggable="true" data-drag-project="${p.id}">≡</span>
       <span class="caret" onclick="event.stopPropagation(); toggleProject(${p.id})">${collapsed ? '▸' : '▾'}</span>
-      <h3 class="${mdLine(p.name).level ? 'md-h' + mdLine(p.name).level : ''}"><span class="name" onclick="event.stopPropagation(); if (!selecting()) editProjectName(${p.id}, null, caretFromClick(event, this) ?? 1e9)" title="Click to edit, double-click the row to open">${mdLine(p.name).html}</span> <span class="muted" style="font-weight:400;font-size:13px">${count}${archived ? ' · archived ' + fmtDay(p.archived_at) : ''}</span></h3>
+      <h3 class="${mdLine(p.name).level ? 'md-h' + mdLine(p.name).level : ''}"><span class="name" onmousedown="this.dataset.was = document.activeElement === this.closest('.phead') ? '1' : ''" onclick="event.stopPropagation(); if (selecting()) return; this.dataset.was ? editProjectName(${p.id}, null, caretFromClick(event, this)) : this.closest('.phead').focus()" title="Click again to edit, double-click the row to open">${mdLine(p.name).html}</span> <span class="muted" style="font-weight:400;font-size:13px">${count}${archived ? ' · archived ' + fmtDay(p.archived_at) : ''}</span></h3>
       ${archived ? `<span class="tools"><button class="btn small ghost" onclick="restoreProject(${p.id})">restore</button></span>` : countDone(p.tasks) ? `<span class="tools"><button class="btn small ghost" onclick="event.stopPropagation(); archiveDone(${p.id})" title="Put the completed tasks away (Cmd+Z brings them back)">archive ${countDone(p.tasks)} done</button></span>` : ''}
     </div>
     ${collapsed ? '' : `<div class="tasks" data-tasklist="${p.id}" data-parent="">${p.tasks.map(taskHTML).join('')}</div>
@@ -841,9 +841,9 @@ function outdentInline() {
   inp.value = v; inp.fit(); inp.focus(); return true;
 }
 // keyboard --------------------------------------------------------
-// The tree is one outline, Workflowy-style: every project header and task row is a line. Selecting a line (a click,
-// Up / Down) opens it for editing; only completed lines, and lines in a multi-selection, are merely highlighted. The
-// same keys work either way:
+// The tree is one outline, Workflowy-style: every project header and task row is a line. Selecting a task line (a
+// click, Up / Down) opens it for editing; project lines, completed tasks and multi-selections are merely highlighted.
+// The same keys work either way:
 //   Enter new line (first child if the line shows children, else sibling below)   Tab / Shift+Tab nest / un-nest
 //   Up / Down previous / next line           Cmd+Up / Cmd+Down collapse / expand   Cmd+Shift+Up / Down move the line
 //   Cmd+Enter complete (tasks)               Shift+Enter notes                     Alt+Right / Alt+Left zoom in / out
@@ -905,9 +905,11 @@ function caretFromClick(e, el) {
   const range = document.createRange(); range.setStart(el, 0); range.setEnd(node, off); return range.toString().length;
 }
 function editRow(el, append, caret) {if (!el) return; isHead(el) ? editProjectName(rowPid(el), append, caret) : editTaskTitle(+el.dataset.tid, append, caret);}
-// selecting one line (a click, Up / Down) opens it for editing with the caret at the end; a completed line is only highlighted
-function selectRow(el) {if (!el) return; lineInfo(el).done ? el.focus() : editRow(el, null, 1e9);}
-function selectRowLater(el) {if (!el) return; lineInfo(el).done ? focusRowLater(el) : editRowLater(el);}
+// selecting a task line (a click, Up / Down) opens it for editing with the caret at the end; project lines and completed
+// tasks are only highlighted (a project's name is edited by a second click, or inside the opened project)
+const quiet = el => isHead(el) || lineInfo(el).done;
+function selectRow(el) {if (!el) return; quiet(el) ? el.focus() : editRow(el, null, 1e9);}
+function selectRowLater(el) {if (!el) return; quiet(el) ? focusRowLater(el) : editRowLater(el);}
 function editRowLater(el) {if (!el) return; if (isHead(el)) pendingProjectEdit = rowPid(el); else pendingEdit = +el.dataset.tid;}
 function focusRowLater(el) {if (!el) return; if (isHead(el)) pendingFocusProject = rowPid(el); else pendingFocus = +el.dataset.tid;}
 const printable = e => e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey && e.key !== ' ';
