@@ -82,8 +82,9 @@ are the bold lines. Every project heading gets a box, with sub-projects as boxes
 nested tasks are simply indented. Inside an opened project its own tasks sit below its sub-projects; in the list they come first. There are no buttons
 on the lines: you navigate with the arrow keys and type.
 
-- Click a line to select it, click a task's text (or type on a selected line) to edit it, double-click a task to
-  open its notes box and double-click a project to open just that project (Back button and breadcrumb at the top).
+- Click a line, or arrow onto it, and it is open for editing (click on the text to put the caret there). Completed
+  lines are only highlighted. Double-click a task to open its notes box and double-click a project to open just
+  that project (Back button and breadcrumb at the top).
 - Enter opens a new line below (the first child when the line shows children); on a project line it opens the
   project's first task. Enter in the middle of a line splits it. Enter on an empty new line steps it out one
   level: out of a sub-task, then out of the project as a new project line beside it (so a top-level project is
@@ -91,8 +92,8 @@ on the lines: you navigate with the arrow keys and type.
   which Shift+Tab turns into a project line. Cmd+B makes a task bold, i.e. a project, and a sub-project back
   into a task. The "+ Project" button at the top ("+ Sub-project" inside an opened project) adds one at the
   top of the list. Whatever you have typed in a line is kept when you click away; a split line undoes in one step.
-- Up / Down move between lines (and move the editor while typing). Cmd+Up / Cmd+Down collapse and expand,
-  Left / Right do the same on a selected line. Cmd+Shift+Up / Down move a line among its siblings.
+- Up / Down move between lines, editor and all. Cmd+Up / Cmd+Down collapse and expand (Left / Right do the
+  same on a highlighted completed line). Cmd+Shift+Up / Down move a line among its siblings.
 - Cmd+Enter (or the checkbox) completes a task: it stays in the outline, ticked and struck through, until the
   small "archive N done" button at the top of its project puts the completed tasks away (Cmd+Z brings them
   back; the Archived tasks filter shows them). Shift+Enter opens its notes and, pressed again on the line or inside the box,

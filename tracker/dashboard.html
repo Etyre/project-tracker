@@ -53,7 +53,7 @@ button{font:inherit;cursor:pointer}
 .children:empty{display:none}
 .phead{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:8px}
 .phead:hover{background:var(--hover)}
-.phead:focus{outline:none;background:var(--hover);box-shadow:inset 2px 0 0 var(--accent)}
+.phead:focus,.phead:focus-within{outline:none;background:var(--hover);box-shadow:inset 2px 0 0 var(--accent)}
 .phead h3 .name{cursor:text}
 .phead h3{margin:0;font-size:16px;flex:1;cursor:default}
 .proj.root>.phead h3{font-size:19px}
@@ -62,7 +62,7 @@ button{font:inherit;cursor:pointer}
 .handle{cursor:grab;color:var(--muted);user-select:none;padding:0 4px}
 .task{display:flex;align-items:flex-start;gap:8px;padding:5px 6px;border-radius:8px;margin-left:0}
 .task:hover{background:var(--hover)}
-.task:focus{outline:none;background:var(--hover);box-shadow:inset 2px 0 0 var(--accent)}
+.task:focus,.task:focus-within{outline:none;background:var(--hover);box-shadow:inset 2px 0 0 var(--accent)}
 .task.sel,.phead.sel{background:var(--hover);box-shadow:inset 2px 0 0 var(--accent)}
 .tasks{padding:2px 0 6px 22px;min-height:10px;cursor:text}
 .tasks.sub{margin:0;padding:0 0 0 26px;min-height:0}
@@ -555,10 +555,10 @@ function projectHTML(p, root) {
   const count = countTasks(p);
   const archived = !!p.archived_at;
   return `<div class="proj ${root ? 'root' : ''} ${archived ? 'archived' : ''}" data-pid="${p.id}" data-parent="${p.parent_id ?? ''}">
-    <div class="phead" tabindex="0" onmousedown="if (event.shiftKey) event.preventDefault()" onclick="if (event.shiftKey) extendSelTo(this); else if (!event.target.closest('input, textarea')) clearSel()" ondblclick="if (!event.target.closest('input, textarea')) {event.preventDefault(); openProject(${p.id});}">
+    <div class="phead" tabindex="0" onmousedown="if (event.shiftKey) event.preventDefault()" onclick="if (event.shiftKey) extendSelTo(this); else if (!event.target.closest('input, textarea, button')) {clearSel(); if (!selecting()) editProjectName(${p.id}, null, 1e9);}" ondblclick="if (!event.target.closest('input, textarea')) {event.preventDefault(); openProject(${p.id});}">
       <span class="handle" draggable="true" data-drag-project="${p.id}">≡</span>
       <span class="caret" onclick="event.stopPropagation(); toggleProject(${p.id})">${collapsed ? '▸' : '▾'}</span>
-      <h3 class="${mdLine(p.name).level ? 'md-h' + mdLine(p.name).level : ''}"><span class="name" onmousedown="this.dataset.was = document.activeElement === this.closest('.phead') ? '1' : ''" onclick="event.stopPropagation(); if (selecting()) return; this.dataset.was ? editProjectName(${p.id}, null, caretFromClick(event, this)) : this.closest('.phead').focus()" title="Click again to edit, double-click the row to open">${mdLine(p.name).html}</span> <span class="muted" style="font-weight:400;font-size:13px">${count}${archived ? ' · archived ' + fmtDay(p.archived_at) : ''}</span></h3>
+      <h3 class="${mdLine(p.name).level ? 'md-h' + mdLine(p.name).level : ''}"><span class="name" onclick="event.stopPropagation(); if (!selecting()) editProjectName(${p.id}, null, caretFromClick(event, this) ?? 1e9)" title="Click to edit, double-click the row to open">${mdLine(p.name).html}</span> <span class="muted" style="font-weight:400;font-size:13px">${count}${archived ? ' · archived ' + fmtDay(p.archived_at) : ''}</span></h3>
       ${archived ? `<span class="tools"><button class="btn small ghost" onclick="restoreProject(${p.id})">restore</button></span>` : countDone(p.tasks) ? `<span class="tools"><button class="btn small ghost" onclick="event.stopPropagation(); archiveDone(${p.id})" title="Put the completed tasks away (Cmd+Z brings them back)">archive ${countDone(p.tasks)} done</button></span>` : ''}
     </div>
     ${collapsed ? '' : `<div class="tasks" data-tasklist="${p.id}" data-parent="">${p.tasks.map(taskHTML).join('')}</div>
@@ -580,7 +580,7 @@ function taskHTML(t) {
     <span class="handle" draggable="${done ? 'false' : 'true'}" ${done ? '' : `data-drag-task="${t.id}"`} style="${done ? 'visibility:hidden' : ''}">≡</span>
     <span class="caret" ${kids ? `onclick="event.stopPropagation(); toggleTaskFold(${t.id})" title="${folded ? 'Show' : 'Hide'} ${kids} sub-task${kids === 1 ? '' : 's'}"` : ''}>${kids ? (folded ? '▸' : '▾') : ''}</span>
     <input type="checkbox" ${done ? 'checked' : ''} title="${done ? 'Restore' : 'Complete'}" onchange="${done ? `uncomplete(${t.id})` : `completeTask(${t.id}, this)`}">
-    <div class="body" onmousedown="if (event.shiftKey) event.preventDefault()" onclick="if (event.shiftKey) {event.stopPropagation(); extendSelTo(this.closest('.task'));} else if (!event.target.closest('a') && !selecting()) {clearSel(); this.closest('.task').focus();}" ondblclick="if (!event.target.closest('a, input, textarea, .notes')) {event.preventDefault(); toggleTask(${t.id});}">
+    <div class="body" onmousedown="if (event.shiftKey) event.preventDefault()" onclick="if (event.shiftKey) {event.stopPropagation(); extendSelTo(this.closest('.task'));} else if (!event.target.closest('a') && !selecting()) {clearSel(); ${done ? "this.closest('.task').focus()" : `editTaskTitle(${t.id}, null, 1e9)`};}" ondblclick="if (!event.target.closest('a, input, textarea, .notes')) {event.preventDefault(); toggleTask(${t.id});}">
 <span class="title ${t.linear_id ? 'lin' : ''} ${mdLine(t.title).level ? 'md-h' + mdLine(t.title).level : ''}" onclick="event.stopPropagation(); if (!selecting()) editTaskTitle(${t.id}, null, caretFromClick(event, this))" title="Click to edit, double-click for notes" ondblclick="event.stopPropagation()">${mdLine(t.title).html}</span>
       <span style="margin-left:6px">${done ? `<span class="chip">completed ${fmtDay(t.completed_at)}</span>` : chips(t)}</span>
       ${open ? taskNotesHTML(t) : ''}
@@ -797,7 +797,7 @@ function openInlineAdd(a, text, caret) {
     if (e.key === 'Escape') {e.preventDefault(); done = true; closeInlineAdd();}
     else if (e.key === 'Backspace' && !remainingAfterBackspace(inp)) {   // deleting the last character removes the line; focus goes to the task above
       e.preventDefault(); const prev = prevTaskRow(row) || row.closest('.tasks')?.previousElementSibling?.closest?.('.task');
-      done = true; closeInlineAdd(); if (prev && prev.classList.contains('task')) prev.focus();
+      done = true; closeInlineAdd(); if (prev && prev.classList.contains('task')) selectRow(prev);
     }
     else if (e.key === 'Backspace' && atStart(inp)) {
       e.preventDefault(); const text = inp.value.trim(), fromSplit = !!inlineAdd.split; row.dataset.project = inlineAdd.project_id;
@@ -841,8 +841,9 @@ function outdentInline() {
   inp.value = v; inp.fit(); inp.focus(); return true;
 }
 // keyboard --------------------------------------------------------
-// The tree is one outline, Workflowy-style: every project header and task row is a line. The same keys work
-// whether a line is merely selected (focused) or its text is being edited:
+// The tree is one outline, Workflowy-style: every project header and task row is a line. Selecting a line (a click,
+// Up / Down) opens it for editing; only completed lines, and lines in a multi-selection, are merely highlighted. The
+// same keys work either way:
 //   Enter new line (first child if the line shows children, else sibling below)   Tab / Shift+Tab nest / un-nest
 //   Up / Down previous / next line           Cmd+Up / Cmd+Down collapse / expand   Cmd+Shift+Up / Down move the line
 //   Cmd+Enter complete (tasks)               Shift+Enter notes                     Alt+Right / Alt+Left zoom in / out
@@ -903,7 +904,10 @@ function caretFromClick(e, el) {
   if (!node || !el.contains(node)) return null;
   const range = document.createRange(); range.setStart(el, 0); range.setEnd(node, off); return range.toString().length;
 }
-function editRow(el, append) {if (!el) return; isHead(el) ? editProjectName(rowPid(el), append) : editTaskTitle(+el.dataset.tid, append);}
+function editRow(el, append, caret) {if (!el) return; isHead(el) ? editProjectName(rowPid(el), append, caret) : editTaskTitle(+el.dataset.tid, append, caret);}
+// selecting one line (a click, Up / Down) opens it for editing with the caret at the end; a completed line is only highlighted
+function selectRow(el) {if (!el) return; lineInfo(el).done ? el.focus() : editRow(el, null, 1e9);}
+function selectRowLater(el) {if (!el) return; lineInfo(el).done ? focusRowLater(el) : editRowLater(el);}
 function editRowLater(el) {if (!el) return; if (isHead(el)) pendingProjectEdit = rowPid(el); else pendingEdit = +el.dataset.tid;}
 function focusRowLater(el) {if (!el) return; if (isHead(el)) pendingFocusProject = rowPid(el); else pendingFocus = +el.dataset.tid;}
 const printable = e => e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey && e.key !== ' ';
@@ -1034,8 +1038,8 @@ function newLineAfter(L, text) {   // Enter: the first child when the line shows
 // key was taken.
 async function outlineKey(e, el, save) {
   const L = lineInfo(el), mod = e.metaKey || e.ctrlKey, k = e.key, editing = !!save, dir = k === 'ArrowUp' ? -1 : 1;
-  const keep = () => editing ? editRowLater(el) : focusRowLater(el);
-  const back = () => editing ? editRow(el) : el.focus();
+  const keep = () => editing ? editRowLater(el) : selectRowLater(el);
+  const back = () => editing ? editRow(el) : selectRow(el);
   // fn returns true to re-render keeping this line, false to put the cursor back, anything else if it took over
   const run = async fn => {e.preventDefault(); if (save) await save(); let r; try {r = await fn();} catch (err) {toast(esc(err.message), 5000); r = false;} if (r === true) {keep(); renderProjects();} else if (r === false) back();};
   if (mod && e.shiftKey && (k === 'ArrowUp' || k === 'ArrowDown')) {await run(() => moveLine(L, dir)); return true;}
@@ -1065,8 +1069,8 @@ async function outlineKey(e, el, save) {
     if (editing && document.activeElement?.tagName === 'TEXTAREA' && !caretAtEdge(document.activeElement, dir)) return false;
     const n = neighbourRow(el, dir); if (!n) return false;
     e.preventDefault();
-    if (!editing) {n.focus(); return true;}
-    const changed = await save(); if (changed) {editRowLater(n); renderProjects();} else editRow(n);
+    if (!editing) {selectRow(n); return true;}
+    const changed = await save(); if (changed) {selectRowLater(n); renderProjects();} else selectRow(n);
     return true;
   }
   return false;
@@ -1240,7 +1244,7 @@ async function deleteTree(L) {   // a task with everything under it (undo recrea
     pushUndo(`delete "${t.title}" and sub-items`, () => api('/tasks/bulk', 'POST', {...slot, items: r.outline}));
     toast(`Deleted with ${r.outline.length - 1} sub-item${r.outline.length === 2 ? '' : 's'}`);
   }
-  focusRowLater(prev); renderProjects();
+  selectRowLater(prev); renderProjects();
 }
 // a selected (focused) line
 document.addEventListener('keydown', async e => {
