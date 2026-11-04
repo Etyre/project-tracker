@@ -507,3 +507,20 @@ def test_routine_cards_from_checklist(monkeypatch):
     assert "Anki Review" in db.checklist_done_today(date) and [r["title"] for r in sheets.routines_for_today()] == ["Nope: x"]
     assert c.post("/api/feed/uncomplete", json={"item_id": item}).status_code == 200
     assert "Anki Review" not in db.checklist_done_today(date)
+
+
+def test_completed_tasks_stay_until_archived():
+    pid = db.create_project("Archive done")
+    a = db.create_task(pid, "Open one")
+    b = db.create_task(pid, "Done one")
+    db.complete_task(b)
+    tree = next(p for p in db.project_tree() if p["id"] == pid)
+    assert [t["title"] for t in tree["tasks"]] == ["Open one", "Done one"]          # still shown, struck through in the UI
+    ids = db.archive_completed(pid)
+    assert ids == [b]
+    assert [t["title"] for t in next(p for p in db.project_tree() if p["id"] == pid)["tasks"]] == ["Open one"]
+    assert [t["title"] for t in next(p for p in db.project_tree(completed=True) if p["id"] == pid)["tasks"]] == ["Open one", "Done one"]
+    db.unarchive_tasks(ids)
+    assert len(next(p for p in db.project_tree() if p["id"] == pid)["tasks"]) == 2
+    db.uncomplete_task(b)
+    assert db.task(b)["completed_at"] is None and db.task(b)["archived_at"] is None

@@ -356,5 +356,5 @@ def tree_text() -> str:
                 lines.append("  " * (depth + 1) + f"· … {len(p['tasks']) - 5} more")
             walk(p["children"], depth + 1)
 
-    walk(db.project_tree(), 0)
+    walk(db.project_tree(done=False), 0)
     return "\n".join(lines) or "(empty - no projects yet)"

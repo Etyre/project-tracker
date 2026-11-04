@@ -49,7 +49,7 @@ def render(now: dt.datetime | None = None, since: float | None = None) -> str:
     out = [f"# Task tracker snapshot — {now:%A %Y-%m-%d %H:%M}", ""]
 
     def task(t: dict, depth: int) -> None:
-        out.append("  " * depth + "- [ ] " + re.sub(r"^#{1,6}\s+", "", t["title"].strip()) + _tags(t))
+        out.append("  " * depth + ("- [x] " if t.get("completed_at") else "- [ ] ") + re.sub(r"^#{1,6}\s+", "", t["title"].strip()) + _tags(t))
         _notes(t.get("description"), depth, out)
         for c in t["children"]:
             task(c, depth + 1)

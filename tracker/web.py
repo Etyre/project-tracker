@@ -292,6 +292,18 @@ def create_app() -> FastAPI:
         db.archive_project(pid)
         return {"ok": True}
 
+    @app.post("/api/projects/{pid}/archive_done")
+    def archive_done(pid: int):
+        """The little button at the top of a project: its completed tasks go away (undo restores them)."""
+        if not db.row("SELECT id FROM projects WHERE id=?", (pid,)):
+            raise HTTPException(404)
+        return {"ids": db.archive_completed(pid)}
+
+    @app.post("/api/tasks/unarchive")
+    def unarchive(body: dict[str, Any]):
+        db.unarchive_tasks([int(x) for x in body.get("ids") or []])
+        return {"ok": True}
+
     @app.post("/api/projects/{pid}/delete_empty")
     def delete_empty_project(pid: int):
         if not db.row("SELECT id FROM projects WHERE id=?", (pid,)):

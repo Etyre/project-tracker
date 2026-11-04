@@ -93,7 +93,9 @@ on the lines: you navigate with the arrow keys and type.
   top of the list. Whatever you have typed in a line is kept when you click away; a split line undoes in one step.
 - Up / Down move between lines (and move the editor while typing). Cmd+Up / Cmd+Down collapse and expand,
   Left / Right do the same on a selected line. Cmd+Shift+Up / Down move a line among its siblings.
-- Cmd+Enter completes a task, Shift+Enter opens its notes and, pressed again on the line or inside the box,
+- Cmd+Enter (or the checkbox) completes a task: it stays in the outline, ticked and struck through, until the
+  small "archive N done" button at the top of its project puts the completed tasks away (Cmd+Z brings them
+  back; the Archived tasks filter shows them). Shift+Enter opens its notes and, pressed again on the line or inside the box,
   closes them (the box also closes by itself when you move to another line), Cmd+E opens its dates and priority, Alt+Right /
   Alt+Left zoom into and out of a project, Cmd+Shift+Backspace deletes a line (Backspace on an emptied line
   does too). Backspace at the start of a line joins it onto the line above, which undoes an accidental split.

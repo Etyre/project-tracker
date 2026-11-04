@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL,
     completed_at REAL,
+    archived_at REAL,                                -- a completed task put away with "archive done"
     source TEXT NOT NULL DEFAULT 'local',            -- local | quick_add | linear
     linear_id TEXT UNIQUE,
     linear_identifier TEXT,
@@ -114,6 +115,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
     cols = {r["name"]: r for r in conn.execute("PRAGMA table_info(tasks)")}
     if "parent_id" not in cols:
         conn.execute("ALTER TABLE tasks ADD COLUMN parent_id INTEGER REFERENCES tasks(id)")
+        conn.commit()
+        cols = {r["name"]: r for r in conn.execute("PRAGMA table_info(tasks)")}
+    if "archived_at" not in cols:
+        conn.execute("ALTER TABLE tasks ADD COLUMN archived_at REAL")
         conn.commit()
         cols = {r["name"]: r for r in conn.execute("PRAGMA table_info(tasks)")}
     if cols["importance"]["notnull"]:
@@ -245,9 +250,10 @@ def projects(include_archived: bool = False) -> list[dict]:
 
 
 def project_tree(include_archived: bool = False, with_tasks: bool = True,
-                 active: bool = True, completed: bool = False) -> list[dict]:
-    """Projects as a tree. `include_archived` adds archived projects; `active`/`completed` pick which tasks
-    are attached (any combination). Completed tasks come newest-first after the active ones."""
+                 active: bool = True, completed: bool = False, done: bool = True) -> list[dict]:
+    """Projects as a tree. `include_archived` adds archived projects; `active` attaches open tasks, `done` the
+    completed tasks not yet archived (shown struck through until "archive done"), `completed` the archived
+    ones too. Completed tasks come newest-first after the active ones."""
     ps = projects(include_archived)
     by_id = {p["id"]: dict(p, children=[], tasks=[]) for p in ps}
     roots: list[dict] = []
@@ -260,6 +266,8 @@ def project_tree(include_archived: bool = False, with_tasks: bool = True,
             tasks += open_tasks()
         if completed:
             tasks += completed_tasks(None, 5000)
+        elif done:
+            tasks += completed_tasks(None, 5000, include_archived=False)
         by_tid = {t["id"]: dict(t, children=[]) for t in tasks}
         for t in by_tid.values():
             parent = by_tid.get(t["parent_id"]) if t["parent_id"] else None
@@ -306,7 +314,7 @@ def ensure_project_path(path: list[str]) -> int:
 
 # ---------------------------------------------------------------- tasks
 TASK_FIELDS = {"title", "description", "deadline", "blocking", "blocking_for", "importance",
-               "estimate_minutes", "chunkable", "project_id", "parent_id", "position", "completed_at",
+               "estimate_minutes", "chunkable", "project_id", "parent_id", "position", "completed_at", "archived_at",
                "linear_id", "linear_identifier", "linear_url", "linear_state", "linear_team_id",
                "linear_updated_at", "source"}
 
@@ -402,8 +410,8 @@ def open_tasks(project_id: int | None = None, schedulable_only: bool = False) ->
     return out
 
 
-def completed_tasks(project_id: int | None = None, limit: int = 500) -> list[dict]:
-    q = "SELECT * FROM tasks WHERE completed_at IS NOT NULL"
+def completed_tasks(project_id: int | None = None, limit: int = 500, include_archived: bool = True) -> list[dict]:
+    q = "SELECT * FROM tasks WHERE completed_at IS NOT NULL" + ("" if include_archived else " AND archived_at IS NULL")
     args: list = []
     if project_id is not None:
         q += " AND project_id=?"
@@ -417,6 +425,19 @@ def complete_task(tid: int, when: float | None = None) -> None:
     update_task(tid, completed_at=when or time.time())
 
 
+def archive_completed(project_id: int) -> list[int]:
+    """Put the project's completed tasks (at any nesting) away; returns the ids for undo."""
+    ids = [r["id"] for r in rows("SELECT id FROM tasks WHERE project_id=? AND completed_at IS NOT NULL AND archived_at IS NULL", (project_id,))]
+    if ids:
+        execute(f"UPDATE tasks SET archived_at=? WHERE id IN ({','.join('?' * len(ids))})", (time.time(), *ids))
+    return ids
+
+
+def unarchive_tasks(ids: list[int]) -> None:
+    if ids:
+        execute(f"UPDATE tasks SET archived_at=NULL WHERE id IN ({','.join('?' * len(ids))})", tuple(ids))
+
+
 def uncomplete_task(tid: int) -> None:
     t = task(tid)
     if not t:
@@ -424,7 +445,7 @@ def uncomplete_task(tid: int) -> None:
     parent = task(t["parent_id"]) if t["parent_id"] else None
     parent_id = t["parent_id"] if parent and parent["completed_at"] is None else None
     pos = _next_position("tasks", *_sibling_where(t["project_id"], parent_id))
-    update_task(tid, completed_at=None, position=pos, parent_id=parent_id)
+    update_task(tid, completed_at=None, archived_at=None, position=pos, parent_id=parent_id)
 
 
 SUBTREE_FIELDS = ("description", "deadline", "blocking", "blocking_for", "importance", "estimate_minutes", "chunkable", "completed_at")

@@ -504,7 +504,7 @@ async function renderProjects() {
       <div class="row" style="gap:10px;min-width:0">${crumbs}</div>
       <div class="row" style="gap:6px">
         <span class="filterwrap"><button class="btn small ghost ${filtersOpen ? 'on' : ''}" onclick="toggleFilters()">${filtersOpen ? 'Hide filters' : nonDefault ? 'Filters (on)' : 'Filters'}</button>
-          ${filtersOpen ? `<div class="filters"><span class="muted">Show:</span>${chk('active', 'Active')}${chk('completed', 'Completed')}${chk('archived', 'Archived')}</div>` : ''}</span>
+          ${filtersOpen ? `<div class="filters"><span class="muted">Show:</span>${chk('active', 'Active')}${chk('completed', 'Archived tasks')}${chk('archived', 'Archived')}</div>` : ''}</span>
         ${multi ? `<span class="muted" id="multicount">${selectedTaskIds().length} selected</span><button class="btn small" onclick="openBulkTags(this)">Tags…</button><button class="btn small" onclick="openBulkModal()">Dates & priority…</button><button class="btn small primary" onclick="toggleMulti()">Done</button>`
                 : `<button class="btn small ghost" onclick="toggleMulti()">Edit multiple</button>`}
         <button class="btn" onclick="openInlineProjectAdd(${focus ? focus.id : 'null'}, 0)">${focus ? '+ Sub-project' : '+ Project'}</button></div></div>
@@ -535,6 +535,7 @@ function projectDetailsHTML(p) {
       <h2 class="${mdLine(p.name).level ? 'md-h' + mdLine(p.name).level : ''}" onclick="if (!selecting()) editProjectName(${p.id}, null, caretFromClick(event, this))" title="Click to edit the name">${mdLine(p.name).html}</h2>
       <span class="tools" style="display:flex;gap:4px">${p.archived_at ? `<button class="btn small ghost" onclick="restoreProject(${p.id})">restore</button>` : `
         ${p.parent_id ? `<button class="btn small ghost" onclick="projectToTask(${p.id})" title="Turn this project into a task of its parent project">make task</button>` : ''}
+        ${countDone(p.tasks) ? `<button class="btn small ghost" onclick="archiveDone(${p.id})">archive ${countDone(p.tasks)} done</button>` : ''}
         <button class="btn small ghost" onclick="archiveProject(${p.id})">archive</button>`}</span>
     </div>
     <div class="muted" style="font-size:13px">${meta}</div>
@@ -557,13 +558,18 @@ function projectHTML(p, root) {
       <span class="handle" draggable="true" data-drag-project="${p.id}">≡</span>
       <span class="caret" onclick="event.stopPropagation(); toggleProject(${p.id})">${collapsed ? '▸' : '▾'}</span>
       <h3 class="${mdLine(p.name).level ? 'md-h' + mdLine(p.name).level : ''}"><span class="name" onmousedown="this.dataset.was = document.activeElement === this.closest('.phead') ? '1' : ''" onclick="event.stopPropagation(); if (selecting()) return; this.dataset.was ? editProjectName(${p.id}, null, caretFromClick(event, this)) : this.closest('.phead').focus()" title="Click again to edit, double-click the row to open">${mdLine(p.name).html}</span> <span class="muted" style="font-weight:400;font-size:13px">${count}${archived ? ' · archived ' + fmtDay(p.archived_at) : ''}</span></h3>
-      ${archived ? `<span class="tools"><button class="btn small ghost" onclick="restoreProject(${p.id})">restore</button></span>` : ''}
+      ${archived ? `<span class="tools"><button class="btn small ghost" onclick="restoreProject(${p.id})">restore</button></span>` : countDone(p.tasks) ? `<span class="tools"><button class="btn small ghost" onclick="event.stopPropagation(); archiveDone(${p.id})" title="Put the completed tasks away (Cmd+Z brings them back)">archive ${countDone(p.tasks)} done</button></span>` : ''}
     </div>
     ${collapsed ? '' : `<div class="tasks" data-tasklist="${p.id}" data-parent="">${p.tasks.map(taskHTML).join('')}</div>
     <div class="children" data-childlist="${p.id}">${p.children.map(c => projectHTML(c, false)).join('')}</div>`}
   </div>`;
 }
 const countTasks = p => p.tasks.reduce((a, t) => a + 1 + countSub(t), 0) + p.children.reduce((a, c) => a + countTasks(c), 0);
+const countDone = ts => ts.reduce((a, t) => a + (t.completed_at ? 1 : 0) + countDone(t.children), 0);   // completed, not yet archived, in this project
+async function archiveDone(pid) {
+  try {const r = await api(`/projects/${pid}/archive_done`, 'POST'); pushUndo(`archive ${r.ids.length} done`, () => api('/tasks/unarchive', 'POST', {ids: r.ids})); toast(`Archived ${r.ids.length} completed task${r.ids.length === 1 ? '' : 's'}`); renderProjects();}
+  catch (e) {toast(esc(e.message));}
+}
 const countSub = t => t.children.reduce((a, c) => a + 1 + countSub(c), 0);
 function taskHTML(t) {
   const open = expanded.has(t.id);
