@@ -667,7 +667,7 @@ def create_app() -> FastAPI:
                      "work_start": p["work_start"], "work_end": p["work_end"], "off_track": scheduler.off_track()},
             "current": current, "meeting_now": meeting_now,
             "meetings": [{"title": i["title"], "start": i["start"], "end": i["end"]} for i in items if i["kind"] == "meeting"],
-            "meeting_alert_minutes": cfg["meeting_alert_minutes"],
+            "meeting_alert_minutes": cfg["meeting_alert_minutes"], "meeting_alert_all_day": cfg["meeting_alert_all_day"],
             "up_next": [i for i in pending if not current or i["id"] != current["id"]][:5],
             "progress": {"done": done, "total": total},
             "exercise_item": next((i for i in items if i["kind"] == "exercise"), None),
