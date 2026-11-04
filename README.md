@@ -39,7 +39,7 @@ crashes and logs to `launcher.log` in the data folder.
 
 Secrets can also live in the Keychain (`security add-generic-password -s TaskTracker -a toggl -w`; accounts
 `toggl`, `linear`, `anthropic`, `sheets`) or in `~/Library/Application Support/TaskTracker/env`.
-Everything else is in `config.toml`; scheduling preferences go in `Rules and heuristics for scheduling.md`.
+Everything else is in `config.toml`; scheduling preferences go in `Rules and heuristics for scheduling.md`. `config.toml` is yours and stays out of git (it holds your calendar's secret address); `config.example.toml` shows every key.
 
 ### Calendar
 Google Calendar -> Settings -> your calendar -> *Secret address in iCal format*. Paste one or more URLs into

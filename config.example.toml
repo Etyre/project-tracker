@@ -1,0 +1,56 @@
+# Copy to config.toml (or just open Settings in the app, which writes config.toml for you).
+# Task Tracker configuration, edited from the app's Settings page.
+# Secrets are not here: they live in the login Keychain (service "TaskTracker") or the environment.
+
+[general]
+host = "127.0.0.1"
+port = 8791
+timezone = ""
+work_start = "10:30"
+work_end = "15:30"
+default_estimate_minutes = 30
+min_block_minutes = 10
+replan_drift_minutes = 20
+overrun_minutes = 30
+replan_min_interval_minutes = 10
+meeting_alert_minutes = 45
+
+[snapshots]
+enable = true
+time = "05:00"
+dir = ""
+
+[llm]
+model = "claude-opus-5-5"
+effort = "high"
+quick_add_effort = "medium"
+enable = true
+
+[toggl]
+tag = ""
+project = ""
+
+[linear]
+enable = false
+sync_minutes = 10
+category_name = "Linear"
+group_by = "project"
+
+[calendar]
+ics_urls = []            # your calendar's "Secret address in iCal format" (Settings > Calendar)
+ignore_titles = []
+busy_only = true
+
+[sheets]
+apps_script_url = ""      # /exec URL of apps_script/Code.gs deployed on your checklist sheet
+exercise_script_url = ""  # /exec URL of the exercise log's export script
+daily_checklist_csv = ""
+exercise_csv = ""
+cache_minutes = 30
+
+[exercise]
+rotation = []
+
+[journal]
+app = "Roam Research"
+desktop = 1
