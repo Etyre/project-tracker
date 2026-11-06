@@ -138,6 +138,11 @@ on the lines: you navigate with the arrow keys and type.
   sub-projects and open tasks with it (restore brings them back). The Filters button (hidden by default)
   opens a small panel to show completed tasks and archived projects alongside the active ones.
 
+**Nightly prefetch** - at `[sheets] prefetch_time` (23:50) the checklist, the exercise log and the calendar feeds
+are read afresh and kept, so a midnight decision (the day's exercise, the routines) uses that copy when the internet
+is off at night. A session decided while the exercise log cannot be read is provisional and is decided again as soon
+as the log is readable.
+
 **Snapshots** - every day at `[snapshots] time` (05:00) the whole outline is written to
 `~/Library/Application Support/TaskTracker/snapshots/YYYY-MM-DD.md` (or `[snapshots] dir`): projects as a bold
 nested list, open tasks as checkboxes with their tags, notes underneath, and the tasks completed since the last

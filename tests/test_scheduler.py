@@ -380,7 +380,8 @@ def test_exercise_timer_named_going_to_do():
 
 
 def test_exercise_decided_once_and_length_from_history(monkeypatch):
-    from tracker import exercise, tags
+    from tracker import exercise, tags, sheets
+    monkeypatch.setattr(sheets, "exercise_sessions", lambda days=120: [])   # the app's own timers only, never the real sheet
     now = dt.datetime.now().timestamp()
     for i, (kind, mins) in enumerate([("run", 38), ("strength", 61), ("run", 42), ("strength", 58)]):
         eid = db.start_entry("exercise", kind.capitalize(), None, None)
@@ -514,6 +515,77 @@ def test_exercise_button_offers_extra_session_once_done(monkeypatch):
     web._stop_timer()
     assert c.get("/api/feed").json()["exercise_extra_done"] is True
     assert "zone 2 cardio" in web._routine_labels()
+
+
+def test_exercise_pick_made_offline_is_provisional(monkeypatch):
+    """Decided at midnight with the exercise sheet unreachable (the internet is off): the pick is remade as soon
+    as the sheet can be read again, and kept while it still cannot."""
+    from tracker import exercise, sheets
+    monkeypatch.setitem(config.load()["sheets"], "exercise_script_url", "https://example.invalid/exec")
+    today = dt.date(2031, 5, 5)
+    H = lambda name, days_ago, kind="strength": {"kind": kind, "exercise": name, "date": (today - dt.timedelta(days=days_ago)).isoformat(), "weekday": "", "minutes": 40, "source": "sheet"}
+    offline = {"on": True}
+    def fake_history(days=90):
+        sheets.exercise_log_failed = offline["on"]
+        return [] if offline["on"] else [H("Squats", 2), H("Cardio Interval Training", 1, "cardio")]
+    monkeypatch.setattr(exercise, "history", fake_history)
+    db.set_setting("exercise_decision", "")
+    d1 = exercise.decide(today.isoformat())
+    assert d1["title"] == "squats" and d1["provisional"] is True            # an empty log makes squats look overdue
+    assert exercise.decide(today.isoformat())["decided_at"] == d1["decided_at"]   # still offline: kept, not re-decided
+    offline["on"] = False
+    d2 = exercise.decide(today.isoformat())
+    assert d2["title"] == "benchpress" and not d2.get("provisional") and d2["decided_at"] != d1["decided_at"]
+    assert exercise.decide(today.isoformat())["decided_at"] == d2["decided_at"]   # now final
+    sheets.exercise_log_failed = False
+    db.set_setting("exercise_decision", "")
+
+
+def test_nightly_prefetch_reads_every_source_afresh(monkeypatch):
+    from tracker import sheets, calendar_feed
+    got = []
+    monkeypatch.setattr(sheets, "_get", lambda url, max_age: got.append(("sheet", max_age)) or "")
+    monkeypatch.setattr(calendar_feed, "_fetch", lambda url, max_age=600: got.append(("cal", max_age)) or b"")
+    monkeypatch.setitem(config.load()["sheets"], "exercise_script_url", "https://example.invalid/exec")
+    monkeypatch.setitem(config.load()["sheets"], "daily_checklist_csv", "https://example.invalid/csv")
+    monkeypatch.setitem(config.load()["calendar"], "ics_urls", ["https://example.invalid/a.ics"])
+    sheets.prefetch(); calendar_feed.prefetch()
+    assert ("sheet", 0) in got and ("cal", 0) in got and all(m == 0 for _, m in got)
+    assert scheduler.parse_hm(config.DEFAULTS["sheets"]["prefetch_time"]) == 23 * 60 + 50
+
+
+def test_feed_start_answers_and_runs_the_timer():
+    from fastapi.testclient import TestClient
+    from tracker import web
+    c = TestClient(web.create_app())
+    pid = db.create_project("Feed start")
+    tid = db.create_task(pid, "Start me", estimate_minutes=30)
+    date = db.today()
+    db.save_plan(date, "09:00", "17:00", "run", "", [dict(kind="task", task_id=tid, title="Start me", start="09:00", end="09:30", minutes=30, note="")], {})
+    item = db.rows("SELECT id FROM plan_items WHERE task_id=?", (tid,))[0]["id"]
+    r = c.post("/api/feed/start", json={"item_id": item})
+    assert r.status_code == 200 and r.json()["ok"] and r.json()["entry_id"]
+    assert db.running_entry()["task_id"] == tid and db.plan_item(item)["status"] == "active"
+    web._stop_timer()
+
+
+def test_done_on_a_card_stops_its_timer(monkeypatch):
+    """"Done" on a routine card stops the running timer for that routine even when the card was never marked
+    active (the timer came from elsewhere); a timer for something else is left running."""
+    from fastapi.testclient import TestClient
+    from tracker import web, sheets
+    monkeypatch.setattr(sheets, "writable", lambda: False)
+    c = TestClient(web.create_app())
+    date = db.today()
+    db.save_plan(date, "09:00", "17:00", "run", "", [dict(kind="routine", task_id=None, title="Anki review", start="09:00", end="09:20", minutes=20, note=""),
+                                                    dict(kind="routine", task_id=None, title="Personal email", start="09:20", end="09:40", minutes=20, note="")], {})
+    anki, mail = [r["id"] for r in db.rows("SELECT id FROM plan_items WHERE date=? AND kind='routine' ORDER BY position", (date,))]
+    web._start_timer("routine", "Anki review")
+    assert c.post("/api/feed/complete", json={"item_id": mail}).status_code == 200 and db.running_entry()   # other card: timer stays
+    assert c.post("/api/feed/complete", json={"item_id": anki}).status_code == 200 and db.running_entry() is None
+    db.set_item_status(anki, "pending")
+    web._start_timer("routine", "anki review")
+    assert c.post("/api/feed/finish_block", json={"item_id": anki}).status_code == 200 and db.running_entry() is None
 
 
 def test_completed_task_keeps_its_place():

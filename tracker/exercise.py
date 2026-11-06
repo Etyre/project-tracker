@@ -268,14 +268,19 @@ def decide(date: str | None = None, force: bool = False) -> dict:
     date = date or db.today()
     rules = parse_rules(config.exercise_text())
     cur = db.get_setting("exercise_decision")
+    stored = None
     if cur and not force:
         try:
             d = json.loads(cur)
             if d.get("date") == date and d.get("title") and _from_rules(d, rules):
-                return d
+                if not d.get("provisional"):
+                    return d
+                stored = d                   # made while the exercise log was unreachable: try again now
         except ValueError:
             pass
     hist = history()
+    if stored and sheets.exercise_log_failed:
+        return stored                        # still unreachable (e.g. the internet is off at night): keep it for now
     if rules["required"] or rules["fill"]:
         pick = rules_decide(rules, history(), dt.date.fromisoformat(date))
         title = pick["title"]
@@ -290,6 +295,9 @@ def decide(date: str | None = None, force: bool = False) -> dict:
     else:
         decision = _fallback(hist)
     decision.update({"date": date, "decided_at": time.time()})
+    if sheets.exercise_log_failed:           # decided from an incomplete log: decided again once the log can be read
+        decision["provisional"] = True
+        log.warning("exercise log unreachable: today's pick (%s) is provisional", decision["title"])
     db.set_setting("exercise_decision", json.dumps(decision))
     db.retitle_exercise_blocks(date, decision["title"])      # a plan built on an older decision shows the new one
     log.info("exercise for %s: %s (%s min) - %s", date, decision["title"], decision["minutes"], decision["reason"])

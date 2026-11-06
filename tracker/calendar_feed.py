@@ -29,6 +29,12 @@ def _fetch(url: str, max_age: float = 600) -> bytes | None:
         return hit[1] if hit else None
 
 
+def prefetch() -> None:
+    """Fetch every feed afresh now (see sheets.prefetch)."""
+    for url in config.load()["calendar"].get("ics_urls", []):
+        _fetch(url, 0)
+
+
 def events_for(day: dt.date) -> list[dict]:
     """Timed events on `day` in local time: [{title, start: datetime, end: datetime, all_day}]."""
     cfg = config.load()["calendar"]

@@ -304,6 +304,20 @@ def _item_label(it: dict) -> str:
     return it["title"]
 
 
+def _timer_is_for(it: dict, e: dict | None) -> bool:
+    """Whether the running timer belongs to this feed card: the same task, the same routine by name, the day's
+    exercise or journal session, or simply the card that was started."""
+    if not e:
+        return False
+    if it["status"] == "active":
+        return True
+    if it["kind"] == "task":
+        return bool(it["task_id"]) and e["task_id"] == it["task_id"]
+    if it["kind"] in ("exercise", "journal"):
+        return e["kind"] == it["kind"]
+    return toggl.routine_key(e["label"]) == toggl.routine_key(_item_label(it))      # routine, checklist
+
+
 def _current_exercise(date: str) -> str:
     """What the feed's exercise button says: the day's session ("squats"), "rest" on a rest day."""
     d = exercise.decide(date)
@@ -822,7 +836,7 @@ def create_app() -> FastAPI:
             raise HTTPException(404)
         res = _start_timer(it["kind"] if it["kind"] in ("task", "exercise", "routine", "journal") else "task",
                            _item_label(it), it["task_id"], [it["kind"]] if it["kind"] in ("exercise", "journal") else None,
-                           context={"exercise": "exercise session, travel included", "routine": "daily routine from the checklist", "journal": "journaling"}.get(it["kind"], "")),
+                           context={"exercise": "exercise session, travel included", "routine": "daily routine from the checklist", "journal": "journaling"}.get(it["kind"], ""))
         db.set_item_status(it["id"], "active")
         return {"ok": True, **res}
 
@@ -832,8 +846,7 @@ def create_app() -> FastAPI:
         it = db.plan_item(r.item_id)
         if not it:
             raise HTTPException(404)
-        e = db.running_entry()
-        if e and (it["task_id"] and e["task_id"] == it["task_id"] or it["status"] == "active"):
+        if _timer_is_for(it, db.running_entry()):
             _stop_timer()
         db.set_item_status(it["id"], "done")
         err = None
@@ -876,7 +889,7 @@ def create_app() -> FastAPI:
         it = db.plan_item(r.item_id)
         if not it:
             raise HTTPException(404)
-        if it["status"] == "active":
+        if _timer_is_for(it, db.running_entry()):
             _stop_timer()
         db.set_item_status(it["id"], "done")
         return {"ok": True}
@@ -1012,6 +1025,14 @@ def _loop() -> None:
             # 6. Today's exercise: decided once, in the morning (from 06:00), and kept for the day
             if now.hour >= 6 and not exercise.decided_today():
                 exercise.decide(db.today())
+            # 7. Fresh copies of the sheets and calendar before the internet goes off for the night
+            pf = (cfg["sheets"].get("prefetch_time") or "").strip()
+            if pf and now.hour * 60 + now.minute >= scheduler.parse_hm(pf) and db.get_setting("prefetch_date") != db.today():
+                db.set_setting("prefetch_date", db.today())
+                log.info("nightly prefetch of sheets and calendar")
+                sheets.prefetch()
+                calendar_feed.prefetch()
+                exercise.history()           # refreshes the Toggl part of the exercise history too
         except Exception:
             log.exception("background loop")
         time.sleep(60)

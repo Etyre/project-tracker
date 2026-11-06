@@ -19,20 +19,42 @@ from . import config, db
 
 log = logging.getLogger("sheets")
 _cache: dict[str, tuple[float, object]] = {}
+_failed_at: dict[str, float] = {}       # a fetch that failed is not retried for a few minutes (the feed polls every minute)
+RETRY_AFTER = 300
+exercise_log_failed = False             # the exercise log is configured but the last read of it did not succeed
 
 
 def _get(url: str, max_age: float) -> str | None:
     hit = _cache.get(url)
     if hit and time.time() - hit[0] < max_age:
         return hit[1]  # type: ignore[return-value]
+    if time.time() - _failed_at.get(url, 0) < RETRY_AFTER:
+        return hit[1] if hit else None  # type: ignore[return-value]
     try:
         with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "task-tracker"}), timeout=30) as r:
             text = r.read().decode("utf-8", errors="replace")
         _cache[url] = (time.time(), text)
+        _failed_at.pop(url, None)
         return text
     except Exception as e:
         log.warning("sheet fetch failed: %s", e)
+        _failed_at[url] = time.time()
         return hit[1] if hit else None  # type: ignore[return-value]
+
+
+def prefetch() -> None:
+    """Read every configured sheet afresh now, so the cached copies carry the app through a stretch without
+    internet (the user's is blocked at night; the midnight decisions then use what was read at 23:50)."""
+    cfg = config.load()["sheets"]
+    urls = []
+    if _script_url() and _token():
+        urls.append(_script_url() + ("&" if "?" in _script_url() else "?") + urllib.parse.urlencode({"token": _token()}))
+    if cfg.get("exercise_script_url"):
+        urls.append(cfg["exercise_script_url"] + ("&" if "?" in cfg["exercise_script_url"] else "?") + "action=export")
+    urls += [u for u in (cfg.get("daily_checklist_csv"), cfg.get("exercise_csv")) if u]
+    for u in urls:
+        _failed_at.pop(u, None)
+        _get(u, 0)
 
 
 def _script_url() -> str:
@@ -162,11 +184,14 @@ def exercise_sessions(days: int = 120) -> list[dict]:
     {kind, exercise, category, date, weekday, minutes, started_at, finished_at, sets_summary, notes, source}.
     Read through the exercise app's own sync script (`?action=export` returns the logged session objects), with no
     write-back. [] when the URL is not configured or unreachable; the app then uses its own timers and Toggl."""
+    global exercise_log_failed
     url = config.load()["sheets"].get("exercise_script_url") or ""
     if not url:
+        exercise_log_failed = False
         return []
     full = url + ("&" if "?" in url else "?") + "action=export"
     text = _get(full, config.load()["sheets"]["cache_minutes"] * 60)
+    exercise_log_failed = True
     if not text:
         return []
     try:
@@ -177,6 +202,7 @@ def exercise_sessions(days: int = 120) -> list[dict]:
     if not data.get("ok"):
         log.warning("exercise log script error: %s", data.get("error"))
         return []
+    exercise_log_failed = False
     since = dt.datetime.now() - dt.timedelta(days=days)
     out = []
     for s in data.get("sessions") or []:

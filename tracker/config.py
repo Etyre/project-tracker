@@ -65,6 +65,7 @@ DEFAULTS: dict[str, Any] = {
         "daily_checklist_csv": "",           # CSV export URL of the daily checklist sheet
         "exercise_csv": "",                  # CSV export URL of the exercise sheet
         "cache_minutes": 30,
+        "prefetch_time": "23:50",            # read the sheets and calendar afresh at this time, before the internet goes off at night ("" = never)
         "card_items": ["Anki review: 20"],   # checklist rows that get their own feed card every day ("name: minutes")
     },
     "exercise": {
