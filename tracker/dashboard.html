@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Task Tracker</title>
+<title>Project Tracker</title>
 <style>
 :root{--box:#fff;--box2:#f3f5f8;--bg:#f6f7f9;--card:#fff;--ink:#1b1f24;--muted:#6b7280;--line:#e5e7eb;--accent:#2563eb;--accent-ink:#fff;--ok:#16a34a;--warn:#d97706;--bad:#dc2626;--chip:#eef2ff;--chip-ink:#3730a3;--hover:#f1f5f9;--done:#dcfce7}
 @media (prefers-color-scheme:dark){:root{--box:#171a21;--box2:#0f1115;--bg:#0f1115;--card:#171a21;--ink:#e6e8ec;--muted:#9aa3b2;--line:#2a2f3a;--accent:#60a5fa;--accent-ink:#0b1220;--chip:#1e2740;--chip-ink:#c7d2fe;--hover:#1e2330;--done:#1d4d2e}}
@@ -54,7 +54,7 @@ button{font:inherit;cursor:pointer}
 .phead{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:8px}
 .phead:hover{background:var(--hover)}
 .phead:focus,.phead:focus-within{outline:none;background:var(--hover);box-shadow:inset 2px 0 0 var(--accent)}
-.phead h3 .name{cursor:text}
+.phead h3 .name{cursor:default}
 .phead h3{margin:0;font-size:16px;flex:1;cursor:default}
 .proj.root>.phead h3{font-size:19px}
 .phead .tools{display:flex;gap:4px;opacity:.25}
@@ -73,11 +73,17 @@ textarea.inline{display:block;width:100%;padding:2px 4px;margin:0;border:0;borde
 .task .notes{margin:6px 0 2px;padding:8px 10px;background:var(--card);border:1px solid var(--line);border-radius:3px;white-space:pre-wrap;font-size:14px;cursor:text;min-height:20px;line-height:1.45;color:var(--ink)}
 .task .notes .more{margin-top:6px;font-size:12px;color:var(--muted)}
 .task .notes .more a{color:var(--muted);cursor:pointer;text-decoration:none}.task .notes .more a:hover{color:var(--ink)}
+.added{margin:6px 0 2px;display:flex;flex-direction:column;gap:6px}
+.added .note{padding:6px 10px;border-left:2px solid var(--accent);background:var(--card);border-radius:0 3px 3px 0;font-size:13px;line-height:1.45;white-space:pre-wrap;cursor:default}
+.added .who{font-size:11px;color:var(--muted);margin-top:3px}
+.chip.agent{background:transparent;border:1px solid var(--line);color:var(--muted)}
+.feed .added{margin-top:12px;text-align:left}
 .task .notes textarea{width:100%;min-height:90px;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit;resize:vertical}
 .tasks.sub.collapsed{display:none}
 .task>.caret{margin-top:4px}
 .pdetails{margin:4px 0 14px;padding:14px 18px;background:var(--card);border:1px solid var(--line);border-radius:4px}
 .pdetails h2{margin:0 0 4px;font-size:22px;cursor:text}
+.pdetails .tglink{cursor:pointer;color:var(--muted);text-decoration:underline dotted}.pdetails .tglink:hover{color:var(--ink)}
 .pdetails .notes{margin-top:10px;white-space:pre-wrap;font-size:14px;cursor:text;min-height:20px;line-height:1.45}
 .pdetails textarea{width:100%;min-height:120px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit;resize:vertical}
 .hint{color:var(--muted);opacity:.6;padding:24px 10px;cursor:text;pointer-events:none}
@@ -86,6 +92,7 @@ textarea.inline{display:block;width:100%;padding:2px 4px;margin:0;border:0;borde
 .crumb{font-size:14px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .crumb a{cursor:pointer;color:var(--muted);text-decoration:none}.crumb a:hover{color:var(--ink)}
 .task input[type=checkbox]{margin-top:4px;width:16px;height:16px}
+.task .bullet{width:16px;text-align:center;margin-top:3px;color:var(--muted);user-select:none}   /* Someday / maybe items: a plain nested list, nothing to tick */
 .task .body{flex:1;min-width:0}
 .task .body{cursor:default}
 .task .title{cursor:text}
@@ -175,15 +182,17 @@ a{color:var(--accent)}
 .settings .keyrow{display:flex;gap:8px;align-items:center}.settings .keyrow input{flex:1}
 .settings .savebar{position:sticky;bottom:0;background:var(--bg);padding:10px 0;display:flex;gap:10px;align-items:center;justify-content:flex-end}
 #toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 14px;border-radius:10px;font-size:14px;max-width:90vw;display:none;z-index:30}
+#toast a{color:inherit;text-decoration:underline;text-underline-offset:2px;cursor:pointer}
 table{border-collapse:collapse;width:100%}td,th{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;font-size:14px}
 .kbd{font-size:12px;color:var(--muted)}
 </style>
 </head>
 <body>
 <aside id="side">
-  <div class="brand">Task Tracker</div>
+  <div class="brand">Project Tracker</div>
   <nav>
     <button data-view="projects">Projects</button>
+    <button data-view="someday" title="A separate list for ideas you are not committing to: no projects, no deadlines, no priorities, nothing scheduled">Someday / maybe</button>
     <button data-view="feed">Feed</button>
     <button data-view="stats">Stats</button>
     <button data-view="snapshots">Snapshots</button>
@@ -243,10 +252,15 @@ function deadlineChip(d) {
   const days = Math.round((new Date(d.slice(0, 10)) - new Date(todayISO())) / 86400000);
   const cls = days < 0 ? 'bad' : days <= 1 ? 'warn' : '';
   const label = days < 0 ? `overdue ${-days}d` : days === 0 ? 'due today' : days === 1 ? 'due tomorrow' : `due ${d.slice(0, 10)}`;
-  return `<span class="chip ${cls}">${label}</span>`;
+  // hover shows the actual date behind a relative label ("due tomorrow" -> "Due Friday, Nov 6, 2026")
+  const full = new Date(d.slice(0, 10) + 'T00:00').toLocaleDateString([], {weekday: 'long', month: 'short', day: 'numeric', year: 'numeric'});
+  return `<span class="chip ${cls}" title="Due ${full}">${label}</span>`;
 }
 const impDots = n => n ? `<span class="dots" title="importance ${n}/5">${'●'.repeat(n)}${'○'.repeat(5 - n)}</span>` : '';
-const chips = t => `${deadlineChip(t.deadline)}${t.blocking ? `<span class="chip bad">blocking${t.blocking_for ? ': ' + esc(t.blocking_for) : ''}</span>` : ''}${impDots(t.importance)}`;
+const chips = t => `${deadlineChip(t.deadline)}${t.blocking ? `<span class="chip bad">blocking${t.blocking_for ? ': ' + esc(t.blocking_for) : ''}</span>` : ''}${impDots(t.importance)}${t.source === 'agent' ? '<span class="chip agent" title="Added by your assistant agent">agent</span>' : ''}`;
+// Context added by the assistant agent: kept apart from your own notes and always signed, so what came from it is plain
+const fmtWhen = ts => new Date(ts * 1000).toLocaleString(undefined, {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'});
+const addedNotesHTML = notes => (notes || []).length ? `<div class="added">${notes.map(n => `<div class="note"><div>${linkify(n.body)}</div><div class="who">${esc(n.author)} · ${fmtWhen(n.created_at)}</div></div>`).join('')}</div>` : '';
 
 // ------------------------------------------------------------------ state / routing
 let view = location.hash.slice(1) || 'projects';
@@ -296,7 +310,7 @@ async function render() {
   document.querySelectorAll('#side nav button').forEach(b => b.classList.toggle('on', b.dataset.view === view));
   try {
     if (view === 'feed') await renderFeed();
-    else if (view === 'projects') await renderProjects();
+    else if (view === 'projects' || view === 'someday') await renderProjects();   // the Someday / maybe list is the same outline, kept apart
     else if (view === 'plan') await renderPlan();
     else if (view === 'stats') await renderStats();
     else if (view === 'snapshots') await renderSnapshots();
@@ -323,17 +337,33 @@ async function stopTimer() {await api('/timer/stop', 'POST'); await refreshStatu
 // ------------------------------------------------------------------ quick add
 async function quickAdd(e) {
   e.preventDefault();
-  const inp = $('#quickText'); const text = inp.value.trim(); if (!text) return false;
-  inp.disabled = true;
+  const inp = $('#quickText'); const text = inp.value.trim(); if (!text || inp.disabled) return false;
+  const btn = $('#quick button'); inp.disabled = true; btn.disabled = true; btn.textContent = 'Filing…';   // filing takes a moment: show that Enter landed
   try {
     const r = await api('/quick_add', 'POST', {text});
     inp.value = '';
-    toast(r.created.map(t => `Filed <b>${esc(t.title)}</b> in ${esc(t.path.join(' / '))}`).join('<br>') + (r.note ? `<br><span class="muted">${esc(r.note)}</span>` : ''), 6000);
+    toast(r.created.map(t => `Filed <a onclick="revealTask(${t.id}, ${t.project_id})" title="Show it in the project tree"><b>${esc(t.title)}</b> in ${esc(t.path.join(' / '))}</a>`).join('<br>') + (r.note ? `<br><span class="muted">${esc(r.note)}</span>` : ''), 8000);
     if (view === 'projects') renderProjects();
   } catch (err) {toast('Quick add failed: ' + esc(err.message), 6000);}
-  inp.disabled = false; inp.focus();
+  inp.disabled = false; btn.disabled = false; btn.textContent = 'Add'; inp.focus();
   return false;
 }
+// A click on a "Filed … in …" line of the toast: the Projects page, zoomed out far enough to show that project,
+// its ancestors unfolded, scrolled to the new task with it selected.
+async function revealTask(tid, pid) {
+  $('#toast').style.display = 'none';
+  view = 'projects'; location.hash = 'projects';
+  document.querySelectorAll('#side nav button').forEach(b => b.classList.toggle('on', b.dataset.view === view));
+  await renderProjects();                                             // loads the tree
+  const chain = projectChain(pid) || [];
+  if (focusProject && !chain.some(p => p.id === focusProject)) {focusProject = null; localStorage.setItem('focusProject', '');}
+  chain.forEach(p => collapsedProjects.delete(p.id)); saveCollapsed();
+  pendingFocus = tid;
+  await renderProjects();
+  document.querySelector(`.task[data-tid="${tid}"]`)?.scrollIntoView({block: 'center', behavior: 'smooth'});
+}
+// Enter in the quick-add box submits it (explicitly, so it never depends on the browser's implicit form submission)
+$('#quickText').addEventListener('keydown', e => {if (e.key === 'Enter' && !e.isComposing) quickAdd(e);});
 
 // ------------------------------------------------------------------ FEED
 const dayLine = () => new Date().toLocaleDateString([], {weekday: 'long', month: 'long', day: 'numeric'});
@@ -365,6 +395,7 @@ async function renderFeed() {
       body += cl.items.length ? `<div class="clist">${cl.items.map(i => i.checkable !== false ? `<label><input type="checkbox" ${i.done ? 'checked' : ''} onchange="checkItem(this, ${JSON.stringify(i.item).replace(/"/g, '&quot;')})"> <span>${esc(i.item)}</span></label>`
         : i.computed ? `<label class="muted" title="computed in the sheet"><span>${i.done ? '☑' : '☐'}</span> <span>${esc(i.item)}</span></label>` : `<div class="muted" style="margin-top:4px">${esc(i.item)}</div>`).join('')}</div>` : `<div class="meta">No checklist sheet configured.</div>`;
     }
+    if (t && t.notes_added && t.notes_added.length) body += addedNotesHTML(t.notes_added);
     body += '</div>';
     const actions = `<div class="actions">
         ${isActive ? `<button class="btn" onclick="stopTimer()">Stop</button>` : `<button class="btn primary" onclick="startItem(${c.id})">Start</button>`}
@@ -392,12 +423,15 @@ function upcomingText() {
   return `${left} until ${esc(soon.title)}`;
 }
 setInterval(() => {const u = document.querySelector('.feed .upcoming'); if (u && view === 'feed') {const t = upcomingText(); if (u.innerHTML !== t) u.innerHTML = t;}}, 30000);
+// The exercise button offers the day's session; once that is done it offers the extra session from Settings
+// ("zone 2 cardio"), and after that too it only says so.
 function altButtons(f) {
-  const ex = f.exercise_item;
-  const exDone = ex && ex.status === 'done';
-  return `<div class="alts">
-    <button class="btn alt" ${exDone ? 'disabled' : ''} onclick="startExercise()">${exDone ? esc(ex.title) + ' (done)' : esc(f.exercise.charAt(0).toUpperCase() + f.exercise.slice(1))}</button>
-    <button class="btn alt" onclick="startJournal()">Journal</button></div>`;
+  const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+  let ex;
+  if (!f.exercise_done) ex = `<button class="btn alt" onclick="startExercise()">${esc(cap(f.exercise))}</button>`;
+  else if (f.exercise_extra && !f.exercise_extra_done) ex = `<button class="btn alt" title="Today's ${esc(f.exercise)} is done; an extra easy session" onclick="startExercise(${JSON.stringify(f.exercise_extra).replace(/"/g, '&quot;')})">${esc(cap(f.exercise_extra))}</button>`;
+  else ex = `<button class="btn alt" disabled>${esc(cap(f.exercise_extra_done ? f.exercise_extra : f.exercise))} (done)</button>`;
+  return `<div class="alts">${ex}<button class="btn alt" onclick="startJournal()">Journal</button></div>`;
 }
 async function rebuild(fromNow) {
   toast(fromNow ? 'Re-planning the rest of the day…' : 'Building the plan…', 60000);
@@ -416,7 +450,7 @@ async function completeItem(id, el) {
 }
 async function finishBlock(id) {await api('/feed/finish_block', 'POST', {item_id: id}); pushUndo('done for now', () => api('/feed/reset_item', 'POST', {item_id: id})); await refreshStatus(); renderFeed();}
 async function skipItem(id) {await api('/feed/skip', 'POST', {item_id: id}); pushUndo('skip', () => api('/feed/reset_item', 'POST', {item_id: id})); await refreshStatus(); renderFeed();}
-async function startExercise() {const r = await api('/exercise/start', 'POST'); if (r.toggl_error) toast('Toggl: ' + esc(r.toggl_error), 6000); else toast(`Timer started: ${esc(r.kind)}`); await refreshStatus(); renderFeed();}
+async function startExercise(title) {const r = await api('/exercise/start', 'POST', title ? {title} : undefined); if (r.toggl_error) toast('Toggl: ' + esc(r.toggl_error), 6000); else toast(`Timer started: ${esc(r.kind)}`); await refreshStatus(); renderFeed();}
 async function startJournal() {const r = await api('/journal/start', 'POST'); toast(r.open_error ? 'Journal timer started; ' + esc(r.open_error) : 'Journal timer started', 5000); await refreshStatus(); renderFeed();}
 async function checkItem(box, item) {
   box.disabled = true;
@@ -494,7 +528,9 @@ function restoreEditor(k) {
 async function renderProjects() {
   const keep = (pendingAdd || pendingEdit || pendingProjectAdd !== undefined || pendingProjectEdit || pendingNotesEdit) ? null : captureEditor();
   const selKeep = multi ? selKeys() : [];
-  tree = await api(`/tree?active=${showFilter.active}&completed=${showFilter.completed}&archived=${showFilter.archived}`);
+  const someday = view === 'someday';
+  tree = await api(`/tree?active=${showFilter.active}&completed=${showFilter.completed}&archived=${showFilter.archived}&someday=${someday}`);
+  somedayRoot = someday ? tree.find(p => p.someday_root) || null : null;   // holds the items; never shown as a project
   inlineAdd = null; titleEdit = null; projectAdd = null; projectEdit = null;
   const m = $('#main');
   let focus = focusProject ? findProject(focusProject) : null;
@@ -509,15 +545,15 @@ async function renderProjects() {
       <div class="row" style="gap:6px">
         <span class="filterwrap"><button class="btn small ghost ${filtersOpen ? 'on' : ''}" onclick="toggleFilters()">${filtersOpen ? 'Hide filters' : nonDefault ? 'Filters (on)' : 'Filters'}</button>
           ${filtersOpen ? `<div class="filters"><span class="muted">Show:</span>${chk('active', 'Active')}${chk('completed', 'Archived tasks')}${chk('archived', 'Archived')}</div>` : ''}</span>
-        ${multi ? `<span class="muted" id="multicount">${selectedTaskIds().length} selected</span><button class="btn small" onclick="openBulkTags(this)">Tags…</button><button class="btn small" onclick="openBulkModal()">Dates & priority…</button><button class="btn small primary" onclick="toggleMulti()">Done</button>`
+        ${multi ? `<span class="muted" id="multicount">${selectedTaskIds().length} selected</span>${someday ? '' : `<button class="btn small" onclick="openBulkTags(this)">Tags…</button><button class="btn small" onclick="openBulkModal()">Dates & priority…</button>`}<button class="btn small primary" onclick="toggleMulti()">Done</button>`
                 : `<button class="btn small ghost" onclick="toggleMulti()">Edit multiple</button>`}
-        <button class="btn" onclick="openInlineProjectAdd(${focus ? focus.id : 'null'}, 0)">${focus ? '+ Sub-project' : '+ Project'}</button></div></div>
+        ${someday ? '' : `<button class="btn" onclick="openInlineProjectAdd(${focus ? focus.id : 'null'}, 0)">${focus ? '+ Sub-project' : '+ Project'}</button>`}</div></div>
     ${focus ? projectDetailsHTML(focus) : ''}
     <div id="tree">${focus
       ? `<div class="children" data-childlist="${focus.id}">${focus.children.map(c => projectHTML(c, false)).join('')}</div>
          <div class="tasks zoomroot" data-tasklist="${focus.id}" data-parent="">${focus.tasks.map(taskHTML).join('')}</div>`
-      : tree.map(p => projectHTML(p, true)).join('') + (tree.length ? '' : `<div class="hint">Click here, or press Enter, to add your first project.</div>`)}</div>`;
-  if (!focus) $('#tree').addEventListener('click', e => {if (e.target.id === 'tree') openInlineProjectAdd(null, lastRootProjectId());});
+      : someday ? somedayListHTML() : tree.map(p => projectHTML(p, true)).join('') + (tree.length ? '' : `<div class="hint">Click here, or press Enter, to add your first project.</div>`)}</div>`;
+  if (!focus) $('#tree').addEventListener('click', e => {if (e.target.id === 'tree') someday ? addSomedayItem() : openInlineProjectAdd(null, lastRootProjectId());});
   wireDnD();
   if (pendingAdd) {const a = pendingAdd; pendingAdd = null; openInlineAdd(a, a.text, a.caret);}
   if (pendingFocus) {const r = m.querySelector(`.task[data-tid="${pendingFocus}"]`); pendingFocus = null; if (r) r.focus();}
@@ -530,6 +566,14 @@ async function renderProjects() {
   if (keep) restoreEditor(keep);
   if (selKeep.length) reselect(selKeep);
 }
+// The Someday / maybe list: loose items (tasks of a hidden root project), no projects
+let somedayRoot = null;
+function somedayListHTML() {
+  const items = somedayRoot?.tasks || [];
+  return `<div class="tasks zoomroot" data-tasklist="${somedayRoot?.id ?? ''}" data-parent="">${items.map(taskHTML).join('')}</div>
+    ${items.length ? '' : '<div class="hint">Click here, or press Enter, to add an item. Ideas you are not committing to live here, outside the schedule, with no deadlines or priorities.</div>'}`;
+}
+const addSomedayItem = () => {if (somedayRoot) openInlineAdd({project_id: somedayRoot.id, parent_id: null, after_id: null});};
 function projectDetailsHTML(p) {
   const open = countTasks(p), subs = p.children.length;
   const meta = [`${open} task${open === 1 ? '' : 's'} shown`, subs ? `${subs} sub-project${subs === 1 ? '' : 's'}` : '', `created ${fmtDay(p.created_at)}`,
@@ -542,9 +586,26 @@ function projectDetailsHTML(p) {
         ${countDone(p.tasks) ? `<button class="btn small ghost" onclick="archiveDone(${p.id})">archive ${countDone(p.tasks)} done</button>` : ''}
         <button class="btn small ghost" onclick="archiveProject(${p.id})">archive</button>`}</span>
     </div>
-    <div class="muted" style="font-size:13px">${meta}</div>
+    <div class="muted" style="font-size:13px">${meta}${status.toggl && !p.archived_at ? ` · Toggl: <a class="tglink" title="The Toggl project this project's timers are filed under (sub-projects inherit it). Claude links it the first time a timer starts; click to change, empty to let Claude decide again." onclick="editTogglProject(${p.id}, this)">${togglLabel(p)}</a>` : ''}</div>
     <div class="notes" onclick="if (!selecting()) editNotes(${p.id}, this)">${p.notes ? linkify(p.notes) : '<span class="muted">Add notes, context, links…</span>'}</div>
+    ${addedNotesHTML(p.notes_added)}
   </div>`;
+}
+function togglLink(p) {let q = p; while (q) {if (q.toggl_project) return {name: q.toggl_project, from: q.id === p.id ? null : q}; q = q.parent_id != null ? findProject(q.parent_id) : null;} return null;}
+const togglLabel = p => {const l = togglLink(p); return l ? `${esc(l.name)}${l.from ? ` <span class="muted">(from ${mdLine(l.from.name).html})</span>` : ''}` : 'not linked yet';};
+async function editTogglProject(pid, el) {
+  if (el.querySelector('input')) return;
+  const p = findProject(pid); const orig = p?.toggl_project || '';
+  let names = []; try {names = (await api('/toggl/projects')).projects;} catch (e) {}
+  let dl = $('#toggl-projects'); if (!dl) {dl = document.createElement('datalist'); dl.id = 'toggl-projects'; document.body.appendChild(dl);}
+  dl.innerHTML = names.map(x => `<option value="${esc(x.name)}">${x.client ? esc(x.client) : ''}</option>`).join('');
+  const inp = document.createElement('input'); inp.value = orig; inp.placeholder = 'Toggl project (empty: Claude decides)'; inp.setAttribute('list', 'toggl-projects'); inp.style.cssText = 'font:inherit;font-size:13px;width:240px;padding:2px 6px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink)';
+  el.replaceChildren(inp); inp.focus(); inp.select();
+  let done = false;
+  const finish = async save => {if (done) return; done = true; const v = inp.value.trim();
+    if (save && v !== orig) {try {await api(`/projects/${pid}`, 'PATCH', {toggl_project: v}); if (p) p.toggl_project = v || null; pushUndo('Toggl project', () => api(`/projects/${pid}`, 'PATCH', {toggl_project: orig}));} catch (e) {toast(esc(e.message));}}
+    renderProjects();};
+  inp.onblur = () => finish(true); inp.onkeydown = e => {e.stopPropagation(); if (e.key === 'Enter') {e.preventDefault(); finish(true);} else if (e.key === 'Escape') finish(false);};
 }
 function editNotes(pid, el) {
   if (el.querySelector('textarea')) return;
@@ -561,7 +622,7 @@ function projectHTML(p, root) {
     <div class="phead" tabindex="0" onmousedown="if (event.shiftKey) event.preventDefault()" onclick="if (event.shiftKey) extendSelTo(this); else if (!event.target.closest('input, textarea')) clearSel()" ondblclick="if (!event.target.closest('input, textarea')) {event.preventDefault(); openProject(${p.id});}">
       <span class="handle" draggable="true" data-drag-project="${p.id}">≡</span>
       <span class="caret" onclick="event.stopPropagation(); toggleProject(${p.id})">${collapsed ? '▸' : '▾'}</span>
-      <h3 class="${mdLine(p.name).level ? 'md-h' + mdLine(p.name).level : ''}"><span class="name" onmousedown="this.dataset.was = document.activeElement === this.closest('.phead') ? '1' : ''" onclick="event.stopPropagation(); if (selecting()) return; this.dataset.was ? editProjectName(${p.id}, null, caretFromClick(event, this)) : this.closest('.phead').focus()" title="Click again to edit, double-click the row to open">${mdLine(p.name).html}</span> <span class="muted" style="font-weight:400;font-size:13px">${count}${archived ? ' · archived ' + fmtDay(p.archived_at) : ''}</span></h3>
+      <h3 class="${mdLine(p.name).level ? 'md-h' + mdLine(p.name).level : ''}"><span class="name" onclick="event.stopPropagation(); if (!selecting()) this.closest('.phead').focus()" title="Double-click to open; the name is edited inside the opened project">${mdLine(p.name).html}</span> <span class="muted" style="font-weight:400;font-size:13px">${count}${archived ? ' · archived ' + fmtDay(p.archived_at) : ''}</span></h3>
       ${archived ? `<span class="tools"><button class="btn small ghost" onclick="restoreProject(${p.id})">restore</button></span>` : countDone(p.tasks) ? `<span class="tools"><button class="btn small ghost" onclick="event.stopPropagation(); archiveDone(${p.id})" title="Put the completed tasks away (Cmd+Z brings them back)">archive ${countDone(p.tasks)} done</button></span>` : ''}
     </div>
     ${collapsed ? '' : `<div class="tasks" data-tasklist="${p.id}" data-parent="">${p.tasks.map(taskHTML).join('')}</div>
@@ -582,10 +643,10 @@ function taskHTML(t) {
   return `<div class="task ${done ? 'done' : ''}" tabindex="0" data-tid="${t.id}" data-project="${t.project_id}" data-parent="${t.parent_id ?? ''}" ${done ? 'data-done="1"' : ''}>
     <span class="handle" draggable="${done ? 'false' : 'true'}" ${done ? '' : `data-drag-task="${t.id}"`} style="${done ? 'visibility:hidden' : ''}">≡</span>
     <span class="caret" ${kids ? `onclick="event.stopPropagation(); toggleTaskFold(${t.id})" title="${folded ? 'Show' : 'Hide'} ${kids} sub-task${kids === 1 ? '' : 's'}"` : ''}>${kids ? (folded ? '▸' : '▾') : ''}</span>
-    <input type="checkbox" ${done ? 'checked' : ''} title="${done ? 'Restore' : 'Complete'}" onchange="${done ? `uncomplete(${t.id})` : `completeTask(${t.id}, this)`}">
+    ${view === 'someday' ? '<span class="bullet">•</span>' : `<input type="checkbox" ${done ? 'checked' : ''} title="${done ? 'Restore' : 'Complete'}" onchange="${done ? `uncomplete(${t.id})` : `completeTask(${t.id}, this)`}">`}
     <div class="body" onmousedown="if (event.shiftKey) event.preventDefault()" onclick="if (event.shiftKey) {event.stopPropagation(); extendSelTo(this.closest('.task'));} else if (!event.target.closest('a') && !selecting()) {clearSel(); ${done ? "this.closest('.task').focus()" : `editTaskTitle(${t.id}, null, 1e9)`};}" ondblclick="if (!event.target.closest('a, input, textarea, .notes')) {event.preventDefault(); toggleTask(${t.id});}">
 <span class="title ${t.linear_id ? 'lin' : ''} ${mdLine(t.title).level ? 'md-h' + mdLine(t.title).level : ''}" onclick="event.stopPropagation(); if (!selecting()) editTaskTitle(${t.id}, null, caretFromClick(event, this))" title="Click to edit, double-click for notes" ondblclick="event.stopPropagation()">${mdLine(t.title).html}</span>
-      <span style="margin-left:6px">${done ? `<span class="chip">completed ${fmtDay(t.completed_at)}</span>` : chips(t)}</span>
+      <span style="margin-left:6px">${done ? `<span class="chip">completed ${fmtDay(t.completed_at)}</span>` : view === 'someday' ? '' : chips(t)}</span>
       ${open ? taskNotesHTML(t) : ''}
     </div>
   </div>
@@ -595,7 +656,7 @@ function taskHTML(t) {
 // (deadline, blocking, importance) live on the title line and in the "edit" dialog.
 const notesPlaceholder = '<span class="muted">Add notes, context, links…</span>';
 function taskNotesHTML(t) {
-  return `<div class="notes" onclick="event.stopPropagation(); if (!event.target.closest('a') && !selecting()) editTaskNotes(${t.id}, this)">${t.description ? linkify(t.description) : notesPlaceholder}<div class="more">${t.linear_url ? `<a href="${esc(t.linear_url)}" target="_blank">${esc(t.linear_identifier)}</a> · ` : ''}<a onclick="event.stopPropagation(); editTask(${t.id})">dates &amp; priority…</a></div></div>`;
+  return `<div class="notes" onclick="event.stopPropagation(); if (!event.target.closest('a, .added') && !selecting()) editTaskNotes(${t.id}, this)">${t.description ? linkify(t.description) : notesPlaceholder}${addedNotesHTML(t.notes_added)}<div class="more">${t.linear_url ? `<a href="${esc(t.linear_url)}" target="_blank">${esc(t.linear_identifier)}</a> · ` : ''}${view === 'someday' ? '' : `<a onclick="event.stopPropagation(); editTask(${t.id})">dates &amp; priority…</a>`}</div></div>`;
 }
 function findTask(id, nodes = tree) {
   const walk = ts => {for (const t of ts) {if (t.id === id) return t; const r = walk(t.children); if (r) return r;} return null;};
@@ -606,7 +667,7 @@ function editTaskNotes(tid, el) {
   if (el.querySelector('textarea')) return;
   const t = findTask(tid); const orig = t?.description || '';
   const ta = document.createElement('textarea'); ta.value = orig; ta.defaultValue = orig; ta.placeholder = 'Notes, context, links…';
-  el.replaceChildren(ta); ta.focus();
+  const added = el.querySelector('.added'); el.replaceChildren(ta); if (added) el.appendChild(added); ta.focus();
   let closeBox = false;   // Shift+Enter inside the box: save, close the box and go back to the line
   ta.onblur = async () => {
     const description = ta.value;
@@ -647,7 +708,8 @@ async function uncomplete(id) {await api(`/tasks/${id}/uncomplete`, 'POST'); pus
 function editProjectName(pid, append, caret, text) {
   flushInlineAdd(); flushProjectAdd(); if (projectEdit) projectEdit.save(); if (titleEdit) titleEdit.save();
   const head = document.querySelector(`.proj[data-pid="${pid}"] > .phead`);
-  const el = head?.querySelector('h3') || (focusProject === pid ? document.querySelector('.pdetails h2') : null);
+  if (head) {head.focus(); return;}   // a project's name is only edited inside the opened project (its heading), never from a list line
+  const el = focusProject === pid ? document.querySelector('.pdetails h2') : null;
   if (!el || el.querySelector('.inline')) return;
   const p = findProject(pid); const orig = p?.name ?? el.textContent.trim();
   const inp = inlineField(text != null ? text : orig + (append || '')); inp.defaultValue = orig;
@@ -722,7 +784,6 @@ function openInlineProjectAdd(parent_id, after_pid, text, caret) {
   inp.onkeydown = e => {
     if (e.key === 'Enter') {e.preventDefault(); commit(null, true);}
     else if (e.key === 'Escape') {e.preventDefault(); close();}
-    else if (e.key === 'Backspace' && !remainingAfterBackspace(inp)) {e.preventDefault(); close();}
     else if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && caretAtEdge(inp, e.key === 'ArrowUp' ? -1 : 1)) {const n = neighbourRow(row.querySelector('.phead'), e.key === 'ArrowUp' ? -1 : 1); if (n) {e.preventDefault(); commit(n);}}
     else if (e.key === 'Tab' && !e.shiftKey) {   // becomes a task line at the end of the project above it
       let prev = row.previousElementSibling; while (prev && !prev.classList.contains('proj')) prev = prev.previousElementSibling;
@@ -747,6 +808,36 @@ async function taskToProject(id) {
     pushUndo('make project', async () => {const b = await api(`/projects/${r.project_id}/to_task`, 'POST'); if (slot) await api(`/tasks/${b.task_id}`, 'PATCH', slot);});
     toast('Now a project'); renderProjects();} catch (e) {toast(esc(e.message));}
 }
+// Someday / maybe: a flat list of items outside the schedule, held by a hidden root project
+async function taskToSomeday(id) {   // a task becomes a loose Someday / maybe item (sub-tasks come along); its deadline and priority go, undo brings all of it back
+  const row = document.querySelector(`.task[data-tid="${id}"]`); const slot = row ? slotOf(row) : null; const t = findTask(id);
+  const was = t ? {deadline: t.deadline || null, importance: t.importance ?? null, blocking: !!t.blocking, blocking_for: t.blocking_for || ''} : {};
+  try {const root = (await api('/someday_root')).id;
+    await api(`/tasks/${id}`, 'PATCH', {project_id: root, parent_id: null, deadline: null, importance: null, blocking: false, blocking_for: ''});
+    pushUndo('someday', () => api(`/tasks/${id}`, 'PATCH', {...(slot || {}), ...was}));
+    toast('Moved to Someday / maybe'); renderProjects();} catch (e) {toast(esc(e.message));}
+}
+async function activateItem(id) {   // a loose someday item back into an active project (asked which); undo returns it
+  const row = document.querySelector(`.task[data-tid="${id}"]`); const slot = row ? slotOf(row) : null;
+  const active = await api('/tree?active=false');
+  const flat = flatProjects(active); if (!flat.length) {toast('No active project to move it into: make one on the Projects page first', 5000); return;}
+  const pid = await pickProject(flat); if (!pid) return;
+  try {await api(`/tasks/${id}`, 'PATCH', {project_id: pid, parent_id: null}); if (slot) pushUndo('make active', moveBack(id, slot));
+    toast('Moved to ' + esc(flat.find(p => p.id === pid)?.label.trim() || 'the project')); renderProjects();} catch (e) {toast(esc(e.message));}
+}
+function pickProject(flat) {
+  return new Promise(res => {
+    const el = document.createElement('div'); el.className = 'modal';
+    el.innerHTML = `<div class="card" style="width:min(420px,94vw)"><p style="margin-top:0">Into which project?</p>
+      <select id="p" style="width:100%">${flat.map(p => `<option value="${p.id}">${esc(p.label)}</option>`).join('')}</select>
+      <div class="row" style="justify-content:flex-end;margin-top:10px"><button class="btn" id="c">Cancel</button><button class="btn primary" id="o">Move</button></div></div>`;
+    document.body.appendChild(el);
+    const done = v => {el.remove(); res(v);};
+    el.querySelector('#c').onclick = () => done(null); el.querySelector('#o').onclick = () => done(+el.querySelector('#p').value);
+    el.addEventListener('click', e => {if (e.target === el) done(null);});
+    el.querySelector('#p').focus();
+  });
+}
 async function projectToTask(id) {try {const r = await api(`/projects/${id}/to_task`, 'POST'); pushUndo('make task', () => api(`/tasks/${r.task_id}/to_project`, 'POST')); toast('Now a task'); if (focusProject === id) openProject(findProject(id)?.parent_id || null); else {pendingFocus = r.task_id; renderProjects();}} catch (e) {toast(esc(e.message));}}
 function addTaskTo(pid) {
   if (collapsedProjects.has(pid)) {collapsedProjects.delete(pid); localStorage.setItem('collapsed', JSON.stringify([...collapsedProjects])); pendingAdd = {project_id: pid, parent_id: null, after_id: null}; renderProjects(); return;}
@@ -769,7 +860,7 @@ function placeInlineRow(a, row) {
 function openInlineAdd(a, text, caret) {
   flushInlineAdd(); flushProjectAdd(); if (titleEdit) titleEdit.save(); if (projectEdit) projectEdit.save();
   const row = document.createElement('div'); row.className = 'task editing';
-  row.innerHTML = `<span class="handle" style="visibility:hidden">≡</span><span class="caret"></span><input type="checkbox" disabled><div class="body"><textarea class="inline" placeholder="New task"></textarea></div>`;
+  row.innerHTML = `<span class="handle" style="visibility:hidden">≡</span><span class="caret"></span>${view === 'someday' ? '<span class="bullet">•</span>' : '<input type="checkbox" disabled>'}<div class="body"><textarea class="inline" placeholder="${view === 'someday' ? 'New item' : 'New task'}"></textarea></div>`;
   if (!placeInlineRow(a, row)) return;
   const inp = attachFit(row.querySelector('.inline')); if (text) {inp.value = text; inp.fit();}
   let done = false;
@@ -798,26 +889,18 @@ function openInlineAdd(a, text, caret) {
   wirePaste(inp, rest => commit(false, false, null, rest));
   inp.onkeydown = e => {
     if (e.key === 'Escape') {e.preventDefault(); done = true; closeInlineAdd();}
-    else if (e.key === 'Backspace' && !remainingAfterBackspace(inp)) {   // deleting the last character removes the line; focus goes to the task above
-      e.preventDefault(); const prev = prevTaskRow(row) || row.closest('.tasks')?.previousElementSibling?.closest?.('.task');
-      done = true; closeInlineAdd(); if (prev && prev.classList.contains('task')) selectRow(prev);
-    }
-    else if (e.key === 'Backspace' && atStart(inp)) {
+    else if (e.key === 'Backspace' && atStart(inp)) {   // Backspace never removes the line itself: emptied, it goes away when you click elsewhere
       e.preventDefault(); const text = inp.value.trim(), fromSplit = !!inlineAdd.split; row.dataset.project = inlineAdd.project_id;
       mergeIntoPrev(row, text, async () => {done = true; closeInlineAdd(); return false;}, fromSplit).catch(err => toast(esc(err.message), 5000));
     }
     else if (e.key === 'Tab') {e.preventDefault(); e.shiftKey ? outdentInline() : indentInline();}
     else if (e.key === 'Enter') {e.preventDefault(); commit(false, true);}
-    else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'b') {e.preventDefault(); commit(true);}
+    else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'b') {e.preventDefault(); commit(view !== 'someday');}
     else if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && caretAtEdge(inp, e.key === 'ArrowUp' ? -1 : 1)) {const n = neighbourRow(row, e.key === 'ArrowUp' ? -1 : 1); if (n) {e.preventDefault(); commit(false, false, n);}}
   };
-  // clicking away keeps what was typed: the line is saved at once (and no next line opens)
+  // clicking away keeps what was typed: the line is saved at once (and no next line opens); an emptied line just goes away
   inp.onblur = () => setTimeout(() => {if (!done && !inp.disabled && document.activeElement !== inp && inlineAdd?.row === row) commit(false, false, null, null, true);}, 0);
   inp.focus(); if (text) {const p = caret === 'start' ? 0 : typeof caret === 'number' ? Math.min(caret, inp.value.length) : inp.value.length; inp.setSelectionRange(p, p);}
-}
-function remainingAfterBackspace(inp) {
-  const v = inp.value, a = inp.selectionStart ?? v.length, b = inp.selectionEnd ?? v.length;
-  return a === b ? v.slice(0, Math.max(0, a - 1)) + v.slice(a) : v.slice(0, a) + v.slice(b);
 }
 function closeInlineAdd() {if (inlineAdd) {inlineAdd.row.remove(); inlineAdd = null;}}
 function prevTaskRow(row) {let n = row.previousElementSibling; while (n && !(n.classList.contains('task') && !n.classList.contains('editing') && !n.dataset.done)) n = n.previousElementSibling; return n;}
@@ -909,7 +992,7 @@ function caretFromClick(e, el) {
 }
 function editRow(el, append, caret) {if (!el) return; isHead(el) ? editProjectName(rowPid(el), append, caret) : editTaskTitle(+el.dataset.tid, append, caret);}
 // selecting a task line (a click, Up / Down) opens it for editing with the caret at the end; project lines and completed
-// tasks are only highlighted (a project's name is edited by a second click, or inside the opened project)
+// tasks are only highlighted (a project's name is edited inside the opened project)
 const quiet = el => isHead(el) || lineInfo(el).done;
 function selectRow(el) {if (!el) return; quiet(el) ? el.focus() : editRow(el, null, 1e9);}
 function selectRowLater(el) {if (!el) return; quiet(el) ? focusRowLater(el) : editRowLater(el);}
@@ -1003,13 +1086,12 @@ const joinText = (a, b) => !a ? b : !b ? a : /\s$/.test(a) || /^\s/.test(b) ? a 
 async function mergeIntoPrev(row, text, remove, mergeUndo) {
   const prev = neighbourRow(row, -1); if (!prev || prev.dataset.done) return false;
   const t = row.dataset.tid ? findTask(+row.dataset.tid) : null; if (t && t.children.length) return false;
-  const head = isHead(prev), pid = head ? rowPid(prev) : null, pt = head ? null : findTask(+prev.dataset.tid);
-  const target = head ? findProject(pid) : pt; if (!target) return false;
-  if ((head ? pid : pt.project_id) !== +row.dataset.project) return false;   // the line above belongs to another project
-  const was = head ? target.name : target.title, joined = joinText(was, text), caret = joined.length - text.length;
+  if (isHead(prev)) return false;   // a project's name is not edited from the list, so a task never joins onto it
+  const pt = findTask(+prev.dataset.tid); if (!pt) return false;
+  if (pt.project_id !== +row.dataset.project) return false;   // the line above belongs to another project
+  const was = pt.title, joined = joinText(was, text), caret = joined.length - text.length;
   const removed = remove ? await remove() : false;   // throws when the line cannot go (notes, time, Linear): nothing changed yet
-  if (head) {await api(`/projects/${pid}`, 'PATCH', {name: joined}); target.name = joined; pushUndo('join lines', () => api(`/projects/${pid}`, 'PATCH', {name: was}), mergeUndo); pendingProjectEdit = {id: pid, caret};}
-  else {const r = await api(`/tasks/${pt.id}`, 'PATCH', {title: joined}); pt.title = r.title; pushUndo('join lines', () => api(`/tasks/${pt.id}`, 'PATCH', {title: was}), mergeUndo); pendingEdit = {id: pt.id, caret};}
+  const r = await api(`/tasks/${pt.id}`, 'PATCH', {title: joined}); pt.title = r.title; pushUndo('join lines', () => api(`/tasks/${pt.id}`, 'PATCH', {title: was}), mergeUndo); pendingEdit = {id: pt.id, caret};
   if (removed) {const a = undoStack.pop(), b = undoStack.pop(); undoStack.push({label: 'join lines', fn: async () => {await a.fn(); await b.fn();}});}
   renderProjects(); return true;
 }
@@ -1052,16 +1134,17 @@ async function outlineKey(e, el, save) {
   if (mod && e.shiftKey && k === 'Backspace') {
     await run(async () => {const prev = neighbourRow(el, -1); await deleteLine(L); editing ? editRowLater(prev) : focusRowLater(prev); renderProjects();}); return true;
   }
-  if (mod && k === 'Enter') {if (L.kind !== 'task') return false; await run(async () => {await toggleComplete(L); return true;}); return true;}
+  if (mod && k === 'Enter') {if (L.kind !== 'task') return false; if (view === 'someday') return true; await run(async () => {await toggleComplete(L); return true;}); return true;}   // someday items are never completed
   if (e.shiftKey && k === 'Enter') {
     if (L.kind === 'task') await run(() => {const open = expanded.has(L.id); expandOnly(L.id); if (open) focusRowLater(el); else pendingNotesEdit = L.id; renderProjects();});
     else await run(() => {pendingProjectNotes = true; openProject(L.id);});
     return true;
   }
-  if (e.altKey && k === 'ArrowRight') {await run(() => {openProject(L.kind === 'project' ? L.id : L.project_id);}); return true;}
+  if (e.altKey && k === 'ArrowRight') {if (view === 'someday') return true; await run(() => {openProject(L.kind === 'project' ? L.id : L.project_id);}); return true;}
   if (e.altKey && k === 'ArrowLeft') {if (!focusProject) return false; await run(() => {const chain = projectChain(focusProject) || []; openProject(chain.length > 1 ? chain[chain.length - 2].id : null);}); return true;}
-  if (mod && k.toLowerCase() === 'e') {await run(() => {L.kind === 'task' ? editTask(L.id) : openProject(L.id);}); return true;}
+  if (mod && k.toLowerCase() === 'e') {if (L.kind === 'task' && view === 'someday') return true; await run(() => {L.kind === 'task' ? editTask(L.id) : openProject(L.id);}); return true;}
   if (mod && k.toLowerCase() === 'b') {
+    if (view === 'someday') return true;   // no projects on the Someday / maybe list
     if (L.kind === 'task' && !L.done && !L.linear) await run(() => {taskToProject(L.id);});
     else if (L.kind === 'project' && L.proj.dataset.parent) await run(() => {projectToTask(L.id);});
     else return false;
@@ -1216,10 +1299,12 @@ document.addEventListener('contextmenu', e => {
   const add = (label, fn, cls) => items.push({label, fn, cls});
   if (L.kind === 'task') {
     const t = findTask(L.id), kids = countDesc(t);
-    add(L.done ? 'Reopen' : 'Complete', () => toggleComplete(L).then(renderProjects));
+    if (view !== 'someday') add(L.done ? 'Reopen' : 'Complete', () => toggleComplete(L).then(renderProjects));
     if (!L.done) add(expanded.has(L.id) ? 'Hide notes' : 'Notes', () => toggleTask(L.id));
-    add('Dates & priority…', () => editTask(L.id));
-    if (!L.done && !L.linear) add('Make project', () => taskToProject(L.id));
+    if (view !== 'someday') add('Dates & priority…', () => editTask(L.id));
+    if (!L.done && !L.linear && view !== 'someday') add('Make project', () => taskToProject(L.id));
+    if (!L.done && !L.linear && view !== 'someday') add('Someday / maybe', () => taskToSomeday(L.id));
+    if (!L.done && view === 'someday' && somedayRoot && L.project_id === somedayRoot.id) add('Make active…', () => activateItem(L.id));
     items.push(null);
     add(kids ? `Delete with ${kids} sub-item${kids === 1 ? '' : 's'}` : 'Delete', () => deleteTree(L), 'danger');
   } else {
@@ -1273,18 +1358,19 @@ document.addEventListener('keydown', async e => {
   else if (e.key === 'ArrowLeft') {if (setFold(L, true)) {e.preventDefault(); focusRowLater(el); renderProjects();}}
   else if (e.key === 'ArrowRight') {if (setFold(L, false)) {e.preventDefault(); focusRowLater(el); renderProjects();}}
   else if (e.key === 'Escape') el.blur();
-  else if (printable(e) && !L.done) {e.preventDefault(); editRow(el, e.key);}   // typing on a selected line edits it
+  else if (printable(e) && !L.done && L.kind === 'task') {e.preventDefault(); editRow(el, e.key);}   // typing on a selected task line edits it
 });
 // nothing selected: Enter starts the first line of the zoomed project, or the first project of an empty list
 document.addEventListener('keydown', e => {
-  if (e.key !== 'Enter' || e.target !== document.body || view !== 'projects' || inlineAdd || projectAdd) return;
+  if (e.key !== 'Enter' || e.target !== document.body || (view !== 'projects' && view !== 'someday') || inlineAdd || projectAdd) return;
   if (focusProject) {e.preventDefault(); openInlineAdd({project_id: focusProject, parent_id: null, after_id: 0});}
+  else if (view === 'someday') {e.preventDefault(); addSomedayItem();}
   else if (!tree.length) {e.preventDefault(); openInlineProjectAdd(null);}
 });
 
 // click-to-edit titles --------------------------------------------------
-// Backspace on an already-empty title deletes the task (if nothing is attached to it); Escape reverts; everything
-// else goes through outlineKey above.
+// Backspace only ever deletes text, never the line; a title emptied and then left by clicking elsewhere deletes
+// the task (if nothing is attached to it). Escape reverts; everything else goes through outlineKey above.
 function editTaskTitle(tid, append, caret, text) {
   flushInlineAdd(); flushProjectAdd(); if (projectEdit) projectEdit.save();
   if (titleEdit) titleEdit.save();   // whatever was being typed elsewhere is kept
@@ -1303,11 +1389,6 @@ function editTaskTitle(tid, append, caret, text) {
   titleEdit = {tid, row, span, orig, inp, save};
   inp.onkeydown = async e => {
     if (e.key === 'Escape') {e.preventDefault(); inp.value = orig; end(); row.focus();}
-    else if (e.key === 'Backspace' && !inp.value) {
-      e.preventDefault(); const prev = neighbourRow(row, -1);
-      try {await deleteLine(lineInfo(row)); titleEdit = null; editRowLater(prev); renderProjects();}
-      catch (err) {toast(esc(err.message), 5000);}
-    }
     else if (e.key === 'Backspace' && atStart(inp)) {   // at the start of the text: join onto the line above
       const L = lineInfo(row);
       try {if (await mergeIntoPrev(row, inp.value.trim(), async () => {await deleteLine(L); done = true; titleEdit = null; return true;})) e.preventDefault();}
@@ -1321,8 +1402,17 @@ function editTaskTitle(tid, append, caret, text) {
     else await outlineKey(e, row, save);
   };
   wirePaste(inp, async rest => {const L = lineInfo(row); await save(); const ids = await addOutline({project_id: L.project_id, parent_id: L.parent_id, after_id: tid}, rest); pendingEdit = ids[ids.length - 1]; renderProjects();});
-  // clicking away keeps what was typed: save at once (a re-render then re-opens whatever got the click)
-  inp.onblur = () => setTimeout(async () => {if (!done && document.activeElement !== inp) {const changed = await save(); if (changed) renderProjects();}}, 0);
+  // clicking away keeps what was typed: save at once (a re-render then re-opens whatever got the click).
+  // A title emptied and then left this way deletes the line (unless notes, time or Linear are attached: then it reverts).
+  inp.onblur = () => setTimeout(async () => {
+    if (done || document.activeElement === inp || !row.isConnected) return;
+    if (!inp.value.trim()) {
+      try {await deleteLine(lineInfo(row)); end(); titleEdit = null; renderProjects();}
+      catch (err) {end(); toast(esc(err.message), 5000);}
+      return;
+    }
+    const changed = await save(); if (changed) renderProjects();
+  }, 0);
   inp.focus(); const c = append == null && caret != null ? Math.min(caret, inp.value.length) : inp.value.length; inp.setSelectionRange(c, c);
 }
 
@@ -1457,9 +1547,10 @@ async function renderPlan() {
   const m = $('#main');
   if (!p.items) {m.innerHTML = `<div class="card">No plan yet. <button class="btn primary" onclick="rebuild(false)">Build today's plan</button></div>`; return;}
   m.innerHTML = `<div class="card">
-    <div class="row" style="justify-content:space-between"><h3 style="margin:0">Plan for ${esc(p.date)} <span class="muted" style="font-weight:400;font-size:13px">${p.work_start}–${p.work_end} · exercise: ${esc(p.exercise)}</span></h3>
+    <div class="row" style="justify-content:space-between"><h3 style="margin:0">Plan for ${esc(p.date)} <span class="muted" style="font-weight:400;font-size:13px">${p.work_start}–${p.work_end} · exercise: ${esc(p.exercise)}${p.raw?.source ? ` · by ${esc(String(p.raw.source).replace(/^agent:/, 'agent '))}${p.raw.pinned ? ', pinned' : ''}` : ''}</span></h3>
       <span class="row"><button class="btn small" onclick="rebuild(true)">Re-plan rest of day</button><button class="btn small" onclick="rebuild(false)">Rebuild</button></span></div>
     <p class="muted">${esc(p.rationale)}</p>
+    ${p.raw?.instructions ? `<p class="muted">Instructions for the day from your assistant agent: ${esc(p.raw.instructions)}</p>` : ''}
     <ul class="timeline" style="list-style:none;padding:0;margin:0">${p.items.map(i => `<li class="${i.status}"><span>${i.start}–${i.end}</span><span class="k">${i.kind}</span><span>${mdLine(i.title).html}${i.note ? ` <span class="muted">— ${esc(i.note)}</span>` : ''}</span>
       <span>${i.kind === 'meeting' ? '' : i.status === 'pending' ? `<button class="btn small ghost" onclick="skipItem(${i.id}).then(renderPlan)">skip</button>` : `<button class="btn small ghost" onclick="api('/feed/reset_item','POST',{item_id:${i.id}}).then(renderPlan)">reset</button>`}</span></li>`).join('')}</ul></div>`;
 }
@@ -1484,12 +1575,14 @@ async function renderSettings() {
     ${card('Claude', status.llm, key('anthropic', 'API key', 'sk-ant-…') + f('llm', 'enable', 'Use Claude', 'quick-add filing, estimates and the day plan; without it everything falls back to rules', 'bool') + f('llm', 'model', 'Model') + f('llm', 'effort', 'Plan effort', '', ['low', 'medium', 'high', 'max']) + f('llm', 'quick_add_effort', 'Quick-add effort', '', ['low', 'medium', 'high']))}
     ${card('Work day', undefined, f('general', 'work_start', 'Starts', '', 'time') + f('general', 'work_end', 'Ends', '', 'time') + f('general', 'default_estimate_minutes', 'Default estimate (min)', 'for a task that has no estimate yet', 'number') + f('general', 'min_block_minutes', 'Smallest block (min)', '', 'number') + f('general', 'replan_drift_minutes', 'Re-plan when late by (min)', 'the next block is this late or early', 'number') + f('general', 'overrun_minutes', 'Re-plan after overrun (min)', '', 'number') + f('general', 'replan_min_interval_minutes', 'Re-plan at most every (min)', '', 'number') + f('general', 'meeting_alert_minutes', 'Meeting reminder (min before)', 'the feed shows "N minutes until <meeting>" from this far out', 'number') + f('general', 'meeting_alert_all_day', 'All meetings today', 'show the next meeting however far off it is', 'bool'))}
     ${card('Calendar', status.calendar, f('calendar', 'ics_urls', 'iCal feeds', 'one per line. Google Calendar → Settings → your calendar → "Secret address in iCal format"', 'lines') + f('calendar', 'ignore_titles', 'Ignore events titled', 'comma separated') + f('calendar', 'busy_only', 'Only busy events block time', '', 'bool'))}
-    ${card('Toggl', status.toggl, key('toggl', 'API token', '32 hex characters', 'Toggl Track → Profile → API token') + f('toggl', 'tag', 'Tag on timers') + f('toggl', 'project', 'Toggl project', 'optional: file every entry under this Toggl project') + f('toggl', 'auto_project', 'Pick project and tags', 'a description you tracked before gets its last project and tags; otherwise Claude picks from your projects, or none when unsure', 'bool'))}
+    ${card('Toggl', status.toggl, key('toggl', 'API token', '32 hex characters', 'Toggl Track → Profile → API token') + f('toggl', 'tag', 'Tag on timers') + f('toggl', 'auto_project', 'File timers by project', 'routines go to the Toggl project listed below; a task goes to the Toggl project its project is linked to. Claude decides each one the first time it comes up, creating a Toggl project when none fits, and the answer is kept here or in the opened project, where you can change it', 'bool') + f('toggl', 'routine_projects', 'Routines', 'one per line, "Anki review: Personal | learning, review": the Toggl project for each checklist card, exercise session and journaling, then its tags after a bar', 'lines') + `<label></label><div class="row" style="gap:8px"><button class="btn small" onclick="suggestRoutineProjects(this)">Fill in with Claude</button><span class="muted" id="routineout" style="font-size:12px"></span></div>` + f('toggl', 'project', 'Default project', 'used when nothing above decides'))}
     ${card('Linear', status.linear, key('linear', 'API key', 'lin_api_…', 'Linear → Settings → API → personal API key') + f('linear', 'enable', 'Mirror my issues', '', 'bool') + f('linear', 'sync_minutes', 'Sync every (min)', '', 'number') + f('linear', 'category_name', 'Under project') + f('linear', 'group_by', 'Sub-project per', '', ['project', 'team']))}
     ${card('Checklist & exercise sheets', status.sheets !== 'none' && !!status.sheets, key('sheets', 'Sheet token', 'the SHEET_TOKEN script property', 'the Apps Script in apps_script/Code.gs, deployed as a web app on the checklist spreadsheet') + f('sheets', 'apps_script_url', 'Apps Script URL', 'the deployment\'s /exec URL: reads the checklist and checks items off') + f('sheets', 'exercise_script_url', 'Exercise log script URL', 'the exercise app\'s own Google Sheet sync URL (its /exec address); its logged sessions become the exercise history, read-only') + f('sheets', 'daily_checklist_csv', 'Checklist CSV URL', 'read-only fallback') + f('sheets', 'exercise_csv', 'Exercise CSV URL', 'read-only fallback') + f('sheets', 'cache_minutes', 'Cache (min)', '', 'number') + f('sheets', 'card_items', 'Rows with their own card', 'one per line, "Anki review: 20" (minutes); each is scheduled every day as its own feed card and ticked in the sheet when you mark it done', 'lines'))}
     <div class="card"><h3>Exercise</h3><p class="muted" style="margin:0 0 10px;font-size:13px">Your rules, one per line, applied to your exercise log each morning with no model involved: <code>squats: at least every 7 days, at most every 3 days</code>, <code>never back to back: deadlifts, squats</code>, <code>fill: benchpress, deadlifts, shoulder press</code>. When several are due, the one done longest ago goes first. Other lines are notes: the day plan reads them for timing, and Claude reads them to override the rules' pick in rare cases (soreness, travel, a session you ask for). Session length is the typical length of that session in your log.</p>
       <textarea id="exprompt" style="width:100%;min-height:200px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit">${esc(s.exercise_brief)}</textarea>
-      <div class="form" style="margin-top:10px">${f('exercise', 'rotation', 'Rotation without rules', 'comma separated: used only before any rules are written and the log is empty')}</div></div>
+      <div class="form" style="margin-top:10px">${f('exercise', 'after_done', 'After the day\'s session', 'offered at the bottom of the feed once today\'s exercise is done; empty for none') + f('exercise', 'rotation', 'Rotation without rules', 'comma separated: used only before any rules are written and the log is empty')}</div></div>
+    ${card('Assistant agent', undefined, key('agent', 'API token', 'any long random string', 'optional: the agent sends it as <code>Authorization: Bearer …</code>; without one any process on this Mac may call the agent API'),
+      `Your executive-assistant agent can add tasks and projects, attach context to any item (shown signed with its name) and set or steer the day's schedule. Base URL <code>http://${esc(c.general.host)}:${esc(String(c.general.port))}/api/agent</code>; the calls are listed there and documented at <a href="/docs#/agent" target="_blank">/docs</a> and in the README.`)}
     ${card('Journal', undefined, f('journal', 'app', 'App', 'an app name, or a URL for Roam') + f('journal', 'desktop', 'Switch to desktop', 'Mission Control desktop number (needs its ctrl+N shortcut enabled); 0 = stay', 'number'))}
     ${card('Snapshots', undefined, f('snapshots', 'enable', 'Daily snapshot', '', 'bool') + f('snapshots', 'time', 'At', '', 'time') + f('snapshots', 'dir', 'Folder', `empty = ${esc(s.paths.snapshots)}`))}
     <div class="card"><h3>Scheduling rules &amp; heuristics</h3><p class="muted" style="margin:0 0 10px;font-size:13px">Free text that Claude reads when it builds the day. Say how you like your days shaped.</p>
@@ -1507,8 +1600,22 @@ async function saveSettings() {
     const [sec, key] = el.name.split('.'); cfg[sec] = cfg[sec] || {};
     cfg[sec][key] = el.type === 'checkbox' ? el.checked : el.tagName === 'TEXTAREA' ? el.value.split('\n').map(x => x.trim()).filter(Boolean) : el.value;
   });
-  try {await api('/settings', 'PUT', {config: cfg, rules: $('#rules').value, exercise_brief: $('#exprompt').value}); await refreshStatus(); toast('Settings saved'); renderSettings();}
+  try {const r = await api('/settings', 'PUT', {config: cfg, rules: $('#rules').value, exercise_brief: $('#exprompt').value}); await refreshStatus(); toast(r.warnings?.length ? 'Settings saved. ' + esc(r.warnings.join('; ')) : 'Settings saved', r.warnings?.length ? 8000 : undefined); renderSettings();}
   catch (e) {toast('Could not save: ' + esc(e.message), 6000);}
+}
+// Claude sorts every routine (checklist cards, exercise sessions, journaling) into a Toggl project once; the lines
+// land in the Routines box for review and are saved with the rest of the settings.
+async function suggestRoutineProjects(btn) {
+  const out = $('#routineout'), ta = document.querySelector('[name="toggl.routine_projects"]');
+  btn.disabled = true; out.textContent = 'Asking Claude…';
+  try {
+    const r = await api('/toggl/suggest_routines', 'POST');
+    const have = {}; ta.value.split('\n').map(l => l.trim()).filter(Boolean).forEach(l => have[l.split(':')[0].trim().toLowerCase()] = l);
+    r.lines.forEach(l => have[l.split(':')[0].trim().toLowerCase()] = l);
+    ta.value = Object.values(have).join('\n');
+    out.textContent = `${r.note || ''}${r.created.length ? ` Created in Toggl: ${r.created.join(', ')}.` : ''} Edit the lines as you like, then Save settings.`;
+  } catch (e) {out.textContent = 'Could not: ' + e.message;}
+  btn.disabled = false;
 }
 async function saveSecret(name, btn) {
   const inp = btn.parentElement.querySelector('input'); const value = inp.value.trim(); if (!value) {toast('Paste the key first'); return;}

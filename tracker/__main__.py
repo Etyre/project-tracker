@@ -40,7 +40,7 @@ def main(argv=None) -> int:
         url = f"http://{cfg['host']}:{cfg['port']}"
         if not a.no_open:
             threading.Timer(1.0, lambda: webbrowser.open(url)).start()
-        print(f"Task Tracker at {url}")
+        print(f"Project Tracker at {url}")
         uvicorn.run("tracker.web:create_app", factory=True, host=cfg["host"], port=cfg["port"],
                     reload=a.reload, log_level="info")
         return 0
@@ -60,7 +60,7 @@ def main(argv=None) -> int:
             print("window shown")
         except Exception:
             import subprocess
-            subprocess.run(["open", "-a", "Task Tracker"])
+            subprocess.run(["open", "-a", "Project Tracker"])
             print("app launched")
         return 0
     if cmd == "snapshot":

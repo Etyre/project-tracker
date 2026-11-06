@@ -209,6 +209,20 @@ def test_archive_takes_subtree_and_hides_from_schedule():
     assert "hidden while archived" in {c["title"] for c in scheduler.candidates(dt.date.today())}
 
 
+def test_someday_items_live_outside_the_schedule():
+    top = db.create_project("Active home")
+    root = db.someday_root()                                       # the hidden project behind the Someday / maybe list
+    assert root == db.someday_root() and root not in {p["id"] for p in db.projects()}
+    assert db.find_project_by_path(["Someday / maybe"]) is None    # quick add never files into it
+    loose = db.create_task(root, "an idea")
+    roots = db.project_tree(someday=True)
+    assert [t["title"] for p in roots if p["someday_root"] for t in p["tasks"]] == ["an idea"]
+    assert "an idea" not in {c["title"] for c in scheduler.candidates(dt.date.today())}
+    db.move_task(loose, top, None, None)                           # back into an active project: scheduled again
+    assert "an idea" in {c["title"] for c in scheduler.candidates(dt.date.today())}
+    assert "an idea" not in {t["title"] for p in db.project_tree(someday=True) for t in p["tasks"]}
+
+
 def test_insert_first_and_delete_empty_project():
     pid = db.create_project("P")
     a = db.create_task(pid, "a")
@@ -328,11 +342,11 @@ def test_daily_snapshot(tmp_path, monkeypatch):
     # before the hour nothing is written; after it, once per day; forced writes overwrite
     assert snapshot.maybe_snapshot(dt.datetime(2030, 1, 2, 4, 59)) is None
     path = snapshot.maybe_snapshot(dt.datetime(2030, 1, 2, 5, 0))
-    assert path == tmp_path / "2030-01-02.md" and path.read_text().startswith("# Task tracker snapshot")
+    assert path == tmp_path / "2030-01-02.md" and path.read_text().startswith("# Project Tracker snapshot")
     assert snapshot.maybe_snapshot(dt.datetime(2030, 1, 2, 9, 0)) is None
     assert snapshot.write(dt.datetime(2030, 1, 2, 9, 0)) == path
     assert [i["date"] for i in snapshot.list_snapshots()] == ["2030-01-02"]
-    assert snapshot.read("2030-01-02").startswith("# Task tracker snapshot") and snapshot.read("nope") is None
+    assert snapshot.read("2030-01-02").startswith("# Project Tracker snapshot") and snapshot.read("nope") is None
 
 
 def test_settings_save_roundtrip(tmp_path, monkeypatch):
@@ -347,7 +361,7 @@ def test_settings_save_roundtrip(tmp_path, monkeypatch):
     import tomllib
     data = tomllib.loads((tmp_path / "config.toml").read_text())
     assert data["general"]["work_start"] == "08:30" and data["calendar"]["ics_urls"][1] == "https://b/y.ics"
-    assert set(config.secret_status()) == {"anthropic", "toggl", "linear", "sheets"}
+    assert set(config.secret_status()) == {"anthropic", "toggl", "linear", "sheets", "agent"}
     config.load.cache_clear()
 
 
@@ -416,26 +430,144 @@ def test_exercise_sessions_parse_and_merge(monkeypatch):
     assert len(same_day) == 1 and same_day[0]["source"] == "sheet" and same_day[0]["minutes"] == 47
 
 
-def test_toggl_history_index_and_exact_match(monkeypatch):
-    from tracker import toggl, web
-    monkeypatch.setattr(toggl, "_req", lambda m, path, body=None: [{"id": 1, "name": "Palisade"}, {"id": 2, "name": "Personal"}] if path == "/me/projects" else None)
+TOGGL_FAKE = {"/me/projects": [{"id": 1, "name": "Palisade", "client_id": 7, "active": True}, {"id": 2, "name": "Personal", "client_id": None, "active": True}],
+              "/me/clients": [{"id": 7, "name": "Palisade Research"}]}
+
+
+def _fake_toggl(monkeypatch):
+    from tracker import toggl
+    monkeypatch.setattr(toggl, "_req", lambda m, path, body=None: TOGGL_FAKE.get(path))
     monkeypatch.setattr(toggl, "entries", lambda days=90: [
         {"description": "Going to do squats", "project_id": 2, "tags": ["exercise"], "start": "2026-11-01T20:00:00+00:00"},
         {"description": "going to do squats", "project_id": 1, "tags": [], "start": "2026-10-01T20:00:00+00:00"},
         {"description": "Strategy sync", "project_id": 1, "tags": ["meeting"], "start": "2026-11-02T14:00:00+00:00"},
         {"description": "", "project_id": None, "tags": [], "start": "2026-11-02T15:00:00+00:00"}])
-    toggl._index_cache = None
+    toggl.forget_projects()
+
+
+def test_toggl_history_index_and_exact_match(monkeypatch):
+    from tracker import toggl, web
+    _fake_toggl(monkeypatch)
     idx = toggl.history_index()
     assert idx["exact"]["going to do squats"] == {"project_id": 2, "project": "Personal", "tags": ["exercise"]}   # newest wins
-    assert [p["name"] for p in idx["projects"]][:2] == ["Palisade", "Personal"] and "meeting" in idx["tags"]
-    c = toggl.classify("GOING TO DO SQUATS")
-    assert (c["project"], c["tags"], c["source"]) == ("Personal", ["exercise"], "history")
-    assert toggl.classify("Something never tracked")["source"] == "none"       # Claude is off in tests: no project
+    assert [p["name"] for p in idx["projects"]] == ["Palisade", "Personal"] and idx["projects"][0]["client"] == "Palisade Research"
+    assert "meeting" in idx["tags"] and toggl.clients() == ["Palisade Research"]
+    assert toggl.history_match("GOING TO DO SQUATS")["project"] == "Personal"
+    assert toggl.history_match("Something never tracked") is None
+    assert toggl.find_project("personal")["id"] == 2 and toggl.find_project("Nowhere") is None and toggl.find_project("") is None
     assert web._going_to("squats") == "going to do squats" and web._going_to("Exercise: cardio") == "going to do cardio"
     assert web._going_to("Going to do a run") == "Going to do a run"
-    toggl._index_cache = None
+    toggl.forget_projects()
 
 
+def test_toggl_routine_list_and_linked_projects(monkeypatch):
+    """Routines take their Toggl project from the Settings list, tasks from the project chain: no model, and the
+    project goes into the start request itself."""
+    from tracker import toggl, web
+    _fake_toggl(monkeypatch)
+    monkeypatch.setitem(config.load()["toggl"], "routine_projects", ["Anki review: Personal | learning, spaced repetition", "cardio interval training: Personal", "Daily regather: Nowhere", "no project here"])
+    assert toggl.routine_key("Going to do  Squats") == "squats" and toggl.routine_key("Anki review") == "anki review"
+    assert toggl.routine_project("Anki review") == {"project_id": 2, "project": "Personal", "tags": ["learning", "spaced repetition"], "source": "routine list"}
+    assert toggl.routine_project("going to do cardio interval training")["project"] == "Personal" and toggl.routine_project("cardio interval training")["tags"] == []
+    assert toggl.routine_line("Anki review", "Personal", ["learning", "learning", " review "]) == "Anki review: Personal | learning, review"
+    assert toggl.routine_project("Daily regather") is None            # listed under a project Toggl does not have
+    assert toggl.routine_project("Journaling") is None                # unlisted: Claude's turn
+    top = db.create_project("Toggl top"); mid = db.create_project("Mid", top); leaf = db.create_project("Leaf", mid)
+    assert db.toggl_project_for(leaf) is None
+    db.update_project(top, toggl_project="Palisade")
+    assert db.toggl_project_for(leaf) == {"name": "Palisade", "project_id": top, "inherited": True}
+    db.update_project(mid, toggl_project="Personal")                  # the nearest ancestor wins
+    assert db.toggl_project_for(leaf)["name"] == "Personal" and db.toggl_project_for(top)["inherited"] is False
+    tid = db.create_task(leaf, "Leaf task")
+    assert web._toggl_project_for_timer("task", "Leaf task", tid) == {"project_id": 2, "project": "Personal", "source": "linked project"}
+    assert web._toggl_project_for_timer("routine", "Anki review", None)["project_id"] == 2
+    assert web._toggl_project_for_timer("exercise", "going to do squats", None) is None
+    started = []
+    monkeypatch.setattr(toggl, "enabled", lambda: True)
+    monkeypatch.setattr(toggl, "start", lambda label, extra_tags=None, project_id=None: started.append((label, project_id, extra_tags)) or {"id": 99})
+    monkeypatch.setattr(toggl, "current", lambda: None)
+    monkeypatch.setattr(toggl, "stop", lambda eid=None: None)
+    res = web._start_timer("routine", "Anki review", None, ["routine"])
+    assert started[-1] == ("Anki review", 2, ["routine", "learning", "spaced repetition"]) and res["toggl_project"] == "Personal"
+    web._stop_timer()
+    res = web._start_timer("task", "Leaf task", tid)
+    assert started[-1] == ("Leaf task", 2, []) and res["toggl_project"] == "Personal"
+    web._stop_timer()
+    toggl.forget_projects()
+
+
+def test_exercise_button_offers_extra_session_once_done(monkeypatch):
+    from fastapi.testclient import TestClient
+    from tracker import web, exercise
+    c = TestClient(web.create_app())
+    monkeypatch.setattr(exercise, "decide", lambda date=None, force=False: {"kind": "strength", "title": "squats", "minutes": 40, "reason": "", "date": db.today()})
+    date = db.today()
+    db.save_plan(date, "09:00", "17:00", "run", "", [dict(kind="exercise", task_id=None, title="squats", start="13:00", end="13:40", minutes=40, note="")], {})
+    f = c.get("/api/feed").json()
+    assert f["exercise"] == "squats" and f["exercise_done"] is False and f["exercise_extra"] == "zone 2 cardio" and f["exercise_extra_done"] is False
+    item = db.rows("SELECT id FROM plan_items WHERE date=? AND kind='exercise'", (date,))[0]["id"]
+    assert c.post("/api/feed/complete", json={"item_id": item}).status_code == 200
+    assert c.get("/api/feed").json()["exercise_done"] is True
+    r = c.post("/api/exercise/start", json={"title": "zone 2 cardio"}).json()
+    assert r["kind"] == "zone 2 cardio" and db.running_entry()["label"] == "going to do zone 2 cardio"
+    assert c.get("/api/feed").json()["exercise_extra_done"] is False          # still running: not done yet
+    web._stop_timer()
+    assert c.get("/api/feed").json()["exercise_extra_done"] is True
+    assert "zone 2 cardio" in web._routine_labels()
+
+
+def test_completed_task_keeps_its_place():
+    pid = db.create_project("Keep order")
+    a, b, c = (db.create_task(pid, n) for n in ("first", "second", "third"))
+    db.complete_task(a)
+    proj = next(p for p in db.project_tree() if p["id"] == pid)
+    assert [t["title"] for t in proj["tasks"]] == ["first", "second", "third"]
+
+
+def test_project_paths_ignore_heading_marks():
+    """Quick add gets "Palisade Projects" back from Claude for a project stored as "# Palisade Projects"."""
+    top = db.create_project("# Heading top")
+    sub = db.create_project("## Policy", top)
+    assert db.plain_name("##  Policy  ") == "policy" and db.plain_name("#tag") == "#tag"
+    assert db.find_project_by_path(["Heading top", "policy"]) == sub
+    assert db.find_project_by_path(["# Heading top", "## Policy"]) == sub
+    assert db.ensure_project_path(["heading top", "Policy"]) == sub       # nothing new created
+    assert db.find_project_by_path(["Heading top", "Nope"]) is None
+    assert "- heading top" in scheduler.tree_text() and "- # Heading top" not in scheduler.tree_text()
+
+
+def test_project_toggl_link_api_and_settings(monkeypatch):
+    from fastapi.testclient import TestClient
+    from tracker import web, toggl
+    c = TestClient(web.create_app())
+    pid = db.create_project("Linkable")
+    assert c.patch(f"/api/projects/{pid}", json={"toggl_project": "  Palisade "}).status_code == 200
+    assert db.row("SELECT toggl_project FROM projects WHERE id=?", (pid,))["toggl_project"] == "Palisade"
+    assert any(p["id"] == pid and p["toggl_project"] == "Palisade" for p in c.get("/api/tree").json())
+    assert c.patch(f"/api/projects/{pid}", json={"toggl_project": ""}).status_code == 200    # unlinked: Claude decides again
+    assert db.row("SELECT toggl_project FROM projects WHERE id=?", (pid,))["toggl_project"] is None
+    assert c.patch("/api/projects/999999", json={"name": "x"}).status_code == 404
+    labels = web._routine_labels()
+    assert "Anki review" in labels and "squats" in labels and "cardio interval training" in labels and "Journaling" in labels
+    monkeypatch.setattr(toggl, "enabled", lambda: True)
+    assert c.post("/api/toggl/suggest_routines").status_code == 400          # Claude is off in tests
+    assert c.get("/api/toggl/projects").json()["enabled"] is True
+    monkeypatch.setattr(config, "CONFIG_PATH", pathlib.Path(_tmp) / "config.toml")   # never the user's own config.toml
+    try:
+        cfg = c.get("/api/settings").json()["config"]
+        cfg["toggl"]["routine_projects"] = ["Anki review: Personal", "Journaling: Personal"]
+        r = c.put("/api/settings", json={"config": cfg})
+        assert r.status_code == 200 and config.load()["toggl"]["routine_projects"] == ["Anki review: Personal", "Journaling: Personal"]
+        _fake_toggl(monkeypatch)
+        toggl.remember_routine("going to do squats", "Palisade", ["exercise", "strength"])
+        assert config.load()["toggl"]["routine_projects"][-1] == "squats: Palisade | exercise, strength"
+        toggl.remember_routine("Squats", "Personal")                          # replaces, never duplicates
+        assert [l for l in config.load()["toggl"]["routine_projects"] if l.startswith("squats")] == ["squats: Personal"]
+        cfg["toggl"]["routine_projects"] = ["Anki review: Nowhere"]
+        assert c.put("/api/settings", json={"config": cfg}).json()["warnings"] == ["no Toggl project called 'Nowhere' (for anki review)"]
+    finally:
+        config.reload()
+        toggl.forget_projects()
 
 
 def test_exercise_rules_engine():

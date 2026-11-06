@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import re
 import sqlite3
 import threading
 import time
@@ -20,7 +21,10 @@ CREATE TABLE IF NOT EXISTS projects (
     position INTEGER NOT NULL DEFAULT 0,
     created_at REAL NOT NULL,
     archived_at REAL,
-    linear_key TEXT                                  -- linear project/team id this mirrors, if any
+    someday_at REAL,                                 -- the hidden Someday / maybe root (its tasks are the someday items; out of the schedule)
+    linear_key TEXT,                                 -- linear project/team id this mirrors, if any
+    source TEXT NOT NULL DEFAULT 'local',            -- local | agent
+    toggl_project TEXT                               -- Toggl project its timers are filed under (inherited by sub-projects)
 );
 CREATE TABLE IF NOT EXISTS tasks (
     id INTEGER PRIMARY KEY,
@@ -91,6 +95,16 @@ CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS notes (                   -- context added to a task or project by someone other than the user
+    id INTEGER PRIMARY KEY,
+    target_kind TEXT NOT NULL,                       -- task | project
+    target_id INTEGER NOT NULL,
+    author TEXT NOT NULL,                            -- who added it (an agent's name)
+    source TEXT NOT NULL DEFAULT 'agent',            -- agent | linear | ...
+    body TEXT NOT NULL,
+    created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS notes_target ON notes(target_kind, target_id);
 """
 
 _local = threading.local()
@@ -112,6 +126,15 @@ def connect() -> sqlite3.Connection:
 
 def _migrate(conn: sqlite3.Connection) -> None:
     """Bring older databases up to the current tasks schema (sub-tasks, optional importance)."""
+    pcols = {r["name"] for r in conn.execute("PRAGMA table_info(projects)")}
+    if "source" not in pcols:
+        conn.execute("ALTER TABLE projects ADD COLUMN source TEXT NOT NULL DEFAULT 'local'")
+    if "someday_at" not in pcols:
+        conn.execute("ALTER TABLE projects ADD COLUMN someday_at REAL")
+        conn.commit()
+    if "toggl_project" not in pcols:
+        conn.execute("ALTER TABLE projects ADD COLUMN toggl_project TEXT")
+        conn.commit()
     cols = {r["name"]: r for r in conn.execute("PRAGMA table_info(tasks)")}
     if "parent_id" not in cols:
         conn.execute("ALTER TABLE tasks ADD COLUMN parent_id INTEGER REFERENCES tasks(id)")
@@ -174,16 +197,20 @@ def _next_position(table: str, where: str, args: tuple) -> int:
     return int(r["p"]) if r else 0
 
 
-def create_project(name: str, parent_id: int | None = None, notes: str = "", linear_key: str | None = None) -> int:
+def create_project(name: str, parent_id: int | None = None, notes: str = "", linear_key: str | None = None,
+                   source: str = "local", someday: bool = False) -> int:
+    """A new project. One made inside the Someday / maybe root is hidden with it (the root has no sub-projects in the UI)."""
     pos = _next_position("projects", "parent_id IS ?" if parent_id is None else "parent_id=?", (parent_id,))
+    parent = row("SELECT someday_at FROM projects WHERE id=?", (parent_id,)) if parent_id is not None else None
+    someday_at = (parent["someday_at"] if parent else None) or (time.time() if someday else None)
     return execute(
-        "INSERT INTO projects(parent_id,name,notes,position,created_at,linear_key) VALUES(?,?,?,?,?,?)",
-        (parent_id, name.strip(), notes, pos, time.time(), linear_key),
+        "INSERT INTO projects(parent_id,name,notes,position,created_at,linear_key,source,someday_at) VALUES(?,?,?,?,?,?,?,?)",
+        (parent_id, name.strip(), notes, pos, time.time(), linear_key, source, someday_at),
     )
 
 
 def update_project(pid: int, **fields) -> None:
-    allowed = {"name", "notes", "parent_id", "archived_at", "linear_key"}
+    allowed = {"name", "notes", "parent_id", "archived_at", "linear_key", "source", "toggl_project"}
     sets = {k: v for k, v in fields.items() if k in allowed}
     if not sets:
         return
@@ -244,18 +271,33 @@ def restore_project(pid: int) -> None:
             parent = (row("SELECT parent_id FROM projects WHERE id=?", (parent,)) or {}).get("parent_id")
 
 
-def projects(include_archived: bool = False) -> list[dict]:
-    q = "SELECT * FROM projects" + ("" if include_archived else " WHERE archived_at IS NULL") + " ORDER BY position, id"
-    return rows(q)
+def someday_root() -> int:
+    """The hidden project that holds the loose Someday / maybe items: tasks that belong to no project. Made on
+    first use; shown nowhere as a project (its tasks are the top level of the Someday / maybe tree)."""
+    rid = get_setting("someday_root_id")
+    if rid and row("SELECT id FROM projects WHERE id=?", (rid,)):
+        execute("UPDATE projects SET someday_at=COALESCE(someday_at, ?), archived_at=NULL WHERE id=?", (time.time(), rid))
+        return int(rid)
+    rid = create_project("Someday / maybe", None, someday=True, source="system")
+    set_setting("someday_root_id", rid)
+    return rid
+
+
+def projects(include_archived: bool = False, someday: bool = False) -> list[dict]:
+    """The active projects; `someday` gives the Someday / maybe root instead (never both at once)."""
+    where = ([] if include_archived else ["archived_at IS NULL"]) + ["someday_at IS NOT NULL" if someday else "someday_at IS NULL"]
+    return rows("SELECT * FROM projects WHERE " + " AND ".join(where) + " ORDER BY position, id")
 
 
 def project_tree(include_archived: bool = False, with_tasks: bool = True,
-                 active: bool = True, completed: bool = False, done: bool = True) -> list[dict]:
+                 active: bool = True, completed: bool = False, done: bool = True, someday: bool = False) -> list[dict]:
     """Projects as a tree. `include_archived` adds archived projects; `active` attaches open tasks, `done` the
     completed tasks not yet archived (shown struck through until "archive done"), `completed` the archived
-    ones too. Completed tasks come newest-first after the active ones."""
-    ps = projects(include_archived)
-    by_id = {p["id"]: dict(p, children=[], tasks=[]) for p in ps}
+    ones too. A completed task keeps its place in the outline (lines are in position order, done or not). `someday` gives the Someday / maybe
+    root instead, whose tasks are the loose someday items."""
+    root = someday_root() if someday else None
+    ps = projects(include_archived, someday)
+    by_id = {p["id"]: dict(p, children=[], tasks=[], someday_root=(p["id"] == root)) for p in ps}
     roots: list[dict] = []
     for p in by_id.values():
         parent = by_id.get(p["parent_id"]) if p["parent_id"] is not None else None
@@ -268,13 +310,22 @@ def project_tree(include_archived: bool = False, with_tasks: bool = True,
             tasks += completed_tasks(None, 5000)
         elif done:
             tasks += completed_tasks(None, 5000, include_archived=False)
-        by_tid = {t["id"]: dict(t, children=[]) for t in tasks}
+        tasks.sort(key=lambda t: (t["position"], t["id"]))     # ticking a line off never moves it
+        by_tid = {t["id"]: dict(t, children=[], notes_added=[]) for t in tasks}
         for t in by_tid.values():
             parent = by_tid.get(t["parent_id"]) if t["parent_id"] else None
             if parent is not None:
                 parent["children"].append(t)
             elif t["project_id"] in by_id:
                 by_id[t["project_id"]]["tasks"].append(t)   # orphans (hidden parent) show at project level
+        for n in all_notes("task"):
+            if n["target_id"] in by_tid:
+                by_tid[n["target_id"]]["notes_added"].append(n)
+    for p in by_id.values():
+        p["notes_added"] = []
+    for n in all_notes("project"):
+        if n["target_id"] in by_id:
+            by_id[n["target_id"]]["notes_added"].append(n)
     return roots
 
 
@@ -291,11 +342,39 @@ def project_path(pid: int) -> list[str]:
     return list(reversed(names))
 
 
+def toggl_project_for(pid: int | None) -> dict | None:
+    """The Toggl project a task in project `pid` is filed under: the project's own, else the nearest ancestor's.
+    {name, project_id (the project that set it), inherited} or None when no project up the chain has one."""
+    seen = set()
+    start = pid
+    while pid is not None and pid not in seen:
+        seen.add(pid)
+        p = row("SELECT id,parent_id,toggl_project FROM projects WHERE id=?", (pid,))
+        if not p:
+            break
+        if (p["toggl_project"] or "").strip():
+            return {"name": p["toggl_project"].strip(), "project_id": p["id"], "inherited": p["id"] != start}
+        pid = p["parent_id"]
+    return None
+
+
+def plain_name(name: str) -> str:
+    """A project name as it reads: Markdown heading marks ("## Policy") and extra spaces dropped, lower case. Used to
+    match the names Claude and the agent API give back against the stored ones."""
+    return " ".join(re.sub(r"^\s*#{1,6}\s+", "", name or "").split()).lower()
+
+
+def _child_project(parent: int | None, name: str) -> dict | None:
+    """The live sub-project of `parent` whose name reads as `name` (exact stored name first)."""
+    kids = rows("SELECT id,name FROM projects WHERE parent_id IS ? AND archived_at IS NULL AND someday_at IS NULL ORDER BY position, id", (parent,))
+    return (next((k for k in kids if k["name"].lower() == name.lower()), None)
+            or next((k for k in kids if plain_name(k["name"]) == plain_name(name)), None))
+
+
 def find_project_by_path(path: list[str]) -> int | None:
     parent = None
     for name in path:
-        p = row("SELECT id FROM projects WHERE parent_id IS ? AND lower(name)=lower(?) AND archived_at IS NULL",
-                (parent, name))
+        p = _child_project(parent, name)
         if not p:
             return None
         parent = p["id"]
@@ -305,8 +384,7 @@ def find_project_by_path(path: list[str]) -> int | None:
 def ensure_project_path(path: list[str]) -> int:
     parent = None
     for name in path:
-        p = row("SELECT id FROM projects WHERE parent_id IS ? AND lower(name)=lower(?) AND archived_at IS NULL",
-                (parent, name))
+        p = _child_project(parent, name)
         parent = p["id"] if p else create_project(name, parent)
     assert parent is not None
     return parent
@@ -475,6 +553,7 @@ def delete_task_tree(tid: int) -> list[dict]:
     marks = ",".join("?" * len(ids))
     with _write_lock:
         execute(f"UPDATE plan_items SET task_id=NULL WHERE task_id IN ({marks})", ids)
+        execute(f"DELETE FROM notes WHERE target_kind='task' AND target_id IN ({marks})", ids)
         execute(f"DELETE FROM tasks WHERE id IN ({marks})", ids)
     return out
 
@@ -549,6 +628,7 @@ def delete_task(tid: int) -> None:
         raise ValueError("it has tracked time; complete it instead")
     with _write_lock:
         execute("UPDATE plan_items SET task_id=NULL WHERE task_id=?", (tid,))
+        execute("DELETE FROM notes WHERE target_kind='task' AND target_id=?", (tid,))
         execute("DELETE FROM tasks WHERE id=?", (tid,))
 
 
@@ -594,6 +674,41 @@ def project_to_task(pid: int) -> int:
         execute("UPDATE projects SET parent_id=? WHERE parent_id=?", (p["parent_id"], pid))
         execute("DELETE FROM projects WHERE id=?", (pid,))
     return tid
+
+
+# ---------------------------------------------------------------- notes (context added by an agent)
+def add_note(target_kind: str, target_id: int, body: str, author: str, source: str = "agent") -> int:
+    """Attach a piece of context to a task or project. It is kept apart from the user's own notes and shown with
+    its author, so what came from an agent is always visible as such."""
+    if target_kind not in ("task", "project"):
+        raise ValueError("target_kind must be task or project")
+    table = "tasks" if target_kind == "task" else "projects"
+    if not row(f"SELECT id FROM {table} WHERE id=?", (target_id,)):
+        raise ValueError(f"{target_kind} {target_id} not found")
+    body = body.strip()
+    if not body:
+        raise ValueError("empty note")
+    return execute("INSERT INTO notes(target_kind,target_id,author,source,body,created_at) VALUES(?,?,?,?,?,?)",
+                   (target_kind, target_id, author.strip() or source, source, body, time.time()))
+
+
+def note(nid: int) -> dict | None:
+    return row("SELECT * FROM notes WHERE id=?", (nid,))
+
+
+def notes_for(target_kind: str, target_id: int) -> list[dict]:
+    return rows("SELECT * FROM notes WHERE target_kind=? AND target_id=? ORDER BY created_at, id", (target_kind, target_id))
+
+
+def all_notes(target_kind: str | None = None) -> list[dict]:
+    q, args = "SELECT * FROM notes", ()
+    if target_kind:
+        q, args = q + " WHERE target_kind=?", (target_kind,)
+    return rows(q + " ORDER BY created_at, id", args)
+
+
+def delete_note(nid: int) -> None:
+    execute("DELETE FROM notes WHERE id=?", (nid,))
 
 
 # ---------------------------------------------------------------- time entries

@@ -1,1 +1,1 @@
-"""Task tracker / GTD system / day scheduler. See README.md."""
+"""Project Tracker / GTD system / day scheduler. See README.md."""

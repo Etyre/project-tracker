@@ -1,5 +1,5 @@
 # Copy to config.toml (or just open Settings in the app, which writes config.toml for you).
-# Task Tracker configuration, edited from the app's Settings page.
+# Project Tracker configuration, edited from the app's Settings page.
 # Secrets are not here: they live in the login Keychain (service "TaskTracker") or the environment.
 
 [general]
@@ -28,7 +28,9 @@ enable = true
 
 [toggl]
 tag = ""
-project = ""
+project = ""             # used when nothing else decides
+auto_project = true
+routine_projects = []     # "Anki review: Personal": the Toggl project for each routine (Settings fills it in with Claude once)
 
 [linear]
 enable = false
@@ -50,6 +52,7 @@ cache_minutes = 30
 
 [exercise]
 rotation = []
+after_done = "zone 2 cardio"   # offered at the bottom of the feed once the day's session is done
 
 [journal]
 app = "Roam Research"

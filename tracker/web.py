@@ -14,6 +14,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 from . import tags, calendar_feed, config, db, estimates, exercise, journal, linear, llm, scheduler, sheets, toggl, snapshot
+from . import agent_api
 
 log = logging.getLogger("web")
 HTML_PATH = config.ROOT / "tracker" / "dashboard.html"
@@ -30,6 +31,7 @@ class ProjectPatch(BaseModel):
     name: str | None = None
     notes: str | None = None
     parent_id: int | None = None
+    toggl_project: str | None = None     # "" unlinks: the next timer asks Claude again
 
 
 class Reorder(BaseModel):
@@ -102,6 +104,10 @@ class ItemRef(BaseModel):
     item_id: int
 
 
+class ExerciseStart(BaseModel):
+    title: str | None = None      # a session other than the day's pick, e.g. the extra one offered once it is done
+
+
 class ChecklistDone(BaseModel):
     item: str
     undo: bool = False
@@ -139,6 +145,12 @@ def _tick_task_fields(t: dict) -> dict:
     return t
 
 
+def _someday(project_id: int | None) -> bool:
+    """Someday / maybe items carry no deadline, priority or blocking tags: typed tags stay plain text."""
+    p = db.row("SELECT someday_at FROM projects WHERE id=?", (project_id,)) if project_id is not None else None
+    return bool(p and p["someday_at"])
+
+
 def _timer_state() -> dict:
     e = db.running_entry()
     if not e:
@@ -165,33 +177,107 @@ def _stop_timer() -> dict | None:
     return {"stopped": e["id"], "toggl_error": err}
 
 
+def _toggl_project_for_timer(kind: str, label: str, task_id: int | None) -> dict | None:
+    """The Toggl project a timer gets without asking anyone: the routine list for routines, the linked Toggl
+    project of the task's project (or an ancestor) for tasks. {project_id, project, source} or None."""
+    if not config.load()["toggl"].get("auto_project", True):
+        return None
+    if kind != "task" or task_id is None:
+        return toggl.routine_project(label)
+    t = db.task(task_id)
+    link = db.toggl_project_for(t["project_id"]) if t else None
+    if not link:
+        return None
+    p = toggl.find_project(link["name"])
+    if not p:
+        log.warning("project %s is linked to Toggl project '%s', which does not exist", link["project_id"], link["name"])
+        return None
+    return {"project_id": p["id"], "project": p["name"], "source": "linked project"}
+
+
 def _start_timer(kind: str, label: str, task_id: int | None = None, extra_tags: list[str] | None = None, context: str = "") -> dict:
     _stop_timer()
-    toggl_id, err = None, None
+    toggl_id, err, chosen = None, None, None
     if toggl.enabled():
         try:
-            toggl_id = toggl.start(label, extra_tags)["id"]
+            chosen = _toggl_project_for_timer(kind, label, task_id)
+        except Exception:                                   # a Toggl hiccup never stops a timer
+            log.exception("choosing the Toggl project for '%s'", label)
+        try:
+            tags = [*(extra_tags or []), *((chosen or {}).get("tags") or [])]
+            toggl_id = toggl.start(label, tags, project_id=chosen["project_id"] if chosen else None)["id"]
         except toggl.TogglError as ex:
             err = str(ex)
     eid = db.start_entry(kind, label, task_id, toggl_id)
-    if toggl_id and config.load()["toggl"].get("auto_project", True):
-        if not context and task_id:
-            t = db.task(task_id)
-            context = "task in project " + " / ".join(db.project_path(t["project_id"])) if t else ""
-        threading.Thread(target=_file_timer, args=(toggl_id, label, context or kind), daemon=True, name="toggl-file").start()
-    return {"entry_id": eid, "toggl_id": toggl_id, "toggl_error": err}
+    if toggl_id and chosen:
+        log.info("toggl entry %s started under %s (%s)", toggl_id, chosen["project"], chosen["source"])
+    elif toggl_id and config.load()["toggl"].get("auto_project", True):
+        threading.Thread(target=_file_timer, args=(toggl_id, kind, label, task_id, context, extra_tags or []), daemon=True, name="toggl-file").start()
+    return {"entry_id": eid, "toggl_id": toggl_id, "toggl_error": err, "toggl_project": chosen["project"] if chosen else None}
 
 
-def _file_timer(toggl_id: int, label: str, context: str) -> None:
-    """After a timer starts: give the Toggl entry the project and tags it should have (history, else Claude)."""
+def _project_subject(pid: int, task_title: str = "") -> tuple[str, str]:
+    """What Claude is told about a project when deciding its Toggl project: path, notes, a few open tasks."""
+    p = db.row("SELECT * FROM projects WHERE id=?", (pid,)) or {}
+    path = " / ".join(db.project_path(pid))
+    tasks = [t["title"] for t in db.open_tasks(pid)[:8]]
+    subject = f"Project: {path}"
+    ctx = []
+    if (p.get("notes") or "").strip():
+        ctx.append("Notes: " + p["notes"].strip()[:600])
+    if tasks:
+        ctx.append("Open tasks: " + "; ".join(tasks))
+    if task_title:
+        ctx.append("The timer just started is for the task: " + task_title)
+    return subject, "\n".join(ctx)
+
+
+def _file_timer(toggl_id: int, kind: str, label: str, task_id: int | None, context: str, extra_tags: list[str]) -> None:
+    """After a timer starts with no project: Claude decides once and the answer is kept, so the next timer for the
+    same routine or project needs no model. Without Claude, the project this exact description had last time."""
     try:
-        c = toggl.classify(label, context)
-        tags = list(dict.fromkeys([t for t in [config.load()["toggl"]["tag"], *c["tags"]] if t]))
-        if c["project_id"] or c["tags"]:
-            toggl.update_entry(toggl_id, c["project_id"], tags)
-        log.info("toggl entry %s filed: project=%s tags=%s (%s)", toggl_id, c["project"], tags, c["source"])
+        if not llm.enabled():
+            hit = toggl.history_match(label)
+            if hit and hit["project_id"]:
+                toggl.update_entry(toggl_id, hit["project_id"])
+                log.info("toggl entry %s filed under %s (history)", toggl_id, hit["project"])
+            return
+        t = db.task(task_id) if kind == "task" and task_id else None
+        if t and t["project_id"] is not None:
+            subject, ctx = _project_subject(t["project_id"], t["title"])
+            d = toggl.decide_project(subject, ctx)
+            db.update_project(t["project_id"], toggl_project=d["project"])
+            tags = []
+        elif t:
+            d = toggl.decide_project(f"Task: {t['title']}", (t["description"] or "")[:600])
+            tags = []
+        else:
+            d = toggl.decide_project(f"Routine: {toggl.routine_key(label)}", context or kind)
+            tags = d["tags"]
+            toggl.remember_routine(label, d["project"], tags)
+        all_tags = list(dict.fromkeys(t for t in [config.load()["toggl"]["tag"], *extra_tags, *tags] if t)) if tags else None
+        toggl.update_entry(toggl_id, d["project_id"], all_tags)
+        log.info("toggl entry %s filed under %s%s%s by Claude: %s", toggl_id, d["project"], " (new project)" if d["created"] else "",
+                 f" tags {tags}" if tags else "", d["reason"])
     except Exception:
         log.exception("filing toggl entry %s", toggl_id)
+
+
+def _routine_labels() -> list[str]:
+    """Every recurring thing the app starts timers for: checklist rows with a card, the exercise sessions named in
+    the exercise rules, journaling."""
+    out: list[str] = []
+    for item in config.load()["sheets"].get("card_items") or []:
+        name = str(item).rsplit(":", 1)[0].strip() if ":" in str(item) else str(item).strip()
+        if name:
+            out.append(name)
+    rules = exercise.parse_rules(config.exercise_text())
+    out += [r["name"] for r in rules.get("required", [])] + list(rules.get("fill", []))
+    if config.load()["exercise"].get("after_done"):
+        out.append(config.load()["exercise"]["after_done"])
+    out.append("Journaling")
+    seen: set[str] = set()
+    return [x for x in out if not (x.lower() in seen or seen.add(x.lower()))]
 
 
 def _going_to(title: str) -> str:
@@ -224,6 +310,13 @@ def _current_exercise(date: str) -> str:
     return d.get("title") or d["kind"]
 
 
+def _exercise_logged_today(title: str) -> bool:
+    """A stopped exercise timer today for this session (the app's own entries)."""
+    start = dt.datetime.combine(dt.date.fromisoformat(db.today()), dt.time()).timestamp()
+    return any(toggl.routine_key(e["label"]) == toggl.routine_key(title)
+               for e in db.rows("SELECT label FROM time_entries WHERE kind='exercise' AND started_at>=? AND stopped_at IS NOT NULL", (start,)))
+
+
 def _checklist_state(date: str) -> dict:
     cl = sheets.daily_checklist()
     done_local = db.checklist_done_today(date)
@@ -240,7 +333,8 @@ show_window_hook = None   # set by the native app: called with a page fragment t
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Task Tracker")
+    app = FastAPI(title="Project Tracker")
+    app.include_router(agent_api.router)
 
     @app.post("/api/window")
     def show_window(fragment: str | None = None):
@@ -270,8 +364,8 @@ def create_app() -> FastAPI:
 
     # ------------------------------------------------ projects
     @app.get("/api/tree")
-    def tree(active: bool = True, completed: bool = False, archived: bool = False):
-        return db.project_tree(include_archived=archived, active=active, completed=completed)
+    def tree(active: bool = True, completed: bool = False, archived: bool = False, someday: bool = False):
+        return db.project_tree(include_archived=archived, active=active, completed=completed, someday=someday)
 
     @app.post("/api/projects")
     def create_project(p: ProjectIn):
@@ -279,9 +373,18 @@ def create_app() -> FastAPI:
             raise HTTPException(400, "name required")
         return {"id": db.create_project(p.name, p.parent_id, p.notes)}
 
+    @app.get("/api/someday_root")
+    def someday_root():
+        """The project behind the loose Someday / maybe items (a task moved there has no project of its own)."""
+        return {"id": db.someday_root()}
+
     @app.patch("/api/projects/{pid}")
     def patch_project(pid: int, p: ProjectPatch):
+        if not db.row("SELECT id FROM projects WHERE id=?", (pid,)):
+            raise HTTPException(404)
         fields = {k: v for k, v in p.model_dump().items() if v is not None}
+        if "toggl_project" in fields:
+            fields["toggl_project"] = fields["toggl_project"].strip() or None
         db.update_project(pid, **fields)
         return {"ok": True}
 
@@ -291,6 +394,27 @@ def create_app() -> FastAPI:
             raise HTTPException(404)
         db.archive_project(pid)
         return {"ok": True}
+
+    @app.get("/api/toggl/projects")
+    def toggl_projects():
+        """The user's Toggl projects, for the project header's picker and the Settings list."""
+        return {"projects": toggl.projects() if toggl.enabled() else [], "enabled": toggl.enabled()}
+
+    @app.post("/api/toggl/suggest_routines")
+    def toggl_suggest_routines():
+        """Claude sorts every routine into a Toggl project once; the lines come back for the Settings list,
+        unsaved until the user saves. Projects Claude proposes are created in Toggl right away."""
+        if not toggl.enabled():
+            raise HTTPException(400, "Toggl is not configured")
+        if not llm.enabled():
+            raise HTTPException(400, "Claude is not configured")
+        labels = _routine_labels()
+        if not labels:
+            raise HTTPException(400, "no routines: list checklist rows with their own card or exercise rules first")
+        try:
+            return toggl.suggest_routines(labels)
+        except (toggl.TogglError, llm.LLMError) as e:
+            raise HTTPException(502, str(e))
 
     @app.post("/api/projects/{pid}/archive_done")
     def archive_done(pid: int):
@@ -347,8 +471,9 @@ def create_app() -> FastAPI:
         d["chunkable"] = int(d["chunkable"])
         if d["importance"] is not None:
             d["importance"] = max(1, min(5, d["importance"]))
-        d["title"], tagged = tags.parse_tags(d["title"])       # "#p1 #due:fri #blocking:Sam" typed in the line
-        d.update(tagged)
+        if not _someday(d["project_id"]):
+            d["title"], tagged = tags.parse_tags(d["title"])   # "#p1 #due:fri #blocking:Sam" typed in the line
+            d.update(tagged)
         try:
             tid = db.create_task(d.pop("project_id"), d.pop("title"), **d)
         except ValueError as e:
@@ -369,9 +494,14 @@ def create_app() -> FastAPI:
             fields["estimate_minutes"] = None
         if fields.get("importance") is not None:
             fields["importance"] = max(1, min(5, int(fields["importance"])))
+        if fields.get("deadline"):   # "fri", "tomorrow", "nov3" are read the same way as in a title tag or the agent API
+            parsed = tags.parse_date(fields["deadline"])
+            if not parsed:
+                raise HTTPException(400, f"could not read deadline '{fields['deadline']}' (use YYYY-MM-DD)")
+            fields["deadline"] = parsed
         if fields.get("title") is not None and not fields["title"].strip():
             raise HTTPException(400, "title required")
-        if fields.get("title"):
+        if fields.get("title") and not _someday(db.task(tid)["project_id"]):
             fields["title"], tagged = tags.parse_tags(fields["title"])
             fields.update(tagged)
         for b in ("blocking", "chunkable"):
@@ -423,7 +553,12 @@ def create_app() -> FastAPI:
         if "exercise_brief" in body and isinstance(body["exercise_brief"], str):
             config.EXERCISE_PATH.write_text(body["exercise_brief"])
         calendar_feed._cache.clear()
-        return {"ok": True, "config": cfg}
+        warnings = []
+        if toggl.enabled() and toggl.projects():          # a routine listed under a Toggl project that does not exist
+            for label, entry in toggl.routine_map().items():
+                if not toggl.find_project(entry["project"]):
+                    warnings.append(f"no Toggl project called '{entry['project']}' (for {label})")
+        return {"ok": True, "config": cfg, "warnings": warnings}
 
     @app.post("/api/settings/secret")
     def put_secret(body: dict[str, str]):
@@ -530,7 +665,7 @@ def create_app() -> FastAPI:
         for i in o.items:
             if not i.title.strip():
                 continue
-            title, fields = tags.parse_tags(i.title)
+            title, fields = (i.title, {}) if _someday(o.project_id) else tags.parse_tags(i.title)
             fields.update({k: v for k, v in (i.fields or {}).items() if k in db.SUBTREE_FIELDS})
             items.append({"depth": i.depth, "title": title, "fields": fields})
         if not items:
@@ -581,7 +716,7 @@ def create_app() -> FastAPI:
         t = db.task(tid)
         if not t:
             raise HTTPException(404)
-        return {**_tick_task_fields(t), "path": db.project_path(t["project_id"])}
+        return {**_tick_task_fields(t), "path": db.project_path(t["project_id"]), "notes_added": db.notes_for("task", tid)}
 
     # ------------------------------------------------ quick add
     @app.post("/api/quick_add")
@@ -654,7 +789,7 @@ def create_app() -> FastAPI:
         current = active or (pending[0] if pending else None)
         meeting_now = next((i for i in items if i["kind"] == "meeting" and scheduler.parse_hm(i["start"]) <= now_min < scheduler.parse_hm(i["end"])), None)
         if current and current["kind"] == "task" and current["task_id"]:
-            current = {**current, "task": _tick_task_fields(db.task(current["task_id"])),
+            current = {**current, "task": {**_tick_task_fields(db.task(current["task_id"])), "notes_added": db.notes_for("task", current["task_id"])},
                        "path": db.project_path(current["project_id"])}
         if current and current["kind"] == "checklist":
             current = {**current, "checklist": _checklist_state(date)}
@@ -664,6 +799,7 @@ def create_app() -> FastAPI:
         total = sum(1 for i in items if i["kind"] != "meeting")
         out.update({
             "plan": {"built_at": p["built_at"], "rationale": p["rationale"], "source": p["raw"].get("source"),
+                     "pinned": bool(p["raw"].get("pinned")), "instructions": p["raw"].get("instructions"),
                      "work_start": p["work_start"], "work_end": p["work_end"], "off_track": scheduler.off_track()},
             "current": current, "meeting_now": meeting_now,
             "meetings": [{"title": i["title"], "start": i["start"], "end": i["end"]} for i in items if i["kind"] == "meeting"],
@@ -672,6 +808,11 @@ def create_app() -> FastAPI:
             "progress": {"done": done, "total": total},
             "exercise_item": next((i for i in items if i["kind"] == "exercise"), None),
         })
+        ex_item = out["exercise_item"]
+        extra = (config.load()["exercise"].get("after_done") or "").strip()
+        out["exercise_done"] = bool(ex_item and ex_item["status"] == "done") or _exercise_logged_today(out["exercise"])
+        out["exercise_extra"] = extra or None                           # offered once the day's session is done
+        out["exercise_extra_done"] = bool(extra) and _exercise_logged_today(extra)
         return out
 
     @app.post("/api/feed/start")
@@ -680,7 +821,7 @@ def create_app() -> FastAPI:
         if not it:
             raise HTTPException(404)
         res = _start_timer(it["kind"] if it["kind"] in ("task", "exercise", "routine", "journal") else "task",
-                           _item_label(it), it["task_id"], [it["kind"]] if it["kind"] != "task" else None,
+                           _item_label(it), it["task_id"], [it["kind"]] if it["kind"] in ("exercise", "journal") else None,
                            context={"exercise": "exercise session, travel included", "routine": "daily routine from the checklist", "journal": "journaling"}.get(it["kind"], "")),
         db.set_item_status(it["id"], "active")
         return {"ok": True, **res}
@@ -761,8 +902,12 @@ def create_app() -> FastAPI:
         return _stop_timer() or {"stopped": None}
 
     @app.post("/api/exercise/start")
-    def exercise_start():
+    def exercise_start(body: ExerciseStart | None = None):
         date = db.today()
+        if body and (body.title or "").strip():                       # an extra session: not the plan's exercise block
+            title = body.title.strip()
+            res = _start_timer("exercise", _going_to(title), None, ["exercise"], context="extra exercise session after the day's one, travel included")
+            return {"ok": True, "kind": title, "item_id": None, **res}
         kind = _current_exercise(date)
         res = _start_timer("exercise", _exercise_label(kind), None, ["exercise"], context="exercise session, travel included")
         it = db.row("SELECT id FROM plan_items WHERE date=? AND kind='exercise' AND status IN ('pending','active')", (date,))

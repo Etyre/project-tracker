@@ -70,6 +70,9 @@ def free_windows(day: dt.date, events: list[dict], start_min: int, end_min: int)
 
 def candidates(today: dt.date, limit: int = 60) -> list[dict]:
     cal = estimates.calibration()
+    notes: dict[int, list[str]] = {}
+    for n in db.all_notes("task"):
+        notes.setdefault(n["target_id"], []).append(f"[{n['author']}] {n['body']}")
     out = []
     for t in db.open_tasks(schedulable_only=True):
         if db.subtasks(t["id"]):
@@ -78,6 +81,7 @@ def candidates(today: dt.date, limit: int = 60) -> list[dict]:
         c["score"] = round(priority_score(t, today), 1)
         c["expected_minutes"] = estimates.expected_minutes(t, cal)
         c["path"] = " / ".join(db.project_path(t["project_id"]))
+        c["agent_notes"] = notes.get(t["id"], [])
         out.append(c)
     out.sort(key=lambda c: -c["score"])
     return out[:limit]
@@ -215,6 +219,10 @@ def build(day: dt.date | None = None, from_now: bool = False, until: str | None 
     exercise_done = any(i["kind"] == "exercise" and i["status"] in ("done", "active") for i in prev_items)
     tasks = [t for t in tasks if t["id"] not in finished_task_ids]
 
+    instructions = day_instructions(date)
+    rules = config.rules_text()
+    if instructions:
+        rules += INSTRUCTIONS_HEADER + instructions
     source, rationale, items = "greedy", "", []
     if llm.enabled() and windows:
         ctx = {
@@ -228,7 +236,9 @@ def build(day: dt.date | None = None, from_now: bool = False, until: str | None 
             "tasks": [{k: t[k] for k in ("id", "title", "path", "deadline", "blocking", "blocking_for", "importance",
                                          "chunkable", "expected_minutes", "score")}
                       | {"description": (t["description"] or "")[:300], "age_days": int((now.timestamp() - t["created_at"]) / 86400)}
+                      | ({"agent_notes": [n[:300] for n in t["agent_notes"][-5:]]} if t.get("agent_notes") else {})
                       for t in tasks],
+            "assistant_instructions_today": instructions or None,
             "routines_today": routines,
             "recent_exercise": recent_ex,
             "exercise_done_today": exercise_done,
@@ -236,7 +246,7 @@ def build(day: dt.date | None = None, from_now: bool = False, until: str | None 
             "estimate_calibration": estimates.calibration(),
         }
         try:
-            res = llm.schedule(json.dumps(ctx, indent=1, default=str), config.rules_text(), config.exercise_text())
+            res = llm.schedule(json.dumps(ctx, indent=1, default=str), rules, config.exercise_text())
             items = validate(res.get("items", []), windows, {t["id"] for t in tasks})
             if items:
                 source, rationale = "claude", res.get("rationale", "")
@@ -262,9 +272,101 @@ def build(day: dt.date | None = None, from_now: bool = False, until: str | None 
                 [i for i in items if not (i["kind"] == "meeting" and parse_hm(i["end"]) <= start_min)]
     items.sort(key=lambda i: parse_hm(i["start"]))
     db.save_plan(date, hm(ws), hm(we), exercise, rationale, items,
-                 {"source": source, "windows": windows, "from_now": from_now, "meetings": _meeting_sig(events)},
+                 {"source": source, "windows": windows, "from_now": from_now, "meetings": _meeting_sig(events),
+                  "instructions": instructions or None},
                  keep_statuses=True)
     db.set_setting("last_plan_build", time.time())
+    return db.plan(date)
+
+
+# ---------------------------------------------------------------- the schedule set or steered from outside
+INSTRUCTIONS_HEADER = ("\n\n===== INSTRUCTIONS FOR THIS DAY FROM THE USER'S ASSISTANT AGENT (follow them; the rules "
+                       "above still apply where they do not conflict) =====\n")
+
+
+def day_instructions(date: str) -> str:
+    """Free-text steering for one day's plan ("end by 13:00", "grant report first thing"), set through the agent
+    API. Read on every build of that day and shown with the plan."""
+    return (db.get_setting(f"plan_instructions:{date}") or "").strip()
+
+
+def set_day_instructions(date: str, text: str) -> None:
+    db.set_setting(f"plan_instructions:{date}", text.strip())
+
+
+def set_plan(day: dt.date, items: list[dict], work_start: str | None = None, work_end: str | None = None,
+             rationale: str = "", source: str = "external", pin: bool = True, merge_meetings: bool = True,
+             validate_windows: bool = True) -> dict:
+    """Replace a day's schedule with one built elsewhere (the executive-assistant agent). Items are
+    {kind, title, start, end, task_id?, note?}; statuses of matching blocks are kept, so re-sending a schedule
+    mid-day does not undo finished work. With `pin` the drift re-planner leaves the day alone until `unpin` or an
+    explicit rebuild. Raises ValueError for a bad item."""
+    date = day.isoformat()
+    cfg = config.load()["general"]
+    ws, we = parse_hm(work_start or cfg["work_start"]), parse_hm(work_end or cfg["work_end"])
+    if we <= ws:
+        raise ValueError("work_end must be after work_start")
+    events = calendar_feed.events_for(day)
+    blocks, meetings = [], []
+    for i in items:
+        it = dict(kind=str(i.get("kind") or "task"), task_id=i.get("task_id") if i.get("kind") == "task" else None,
+                  title=str(i.get("title") or "").strip(), start=str(i.get("start") or ""), end=str(i.get("end") or ""),
+                  note=str(i.get("note") or ""))
+        if it["kind"] not in ("task", "routine", "exercise", "journal", "break", "meeting", "checklist"):
+            raise ValueError(f"unknown kind '{it['kind']}' on '{it['title']}'")
+        if it["kind"] == "task":
+            if not it["task_id"]:
+                raise ValueError(f"a task block needs a task_id ('{it['title']}')")
+            t = db.task(int(it["task_id"]))
+            if not t:
+                raise ValueError(f"unknown task_id {it['task_id']} for '{it['title']}'")
+            if t["completed_at"]:
+                raise ValueError(f"task {it['task_id']} '{t['title']}' is already complete")
+            it["task_id"] = int(it["task_id"])
+            it["title"] = it["title"] or t["title"]
+        if not it["title"]:
+            raise ValueError("every block needs a title")
+        try:
+            a, b = parse_hm(it["start"]), parse_hm(it["end"])
+        except Exception:
+            raise ValueError(f"bad time on '{it['title']}' (use HH:MM)")
+        if b <= a:
+            raise ValueError(f"'{it['title']}' ends before it starts")
+        it["minutes"] = b - a
+        (meetings if it["kind"] == "meeting" else blocks).append(it)
+    dropped: list[str] = []
+    if validate_windows:
+        windows = free_windows(day, events, ws, we)
+        before = {(b["title"], b["start"]) for b in blocks}
+        blocks = validate(blocks, windows, {b["task_id"] for b in blocks if b["task_id"]})
+        dropped = sorted(f"{t} at {s}" for t, s in before - {(b["title"], b["start"]) for b in blocks})
+    if merge_meetings:
+        have = {(m["start"], m["title"]) for m in meetings}
+        for e in events:
+            if e["all_day"]:
+                continue
+            s_, e_ = e["start"].hour * 60 + e["start"].minute, e["end"].hour * 60 + e["end"].minute
+            if e_ > ws and s_ < we and (hm(s_), e["title"]) not in have:
+                meetings.append(dict(kind="meeting", task_id=None, title=e["title"], start=hm(s_), end=hm(e_),
+                                     minutes=e_ - s_, note="calendar"))
+    items = sorted(blocks + meetings, key=lambda i: parse_hm(i["start"]))
+    prev = db.plan(date)
+    exercise = prev["exercise"] if prev else exercise_mod.decide(date).get("kind", "")
+    db.save_plan(date, hm(ws), hm(we), exercise, rationale, items,
+                 {"source": source, "pinned": pin, "from_now": False, "meetings": _meeting_sig(events),
+                  "windows": free_windows(day, events, ws, we), "dropped": dropped,
+                  "instructions": day_instructions(date) or None},
+                 keep_statuses=True)
+    db.set_setting("last_plan_build", time.time())
+    return db.plan(date)
+
+
+def unpin(date: str) -> dict | None:
+    """Let the automatic re-planner manage the day again."""
+    p = db.plan(date)
+    if not p:
+        return None
+    db.execute("UPDATE plans SET raw=? WHERE date=?", (json.dumps(dict(p["raw"], pinned=False)), date))
     return db.plan(date)
 
 
@@ -285,6 +387,8 @@ def off_track(now: dt.datetime | None = None) -> str | None:
     date = now.date().isoformat()
     p = db.plan(date)
     if not p:
+        return None
+    if p["raw"].get("pinned"):                   # a schedule set from outside: leave it alone
         return None
     now_min = now.hour * 60 + now.minute
     ws, we = parse_hm(p["work_start"]), parse_hm(p["work_end"])
@@ -349,7 +453,7 @@ def tree_text() -> str:
 
     def walk(nodes: list[dict], depth: int) -> None:
         for p in nodes:
-            lines.append("  " * depth + f"- {p['name']}")
+            lines.append("  " * depth + f"- {db.plain_name(p['name'])}")
             for t in p["tasks"][:5]:
                 lines.append("  " * (depth + 1) + f"· {t['title']}" + (f" ({len(t['children'])} sub-tasks)" if t.get("children") else ""))
             if len(p["tasks"]) > 5:

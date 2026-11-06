@@ -22,7 +22,7 @@ from WebKit import WKNavigationActionPolicyAllow, WKNavigationActionPolicyCancel
 from . import config
 
 log = logging.getLogger("app")
-APP_NAME = "Task Tracker"
+APP_NAME = "Project Tracker"
 
 
 class _WebDelegate(NSObject, protocols=[objc.protocolNamed("WKUIDelegate")]):
@@ -108,7 +108,7 @@ class _AppDelegate(rumps.rumps.NSApp):
 rumps.rumps.NSApp = _AppDelegate
 
 
-class TaskTrackerApp(rumps.App):
+class ProjectTrackerApp(rumps.App):
     def __init__(self):
         super().__init__(APP_NAME, title="✓", quit_button=None)
         cfg = config.load()["general"]
@@ -133,6 +133,7 @@ class TaskTrackerApp(rumps.App):
             rumps.MenuItem("Set Toggl API Token…", callback=lambda _: self._set_secret("toggl", "Toggl Track API token", "32 hex characters")),
             rumps.MenuItem("Set Linear API Key…", callback=lambda _: self._set_secret("linear", "Linear personal API key", "lin_api_…")),
             rumps.MenuItem("Set Sheets Token…", callback=lambda _: self._set_secret("sheets", "Apps Script SHEET_TOKEN", "")),
+            rumps.MenuItem("Set Agent API Token…", callback=lambda _: self._set_secret("agent", "Token your assistant agent sends as a bearer token", "")),
             rumps.MenuItem("Open Config File", callback=lambda _: subprocess.run(["open", str(config.CONFIG_PATH)])),
             rumps.MenuItem("Open Rules & Heuristics", callback=lambda _: subprocess.run(["open", str(config.RULES_PATH)])),
             rumps.MenuItem("Open Data Folder", callback=lambda _: subprocess.run(["open", str(config.APP_SUPPORT)])),
@@ -296,6 +297,6 @@ def run_app():
     # alert before our run loop even starts (the web view and window are rebuilt from scratch anyway).
     NSUserDefaults.standardUserDefaults().registerDefaults_({"ApplePersistenceIgnoreState": True,
                                                               "NSQuitAlwaysKeepsWindows": False})
-    app = TaskTrackerApp()
+    app = ProjectTrackerApp()
     app._nsapp = None   # set by rumps.run; we attach ourselves in _open_when_ready
     app.run()

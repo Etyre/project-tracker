@@ -241,3 +241,69 @@ def schedule_system(rules: str, exercise_brief: str = "") -> str:
 
 def schedule(context_text: str, rules: str, exercise_brief: str = "") -> dict:
     return structured(schedule_system(rules, exercise_brief), context_text, SCHEDULE_SCHEMA, config.load()["llm"]["effort"], max_tokens=16000)
+
+
+# ------------------------------------------------------------------ toggl projects
+TOGGL_PROJECT_SYSTEM = """You file the user's time tracking into their Toggl Track projects.
+
+You get their Toggl projects (each with its client and the descriptions of recent entries filed under it), their
+clients, their tags (most used first), and a subject: a project from their task list (its path from the top level down, notes and a few open
+tasks) or a recurring routine (a checklist row, an exercise session, journaling). Decide which Toggl project the
+subject's time belongs to.
+
+- Prefer an existing project strongly; the example descriptions show how the user actually sorts their time.
+  Read the names as they do: a client or employer, a side project, "Personal", "Admin", "Exercise" and the like.
+- Set `create` true, with a new `project` name, only when the subject is plainly a distinct line of work that no
+  existing project covers. Name it the way the user names theirs (same style, short). Give it a `client` from the
+  existing clients when one fits, a new client only when the subject is clearly for a new employer or customer,
+  and null when the user's projects mostly have no client.
+- `tags`: for a routine, the one to three existing tags that plainly fit it (read the tag list as the user's own
+  habit: a tag for exercise, for learning, for admin and so on); a new tag only when the routine clearly needs one
+  the list lacks. Never a tag that only says the item is recurring ("routine", "daily"): every routine here is one.
+  For a project from the task list, leave `tags` empty: those entries are tagged by the app.
+- `reason`: one short sentence the user will read."""
+TOGGL_PROJECT_SCHEMA = {
+    "type": "object",
+    "properties": {"project": {"type": "string"}, "client": {"type": ["string", "null"]}, "create": {"type": "boolean"},
+                   "tags": {"type": "array", "items": {"type": "string"}}, "reason": {"type": "string"}},
+    "required": ["project", "client", "create", "tags", "reason"],
+    "additionalProperties": False,
+}
+
+
+def _toggl_context(projects: list[dict], clients: list[str], tags: list[str]) -> str:
+    lines = []
+    for p in projects:
+        ex = "; ".join(p.get("examples") or [])
+        lines.append(f"- {p['name']}" + (f" (client: {p['client']})" if p.get("client") else "") + (" [archived]" if not p.get("active", True) else "")
+                     + (f": {ex}" if ex else ": (no recent entries)"))
+    return (f"## Toggl projects\n{chr(10).join(lines) or '(none yet)'}\n\n## Clients\n{', '.join(clients) or '(none)'}"
+            f"\n\n## Tags\n{', '.join(tags) or '(none)'}")
+
+
+def pick_toggl_project(subject: str, context: str, projects: list[dict], clients: list[str], tags: list[str]) -> dict:
+    user = f"{_toggl_context(projects, clients, tags)}\n\n## Subject\n{subject}\n{context}".rstrip()
+    return structured(TOGGL_PROJECT_SYSTEM, user, TOGGL_PROJECT_SCHEMA, "low", max_tokens=1500)
+
+
+ROUTINE_MAP_SYSTEM = TOGGL_PROJECT_SYSTEM.replace("and a subject:", "and the user's recurring routines:").replace(
+    "subject's time belongs to.", "each routine's time belongs to: one mapping per routine, label copied exactly.") + """
+`note`: one or two sentences on how you sorted them, for the user, who will review and can edit every line."""
+ROUTINE_MAP_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "mappings": {"type": "array", "items": {
+            "type": "object",
+            "properties": {"label": {"type": "string"}, "project": {"type": "string"}, "client": {"type": ["string", "null"]},
+                           "create": {"type": "boolean"}, "tags": {"type": "array", "items": {"type": "string"}}},
+            "required": ["label", "project", "client", "create", "tags"], "additionalProperties": False}},
+        "note": {"type": "string"},
+    },
+    "required": ["mappings", "note"],
+    "additionalProperties": False,
+}
+
+
+def map_routines(labels: list[str], projects: list[dict], clients: list[str], tags: list[str]) -> dict:
+    user = f"{_toggl_context(projects, clients, tags)}\n\n## Routines\n" + "\n".join(f"- {l}" for l in labels)
+    return structured(ROUTINE_MAP_SYSTEM, user, ROUTINE_MAP_SCHEMA, "medium", max_tokens=4000)

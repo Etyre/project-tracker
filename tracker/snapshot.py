@@ -46,7 +46,7 @@ def render(now: dt.datetime | None = None, since: float | None = None) -> str:
     indented underneath, then the tasks completed since the previous snapshot."""
     now = now or dt.datetime.now()
     tree = db.project_tree(include_archived=False, active=True, completed=False)
-    out = [f"# Task tracker snapshot — {now:%A %Y-%m-%d %H:%M}", ""]
+    out = [f"# Project Tracker snapshot — {now:%A %Y-%m-%d %H:%M}", ""]
 
     def task(t: dict, depth: int) -> None:
         out.append("  " * depth + ("- [x] " if t.get("completed_at") else "- [ ] ") + re.sub(r"^#{1,6}\s+", "", t["title"].strip()) + _tags(t))
@@ -67,6 +67,12 @@ def render(now: dt.datetime | None = None, since: float | None = None) -> str:
         project(p, 0)
     if not tree:
         out.append("_(no projects)_")
+    someday = db.project_tree(include_archived=False, active=True, completed=False, someday=True)
+    if someday:
+        out += ["", "## Someday / maybe", ""]
+        for p in someday:
+            for t in p["tasks"]:
+                task(t, 0)
 
     if since is None:
         since = float(db.get_setting("snapshot_last") or 0) or (now.timestamp() - 86400)

@@ -1,7 +1,7 @@
-"""Build dist/Task Tracker.app - a standalone app wrapping this project's venv.
+"""Build dist/Project Tracker.app - a standalone app wrapping this project's venv.
 
     .venv/bin/python build_app.py
-    open "dist/Task Tracker.app"      # or drag to /Applications and add to Login Items
+    open "dist/Project Tracker.app"      # or drag to /Applications and add to Login Items
 
 The bundle's executable is a tiny native launcher that runs the venv's Python with `-m tracker app` and
 restarts it if it crashes (logged to ~/Library/Application Support/TaskTracker/launcher.log). The bundle
@@ -22,7 +22,7 @@ from PIL import Image, ImageDraw
 ROOT = Path(__file__).resolve().parent
 PYTHON = ROOT / ".venv/bin/python"
 DIST = ROOT / "dist"
-APP = DIST / "Task Tracker.app"
+APP = DIST / "Project Tracker.app"
 BUNDLE_ID = "com.elityre.tasktracker"
 
 LAUNCHER_C = r"""
@@ -136,22 +136,22 @@ def main() -> None:
     (APP / "Contents/Resources").mkdir(parents=True)
     src = DIST / "launcher.c"
     src.write_text(LAUNCHER_C % {"root": ROOT, "python": PYTHON})
-    subprocess.run(["clang", "-O2", "-o", str(APP / "Contents/MacOS/TaskTracker"), str(src)], check=True)
+    subprocess.run(["clang", "-O2", "-o", str(APP / "Contents/MacOS/ProjectTracker"), str(src)], check=True)
     src.unlink()
     draw_icon(APP / "Contents/Resources/AppIcon.icns")
     plist = {
-        "CFBundleName": "Task Tracker",
-        "CFBundleDisplayName": "Task Tracker",
+        "CFBundleName": "Project Tracker",
+        "CFBundleDisplayName": "Project Tracker",
         "CFBundleIdentifier": BUNDLE_ID,
         "CFBundleVersion": "0.1.0",
         "CFBundleShortVersionString": "0.1.0",
         "CFBundlePackageType": "APPL",
-        "CFBundleExecutable": "TaskTracker",
+        "CFBundleExecutable": "ProjectTracker",
         "CFBundleIconFile": "AppIcon",
         "LSUIElement": False,              # a regular app: Dock icon, Cmd-Tab, plus the menu bar item
         "NSHighResolutionCapable": True,
         "LSMinimumSystemVersion": "13.0",
-        "NSAppleEventsUsageDescription": "Task Tracker switches desktops and opens your notes app when you start journaling.",
+        "NSAppleEventsUsageDescription": "Project Tracker switches desktops and opens your notes app when you start journaling.",
     }
     with open(APP / "Contents/Info.plist", "wb") as f:
         plistlib.dump(plist, f)

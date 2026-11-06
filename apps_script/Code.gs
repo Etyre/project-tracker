@@ -1,5 +1,5 @@
 /**
- * Task Tracker <-> Google Sheets bridge (daily checklist + exercise sheet), read AND write.
+ * Project Tracker <-> Google Sheets bridge (daily checklist + exercise sheet), read AND write.
  *
  * Setup:
  *  1. Open the spreadsheet that holds your daily checklist (and, if it is the same file, the exercise sheet)

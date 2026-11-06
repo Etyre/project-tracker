@@ -44,8 +44,9 @@ DEFAULTS: dict[str, Any] = {
     },
     "toggl": {
         "tag": "task-tracker",
-        "auto_project": True,                # file each timer under the Toggl project its history / Claude implies
-        "project": "",                       # optional Toggl project name for all entries
+        "auto_project": True,                # file each timer under the right Toggl project (routine list, linked project, else Claude once)
+        "project": "",                       # optional Toggl project name used when nothing else decides
+        "routine_projects": [],              # "Anki review: Personal" - the Toggl project for each routine, no model involved
     },
     "linear": {
         "enable": False,
@@ -68,6 +69,7 @@ DEFAULTS: dict[str, Any] = {
     },
     "exercise": {
         "rotation": ["run", "strength", "mobility"],   # fallback when Claude is not configured
+        "after_done": "zone 2 cardio",       # the extra session the feed offers once the day's exercise is done ("" = none)
     },
     "journal": {
         "app": "Logseq",                     # or "Roam Research" / a URL like "https://roamresearch.com/..."
@@ -132,6 +134,8 @@ def secret(name: str) -> str | None:
         "toggl": "TOGGL_API_TOKEN",
         "linear": "LINEAR_API_KEY",
         "anthropic": "ANTHROPIC_API_KEY",
+        "sheets": "SHEETS_TOKEN",
+        "agent": "AGENT_API_TOKEN",
     }
     v = os.environ.get(env_names.get(name, name.upper()))
     if v:
@@ -155,13 +159,14 @@ def keychain_set(account: str, value: str) -> None:
     subprocess.run(["security", "add-generic-password", "-U", "-s", "TaskTracker", "-a", account, "-w", value],
                    capture_output=True)
     env_names = {"toggl": "TOGGL_API_TOKEN", "linear": "LINEAR_API_KEY", "anthropic": "ANTHROPIC_API_KEY",
-                 "sheets": "SHEETS_TOKEN"}
+                 "sheets": "SHEETS_TOKEN", "agent": "AGENT_API_TOKEN"}
     os.environ[env_names.get(account, account.upper())] = value
     secret.cache_clear()
 
 
 # ---- editing from the app's Settings page --------------------------------------------------------------
-SECRETS = {"anthropic": "ANTHROPIC_API_KEY", "toggl": "TOGGL_API_TOKEN", "linear": "LINEAR_API_KEY", "sheets": "SHEETS_TOKEN"}
+SECRETS = {"anthropic": "ANTHROPIC_API_KEY", "toggl": "TOGGL_API_TOKEN", "linear": "LINEAR_API_KEY", "sheets": "SHEETS_TOKEN",
+           "agent": "AGENT_API_TOKEN"}
 
 
 def _toml_value(v: Any) -> str:
@@ -179,7 +184,7 @@ def save(data: dict[str, Any]) -> dict[str, Any]:
     """Write config.toml from a full config dict (sections of scalars and lists) and reload it. Only sections
     and keys known from DEFAULTS are written, coerced to the default's type."""
     merged = _merge(load(), {k: v for k, v in data.items() if isinstance(v, dict)})
-    lines = ["# Task Tracker configuration, edited from the app's Settings page.",
+    lines = ["# Project Tracker configuration, edited from the app's Settings page.",
              '# Secrets are not here: they live in the login Keychain (service "TaskTracker") or the environment.', ""]
     for sec, defaults in DEFAULTS.items():
         lines.append(f"[{sec}]")

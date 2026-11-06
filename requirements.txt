@@ -6,6 +6,7 @@ icalendar>=6
 recurring-ical-events>=3
 python-dateutil
 pytest
+httpx                 # FastAPI TestClient (tests only)
 rumps
 pyobjc-framework-Cocoa
 pyobjc-framework-WebKit

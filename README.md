@@ -25,8 +25,8 @@ export SHEETS_TOKEN=...                 # the token you set in the Apps Script (
 ### Run as a standalone app (recommended)
 
 ```bash
-.venv/bin/python build_app.py           # -> dist/Task Tracker.app
-open "dist/Task Tracker.app"            # or drag to /Applications; add to Login Items
+.venv/bin/python build_app.py           # -> dist/Project Tracker.app
+open "dist/Project Tracker.app"            # or drag to /Applications; add to Login Items
 ```
 
 A Finder-launched app does not see your shell environment, so store the keys where the app can find them:
@@ -83,9 +83,9 @@ nested tasks are simply indented. Inside an opened project its own tasks sit bel
 on the lines: you navigate with the arrow keys and type.
 
 - Click a task line, or arrow onto it, and it is open for editing (click on the text to put the caret there).
-  Project lines and completed tasks are only highlighted; click a selected project's name again to rename it, or
-  rename it inside the opened project. Double-click a task to open its notes box and double-click a project to
-  open just that project (Back button and breadcrumb at the top).
+  Project lines and completed tasks are only highlighted; a project is renamed only inside the opened project.
+  Double-click a task to open its notes box and double-click a project to open just that project (Back button
+  and breadcrumb at the top).
 - Enter opens a new line below (the first child when the line shows children); on a project line it opens the
   project's first task. Enter in the middle of a line splits it. Enter on an empty new line steps it out one
   level: out of a sub-task, then out of the project as a new project line beside it (so a top-level project is
@@ -95,12 +95,13 @@ on the lines: you navigate with the arrow keys and type.
   top of the list. Whatever you have typed in a line is kept when you click away; a split line undoes in one step.
 - Up / Down move between lines, editor and all. Cmd+Up / Cmd+Down collapse and expand (Left / Right do the
   same on a highlighted completed line). Cmd+Shift+Up / Down move a line among its siblings.
-- Cmd+Enter (or the checkbox) completes a task: it stays in the outline, ticked and struck through, until the
+- Cmd+Enter (or the checkbox) completes a task: it stays where it is in the outline, ticked and struck through, until the
   small "archive N done" button at the top of its project puts the completed tasks away (Cmd+Z brings them
   back; the Archived tasks filter shows them). Shift+Enter opens its notes and, pressed again on the line or inside the box,
   closes them (the box also closes by itself when you move to another line), Cmd+E opens its dates and priority, Alt+Right /
-  Alt+Left zoom into and out of a project, Cmd+Shift+Backspace deletes a line (Backspace on an emptied line
-  does too). Backspace at the start of a line joins it onto the line above, which undoes an accidental split.
+  Alt+Left zoom into and out of a project, Cmd+Shift+Backspace deletes a line. Backspace itself never removes a
+  line: a line you empty out goes away when you click elsewhere. Backspace at the start of a line joins it onto
+  the line above, which undoes an accidental split.
   Deleting is refused, with a message, for anything with sub-items, tracked time or a Linear link.
 - Right-click a line for a small menu: complete, notes, dates & priority, make project (or open / make task on
   a project line) and Delete. From the menu a task is deleted together with its sub-items (Cmd+Z brings the
@@ -127,6 +128,12 @@ on the lines: you navigate with the arrow keys and type.
 - A task's title line carries its deadline, a "blocking" tag and importance dots when set (there is no
   priority by default); its notes box has a "dates & priority…" link for the rest. Time estimates are never
   typed: the app forecasts one when a task is created and learns from tracked time.
+- **Someday / maybe** (its own tab) is a plain nested list of ideas you are not committing to: items with
+  sub-items if you like, but no projects and no checkboxes, nothing there is ever completed (Enter or a click on
+  the empty space adds one). Right-click a task anywhere for
+  "Someday / maybe" and it moves there with its sub-tasks, dropping its deadline and priority; right-click an
+  item there for "Make active…" and pick the project it goes into. Nothing on that list is scheduled or filed
+  into by quick add, and its items carry no deadlines, priorities or blocking tags (typed tags stay as text).
 - Inside an opened project its name and notes are edited in place and it can be archived, which takes its
   sub-projects and open tasks with it (restore brings them back). The Filters button (hidden by default)
   opens a small panel to show completed tasks and archived projects alongside the active ones.
@@ -156,7 +163,8 @@ Claude the plan cycles through `[exercise] rotation`.
 
 **Quick add** (⌘K) - free text goes to Claude with the project tree; it returns one or more tasks placed in the
 best project (creating a sub-project only when nothing fits), with deadline / blocking / importance / estimate
-inferred. Without an API key it files into "Inbox".
+inferred. Without an API key it files into "Inbox". The "Filed … in …" lines of the notice at the bottom are links:
+click one and the Projects page opens on that project, unfolded, with the new task selected.
 
 **The schedule** is internal. It is built at the start of the work day (and on demand) from the free windows
 between meetings, the prioritised open tasks (blocking > deadline > importance > age, with estimates
@@ -164,16 +172,32 @@ multiplied by your measured actual/estimate ratio), the checklist, the exercise 
 does the packing when configured; a deterministic packer is the fallback and the validator (anything outside
 the free windows is clamped or dropped).
 
-**Toggl filing** - every timer the app starts is filed under the right Toggl project and tags a moment after it
-starts: a description you have tracked before gets the project and tags it had last time; otherwise Claude
-chooses from your own projects (with the descriptions you filed under each) and says "none" when it is not clear.
-Exercise timers are named "going to do squats", "going to do cardio interval training": the session Claude
-picked for the day, with travel time inside the timer. Off with `[toggl] auto_project = false`.
+**Toggl filing** - every timer the app starts goes to the right Toggl project, and nearly always without a model:
+
+- *Routines* (the checklist rows with their own card, the exercise sessions named in your exercise rules,
+  journaling) use the **Routines** list on the Settings page's Toggl card: one line each, `Anki review: Personal`.
+  "Fill in with Claude" sorts every routine into one of your Toggl projects in one go (creating a project when
+  none fits, and saying so); you edit the lines and save. A routine missing from the list is decided by Claude
+  the first time its timer starts, and the line is added for you.
+- *Tasks* use the Toggl project their project is **linked** to (sub-projects inherit their parent's link). The
+  opened project shows it as "Toggl: Palisade" in its header line; click it to pick another, or clear it so Claude
+  decides again. The first timer in an unlinked project asks Claude, which reads your Toggl projects and clients
+  with the descriptions you have filed under each, plus the project's path, notes and open tasks, and picks one,
+  or creates a new Toggl project (with a client) when the project is plainly a new line of work. The link is saved
+  on the project, so every later timer there is filed instantly.
+- Anything still undecided (Claude off, or an error) falls back to the project this exact description had last
+  time in Toggl, then to `[toggl] project` (the default), then to no project.
+
+Exercise timers are named "going to do squats", "going to do cardio interval training": the session picked for
+the day, with travel time inside the timer; they are listed under the session name ("squats"). Off with
+`[toggl] auto_project = false`.
 
 **The feed** shows one card; completing it flashes it green and slides it away, and the next card takes its place. Above the deck, from `meeting_alert_minutes` (45) before a meeting, or all day with `meeting_alert_all_day`, a line
 says "12 minutes until Daily regather", counting down in whole minutes (hours and minutes when it is over an hour away). The top card is the one the schedule says is next: Start (a Toggl timer tagged `task-tracker`, named
 after the task), a completion checkbox (completes the task, pushes to Linear), "Done for now" for a block of a
-task that continues later, Skip, and at the bottom the alternatives: today's exercise and Journal.
+task that continues later, Skip, and at the bottom the alternatives: today's exercise and Journal. Once the day's
+session is done the exercise button offers the extra session from Settings instead (`[exercise] after_done`, "zone 2
+cardio" by default), and reads "(done)" once that has been tracked too.
 The checklist card lists the sheet's items with checkboxes.
 
 **Drift** - every minute (and on every feed load) the schedule is compared with reality. If the next block is
@@ -186,6 +210,42 @@ time tracked per task (from the app's timers; if you stop the timer in Toggl the
 it; the median ratio feeds back into scheduling. See the Stats tab. A task with open sub-tasks is treated as a
 container and is not scheduled itself.
 
+## Agent API
+
+An executive-assistant agent gets its own door into the app, everything under `http://127.0.0.1:8791/api/agent`.
+Whatever comes through it is attributed to the agent: tasks and projects it adds carry an `agent` chip, context it
+attaches to any item is a separate signed note (never merged into your own text), and a schedule it sets is shown as
+the agent's on the plan page. Interactive documentation of every call is at `/docs`; `GET /api/agent` returns the map.
+
+**Access.** Optional bearer token: paste one into Settings -> Assistant agent (or `AGENT_API_TOKEN`, or the menu bar
+item's *Set Agent API Token…*) and the agent sends `Authorization: Bearer <token>`. Without one, any process on this
+Mac may call the agent API (the server only listens on 127.0.0.1). The agent names itself with `X-Agent-Name`
+(default `assistant`); that name is what you see next to its notes.
+
+| Call | What it does |
+| --- | --- |
+| `GET /api/agent/tree` | projects (with id, path, open-task count) and the full tree of open tasks, including the notes the agent added |
+| `GET /api/agent/tasks?q=&project_id=` / `GET /api/agent/tasks/{id}` | find open tasks; one task with its path, tracked minutes and notes |
+| `POST /api/agent/projects` | `{name, parent_id | parent_path, notes}`; the parent must exist |
+| `POST /api/agent/tasks` | `{title, project_id | project_path | parent_id, description, deadline, blocking, blocking_for, importance, chunkable, note}`; hashtags in the title work (`#p2 #due:fri`); `note` is attached as the agent's note straight away; with no project given Claude files it like the quick-add bar (Inbox without Claude); `create_project: true` creates a missing path |
+| `POST /api/agent/quick_add` | `{text}`: Claude turns free text into tasks in the right projects |
+| `POST /api/agent/notes` | `{task_id | project_id, body}`: add context to any item; `GET /api/agent/notes?task_id=` lists, `DELETE /api/agent/notes/{id}` takes one back |
+| `GET /api/agent/schedule?date=` | what the agent needs to set a day: the current plan with statuses, free windows between meetings, prioritised candidate tasks with calibrated estimates and the agent's notes, routines, the day's exercise, your rules document and any standing instructions |
+| `PUT /api/agent/schedule` | `{items: [{kind, task_id, title, start, end, note}], date, work_start, work_end, rationale, pin}`: set the day's schedule block by block (kinds `task`, `routine`, `exercise`, `journal`, `break`, `meeting`). Blocks are clipped to the free windows and what did not fit is returned in `dropped`; calendar meetings are added; done, skipped and active blocks keep their status when a schedule is re-sent. With `pin` (the default) the drift re-planner leaves the day alone |
+| `PUT /api/agent/schedule/instructions` | `{text, date, rebuild}`: steer the day in prose ("end by 13:00", "grant report first thing"); the app re-plans with the instructions appended to your rules, and shows them on the plan page. `DELETE` drops them |
+| `POST /api/agent/schedule/rebuild` | `{date, from_now, until}`: let the app plan the day (this also unpins it) |
+| `POST /api/agent/schedule/unpin?date=` | hand a pinned day back to the automatic re-planner |
+
+```bash
+A="http://127.0.0.1:8791/api/agent"; H=(-H "Content-Type: application/json" -H "X-Agent-Name: EA" -H "Authorization: Bearer $AGENT_API_TOKEN")
+curl -s $A/tree "${H[@]}" | jq '.projects[] | {id, path}'
+curl -s -X POST $A/tasks "${H[@]}" -d '{"title": "Book flights to Boston #p2", "project_path": ["Admin", "Travel"], "deadline": "2026-11-20", "note": "Dates confirmed with Sam on Slack"}'
+curl -s -X POST $A/notes "${H[@]}" -d '{"task_id": 42, "body": "The venue replied: deposit is due Friday."}'
+curl -s $A/schedule "${H[@]}" | jq '{free_windows, candidates: [.candidates[:5][] | {id, title, expected_minutes}]}'
+curl -s -X PUT $A/schedule "${H[@]}" -d '{"items": [{"kind": "task", "task_id": 42, "start": "10:30", "end": "11:30"}, {"kind": "break", "title": "Break", "start": "11:30", "end": "11:40"}], "rationale": "Deposit first; rest of the day as planned."}'
+curl -s -X PUT $A/schedule/instructions "${H[@]}" -d '{"text": "Eli has a dentist appointment at 14:00 and wants the afternoon light."}'
+```
+
 ## Development
 
 ```bash
@@ -195,6 +255,6 @@ container and is not scheduled itself.
 ```
 
 Layout: `tracker/app.py` (native window + menu bar item), `db.py` (schema), `scheduler.py` (windows,
-priorities, packing, drift), `llm.py` (Claude prompts and schemas), `web.py` (API + background loop),
-`dashboard.html` (UI), one module per integration. `python -m tracker web` serves the UI to a browser instead
+priorities, packing, drift, schedules set from outside), `llm.py` (Claude prompts and schemas), `web.py` (API +
+background loop), `agent_api.py` (the assistant agent's API), `dashboard.html` (UI), one module per integration. `python -m tracker web` serves the UI to a browser instead
 (headless / development).
