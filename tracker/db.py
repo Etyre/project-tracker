@@ -717,6 +717,45 @@ def start_entry(kind: str, label: str, task_id: int | None = None, toggl_id: int
                    (task_id, kind, label, toggl_id, time.time()))
 
 
+def reconcile_with_toggl(toggl_entries: list[dict], tolerance: float = 60) -> int:
+    """True up the app's time entries against the Toggl entries they created (same toggl_id): a timer stopped from
+    Toggl's side is stopped here at Toggl's stop time, and a start or stop that drifted by more than `tolerance`
+    seconds takes Toggl's value. Called on every fetch of the Toggl history. Returns how many entries changed."""
+    def ts(s: str | None) -> float | None:
+        if not s:
+            return None
+        try:
+            return dt.datetime.fromisoformat(str(s).replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            return None
+    by_id = {int(e["id"]): e for e in toggl_entries if e.get("id") is not None}
+    if not by_id:
+        return 0
+    changed = 0
+    with _write_lock:
+        for loc in rows(f"SELECT id,toggl_id,started_at,stopped_at FROM time_entries WHERE toggl_id IN ({','.join('?' * len(by_id))})", list(by_id)):
+            te = by_id[int(loc["toggl_id"])]
+            start, stop = ts(te.get("start")), ts(te.get("stop"))
+            if start is None:
+                continue
+            new_start = start if abs(start - loc["started_at"]) > tolerance else loc["started_at"]
+            running_there = stop is None and int(te.get("duration") or 0) < 0
+            if running_there:
+                new_stop = loc["stopped_at"]                    # still running in Toggl: the app's own stop (if any) stands
+            elif stop is not None and (loc["stopped_at"] is None or abs(stop - loc["stopped_at"]) > tolerance):
+                new_stop = stop
+            else:
+                new_stop = loc["stopped_at"]
+            if (new_start, new_stop) == (loc["started_at"], loc["stopped_at"]):
+                continue
+            execute("UPDATE time_entries SET started_at=?, stopped_at=? WHERE id=?", (new_start, new_stop, loc["id"]))
+            if loc["stopped_at"] is None and new_stop is not None:          # was still running here: the card goes back to pending
+                for it in rows("SELECT id FROM plan_items WHERE status='active'"):
+                    set_item_status(it["id"], "pending")
+            changed += 1
+    return changed
+
+
 def running_entry() -> dict | None:
     return row("SELECT * FROM time_entries WHERE stopped_at IS NULL ORDER BY started_at DESC LIMIT 1")
 

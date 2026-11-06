@@ -169,7 +169,7 @@ Claude the plan cycles through `[exercise] rotation`.
 **Quick add** (⌘K) - free text goes to Claude with the project tree; it returns one or more tasks placed in the
 best project (creating a sub-project only when nothing fits), with deadline / blocking / importance / estimate
 inferred. Without an API key it files into "Inbox". The "Filed … in …" lines of the notice at the bottom are links:
-click one and the Projects page opens on that project, unfolded, with the new task selected.
+click one and the Projects page opens zoomed into that project, with the new task selected and its notes open.
 
 **The schedule** is internal. It is built at the start of the work day (and on demand) from the free windows
 between meetings, the prioritised open tasks (blocking > deadline > importance > age, with estimates
@@ -197,10 +197,21 @@ Exercise timers are named "going to do squats", "going to do cardio interval tra
 the day, with travel time inside the timer; they are listed under the session name ("squats"). Off with
 `[toggl] auto_project = false`.
 
+Toggl meters API calls per sliding hour: user-scoped reads (`/me/...`) get 30 an hour on every plan below
+Enterprise, workspace-scoped calls get the plan's allowance (30 on Free). The app reads projects and clients
+through workspace paths once an hour, fetches the entry history once an hour for everything that needs it, checks
+whether you stopped the running timer in Toggl only every `[toggl] check_minutes` (5), and stops calling a bucket
+that reports itself used up (HTTP 402) until Toggl says it resets. "Test connections" shows the user-scoped calls
+left this hour. Every fetch of the history also trues up the app's own entries against Toggl's: a timer you stopped
+in Toggl is stopped here at that time (its card goes back to pending), and starts or stops that drifted by more than
+a minute take Toggl's values, so tracked time and the estimates learned from it stay right.
+
 **The feed** shows one card; completing it flashes it green and slides it away, and the next card takes its place. Above the deck, from `meeting_alert_minutes` (45) before a meeting, or all day with `meeting_alert_all_day`, a line
 says "12 minutes until Daily regather", counting down in whole minutes (hours and minutes when it is over an hour away). The top card is the one the schedule says is next: Start (a Toggl timer tagged `task-tracker`, named
 after the task), a completion checkbox (completes the task, pushes to Linear), "Done for now" for a block of a
-task that continues later, Skip, and at the bottom the alternatives: today's exercise and Journal. Once the day's
+task that continues later, Skip, and at the bottom the alternatives: today's exercise and Journal. A task card's
+"open in tree" link opens the Projects page zoomed into the task's own project, with the task selected and its notes
+open. Once the day's
 session is done the exercise button offers the extra session from Settings instead (`[exercise] after_done`, "zone 2
 cardio" by default), and reads "(done)" once that has been tracked too.
 The checklist card lists the sheet's items with checkboxes.

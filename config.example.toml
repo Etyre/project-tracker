@@ -30,6 +30,7 @@ enable = true
 tag = ""
 project = ""             # used when nothing else decides
 auto_project = true
+check_minutes = 5         # how often to ask Toggl whether you stopped the running timer there
 routine_projects = []     # "Anki review: Personal": the Toggl project for each routine (Settings fills it in with Claude once)
 
 [linear]

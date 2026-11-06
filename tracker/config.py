@@ -47,6 +47,7 @@ DEFAULTS: dict[str, Any] = {
         "auto_project": True,                # file each timer under the right Toggl project (routine list, linked project, else Claude once)
         "project": "",                       # optional Toggl project name used when nothing else decides
         "routine_projects": [],              # "Anki review: Personal" - the Toggl project for each routine, no model involved
+        "check_minutes": 5,                  # how often to ask Toggl whether a running timer was stopped there (30 such calls an hour allowed)
     },
     "linear": {
         "enable": False,

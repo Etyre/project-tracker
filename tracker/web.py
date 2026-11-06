@@ -594,7 +594,8 @@ def create_app() -> FastAPI:
         if toggl.enabled():
             try:
                 me = toggl.me()
-                out["toggl"] = f"ok: {me.get('fullname')}"
+                left = toggl.quota_left("/me")
+                out["toggl"] = f"ok: {me.get('fullname')}" + (f"; {left} user-scoped API calls left this hour" if left is not None else "")
             except Exception as e:
                 out["toggl"] = f"error: {e}"
         else:
@@ -991,13 +992,16 @@ def _start_background() -> None:
 
 
 def _loop() -> None:
-    last_linear = 0.0
+    last_linear = last_check = 0.0
     while True:
         try:
             cfg = config.load()
-            # 1. Toggl reconciliation: if the user stopped our timer in Toggl, stop it here too.
+            # 1. Toggl reconciliation: if the user stopped our timer in Toggl, stop it here too. Every few minutes,
+            #    not every minute: this read counts against Toggl's 30-an-hour user bucket, and never its last calls.
             e = db.running_entry()
-            if e and e["toggl_id"] and toggl.enabled():
+            if (e and e["toggl_id"] and toggl.enabled() and time.time() - last_check >= max(1, cfg["toggl"].get("check_minutes", 5)) * 60
+                    and (toggl.quota_left("/me") is None or toggl.quota_left("/me") > 3)):
+                last_check = time.time()
                 with contextlib.suppress(toggl.TogglError):
                     cur = toggl.current()
                     if not cur or cur["id"] != e["toggl_id"]:

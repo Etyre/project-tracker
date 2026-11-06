@@ -183,6 +183,7 @@ a{color:var(--accent)}
 .settings .savebar{position:sticky;bottom:0;background:var(--bg);padding:10px 0;display:flex;gap:10px;align-items:center;justify-content:flex-end}
 #toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 14px;border-radius:10px;font-size:14px;max-width:90vw;display:none;z-index:30}
 #toast a{color:inherit;text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+.treelink{display:inline-block;margin:14px 0 4px;font-size:17px;font-weight:400;color:var(--muted);text-decoration:underline dotted;text-underline-offset:2px;cursor:pointer}.treelink:hover{color:var(--ink)}
 table{border-collapse:collapse;width:100%}td,th{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;font-size:14px}
 .kbd{font-size:12px;color:var(--muted)}
 </style>
@@ -348,19 +349,28 @@ async function quickAdd(e) {
   inp.disabled = false; btn.disabled = false; btn.textContent = 'Add'; inp.focus();
   return false;
 }
-// A click on a "Filed … in …" line of the toast: the Projects page, zoomed out far enough to show that project,
-// its ancestors unfolded, scrolled to the new task with it selected.
-async function revealTask(tid, pid) {
+// "Open in tree" on a feed card, and a click on a "Filed … in …" line of the quick-add toast: the Projects page
+// zoomed into the task's own project, parent tasks unfolded, the task selected with its notes box open.
+async function openInTree(tid, pid) {
   $('#toast').style.display = 'none';
   view = 'projects'; location.hash = 'projects';
   document.querySelectorAll('#side nav button').forEach(b => b.classList.toggle('on', b.dataset.view === view));
-  await renderProjects();                                             // loads the tree
-  const chain = projectChain(pid) || [];
-  if (focusProject && !chain.some(p => p.id === focusProject)) {focusProject = null; localStorage.setItem('focusProject', '');}
-  chain.forEach(p => collapsedProjects.delete(p.id)); saveCollapsed();
+  focusProject = pid || null; localStorage.setItem('focusProject', pid || '');
+  expandOnly(tid);
   pendingFocus = tid;
   await renderProjects();
+  if (!document.querySelector(`.task[data-tid="${tid}"]`)) {           // folded under a parent task: unfold the way down
+    const trail = taskTrail(tid);
+    if (trail) {trail.forEach(id => collapsedTasks.delete(id)); saveFold(); pendingFocus = tid; await renderProjects();}
+  }
   document.querySelector(`.task[data-tid="${tid}"]`)?.scrollIntoView({block: 'center', behavior: 'smooth'});
+}
+const revealTask = openInTree;
+// Ids of the tasks above `tid` in its project (nearest last), or null when it is not in the loaded tree.
+function taskTrail(tid, nodes = tree) {
+  const inTasks = (ts, trail) => {for (const t of ts) {if (t.id === tid) return trail; const r = inTasks(t.children || [], [...trail, t.id]); if (r) return r;} return null;};
+  for (const p of nodes) {const r = inTasks(p.tasks, []) || taskTrail(tid, p.children); if (r) return r;}
+  return null;
 }
 // Enter in the quick-add box submits it (explicitly, so it never depends on the browser's implicit form submission)
 $('#quickText').addEventListener('keydown', e => {if (e.key === 'Enter' && !e.isComposing) quickAdd(e);});
@@ -388,7 +398,8 @@ async function renderFeed() {
     const isActive = c.status === 'active';
     const t = c.task;
     const project = c.kind === 'task' && c.path ? c.path.join(' / ') : c.kind === 'routine' ? 'Daily routine' : '';
-    let body = `<div class="head"><div class="kind">${esc(project) || '&nbsp;'}</div><div class="big">${c.kind === 'checklist' ? 'Daily checklist' : mdLine(c.title).html}</div>`;
+    const treeLink = t ? `<a class="treelink" onclick="openInTree(${t.id}, ${t.project_id})" title="Show this task in its project, with its notes open">open in tree</a>` : '';
+    let body = `<div class="head"><div class="kind">${esc(project) || '&nbsp;'}</div><div class="big">${c.kind === 'checklist' ? 'Daily checklist' : mdLine(c.title).html}</div>${treeLink}`;
     if (c.kind === 'checklist') {
       const cl = c.checklist;
       // a checkbox for rows the sheet lets us tick; computed rows (formulas) show their state; headings stay text
@@ -1579,7 +1590,7 @@ async function renderSettings() {
     ${card('Claude', status.llm, key('anthropic', 'API key', 'sk-ant-…') + f('llm', 'enable', 'Use Claude', 'quick-add filing, estimates and the day plan; without it everything falls back to rules', 'bool') + f('llm', 'model', 'Model') + f('llm', 'effort', 'Plan effort', '', ['low', 'medium', 'high', 'max']) + f('llm', 'quick_add_effort', 'Quick-add effort', '', ['low', 'medium', 'high']))}
     ${card('Work day', undefined, f('general', 'work_start', 'Starts', '', 'time') + f('general', 'work_end', 'Ends', '', 'time') + f('general', 'default_estimate_minutes', 'Default estimate (min)', 'for a task that has no estimate yet', 'number') + f('general', 'min_block_minutes', 'Smallest block (min)', '', 'number') + f('general', 'replan_drift_minutes', 'Re-plan when late by (min)', 'the next block is this late or early', 'number') + f('general', 'overrun_minutes', 'Re-plan after overrun (min)', '', 'number') + f('general', 'replan_min_interval_minutes', 'Re-plan at most every (min)', '', 'number') + f('general', 'meeting_alert_minutes', 'Meeting reminder (min before)', 'the feed shows "N minutes until <meeting>" from this far out', 'number') + f('general', 'meeting_alert_all_day', 'All meetings today', 'show the next meeting however far off it is', 'bool'))}
     ${card('Calendar', status.calendar, f('calendar', 'ics_urls', 'iCal feeds', 'one per line. Google Calendar → Settings → your calendar → "Secret address in iCal format"', 'lines') + f('calendar', 'ignore_titles', 'Ignore events titled', 'comma separated') + f('calendar', 'busy_only', 'Only busy events block time', '', 'bool'))}
-    ${card('Toggl', status.toggl, key('toggl', 'API token', '32 hex characters', 'Toggl Track → Profile → API token') + f('toggl', 'tag', 'Tag on timers') + f('toggl', 'auto_project', 'File timers by project', 'routines go to the Toggl project listed below; a task goes to the Toggl project its project is linked to. Claude decides each one the first time it comes up, creating a Toggl project when none fits, and the answer is kept here or in the opened project, where you can change it', 'bool') + f('toggl', 'routine_projects', 'Routines', 'one per line, "Anki review: Personal | learning, review": the Toggl project for each checklist card, exercise session and journaling, then its tags after a bar', 'lines') + `<label></label><div class="row" style="gap:8px"><button class="btn small" onclick="suggestRoutineProjects(this)">Fill in with Claude</button><span class="muted" id="routineout" style="font-size:12px"></span></div>` + f('toggl', 'project', 'Default project', 'used when nothing above decides'))}
+    ${card('Toggl', status.toggl, key('toggl', 'API token', '32 hex characters', 'Toggl Track → Profile → API token') + f('toggl', 'tag', 'Tag on timers') + f('toggl', 'auto_project', 'File timers by project', 'routines go to the Toggl project listed below; a task goes to the Toggl project its project is linked to. Claude decides each one the first time it comes up, creating a Toggl project when none fits, and the answer is kept here or in the opened project, where you can change it', 'bool') + f('toggl', 'routine_projects', 'Routines', 'one per line, "Anki review: Personal | learning, review": the Toggl project for each checklist card, exercise session and journaling, then its tags after a bar', 'lines') + `<label></label><div class="row" style="gap:8px"><button class="btn small" onclick="suggestRoutineProjects(this)">Fill in with Claude</button><span class="muted" id="routineout" style="font-size:12px"></span></div>` + f('toggl', 'project', 'Default project', 'used when nothing above decides') + f('toggl', 'check_minutes', 'Check running timer every (min)', 'asks Toggl whether you stopped the timer there; Toggl allows 30 such calls an hour on every plan below Enterprise', 'number'))}
     ${card('Linear', status.linear, key('linear', 'API key', 'lin_api_…', 'Linear → Settings → API → personal API key') + f('linear', 'enable', 'Mirror my issues', '', 'bool') + f('linear', 'sync_minutes', 'Sync every (min)', '', 'number') + f('linear', 'category_name', 'Under project') + f('linear', 'group_by', 'Sub-project per', '', ['project', 'team']))}
     ${card('Checklist & exercise sheets', status.sheets !== 'none' && !!status.sheets, key('sheets', 'Sheet token', 'the SHEET_TOKEN script property', 'the Apps Script in apps_script/Code.gs, deployed as a web app on the checklist spreadsheet') + f('sheets', 'apps_script_url', 'Apps Script URL', 'the deployment\'s /exec URL: reads the checklist and checks items off') + f('sheets', 'exercise_script_url', 'Exercise log script URL', 'the exercise app\'s own Google Sheet sync URL (its /exec address); its logged sessions become the exercise history, read-only') + f('sheets', 'daily_checklist_csv', 'Checklist CSV URL', 'read-only fallback') + f('sheets', 'exercise_csv', 'Exercise CSV URL', 'read-only fallback') + f('sheets', 'cache_minutes', 'Cache (min)', '', 'number') + f('sheets', 'prefetch_time', 'Read afresh at', 'sheets and calendar are fetched again at this time each day, so the copies are fresh if the internet is off at night; empty for never', 'time') + f('sheets', 'card_items', 'Rows with their own card', 'one per line, "Anki review: 20" (minutes); each is scheduled every day as its own feed card and ticked in the sheet when you mark it done', 'lines'))}
     <div class="card"><h3>Exercise</h3><p class="muted" style="margin:0 0 10px;font-size:13px">Your rules, one per line, applied to your exercise log each morning with no model involved: <code>squats: at least every 7 days, at most every 3 days</code>, <code>never back to back: deadlifts, squats</code>, <code>fill: benchpress, deadlifts, shoulder press</code>. When several are due, the one done longest ago goes first. Other lines are notes: the day plan reads them for timing, and Claude reads them to override the rules' pick in rare cases (soreness, travel, a session you ask for). Session length is the typical length of that session in your log.</p>

@@ -24,19 +24,52 @@ def enabled() -> bool:
     return bool(config.secret("toggl"))
 
 
+# Toggl meters API calls per sliding hour in two buckets: user-scoped paths (/me/...) get 30 an hour on every plan
+# below Enterprise, workspace-scoped paths (/workspaces/...) get the plan's own allowance (30 on Free). So reads go
+# through workspace paths where Toggl offers them, the rest is cached for the hour, and a 402 ("quota hit") stops
+# further calls to that bucket until Toggl says it resets, instead of each caller burning a timeout on it.
+quota: dict[str, dict] = {}             # bucket -> {remaining, resets_at}
+
+
+def _bucket(path: str) -> str:
+    return "user" if path.startswith("/me") else "workspace"
+
+
+def quota_left(path: str = "/me") -> int | None:
+    """Calls left in this hour for the bucket `path` falls in, as last reported; None when nothing is known yet."""
+    q = quota.get(_bucket(path))
+    if not q:
+        return None
+    return 0 if q.get("resets_at", 0) > time.time() and q.get("remaining") == 0 else q.get("remaining")
+
+
+def _note_quota(path: str, headers, code: int | None = None) -> None:
+    rem, reset = headers.get("X-Toggl-Quota-Remaining"), headers.get("X-Toggl-Quota-Resets-In")
+    if rem is None and code != 402:
+        return
+    q = quota.setdefault(_bucket(path), {})
+    q["remaining"] = int(rem) if rem is not None and rem.isdigit() else (0 if code == 402 else q.get("remaining"))
+    q["resets_at"] = time.time() + (int(reset) if reset and reset.isdigit() else 3600)
+
+
 def _req(method: str, path: str, body: dict | None = None):
     tok = config.secret("toggl")
     if not tok:
         raise TogglError("TOGGL_API_TOKEN not set")
+    q = quota.get(_bucket(path))
+    if q and q.get("remaining") == 0 and q.get("resets_at", 0) > time.time():
+        raise TogglError(f"Toggl hourly API quota used up; resets in {int(q['resets_at'] - time.time())}s")
     auth = base64.b64encode(f"{tok}:api_token".encode()).decode()
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(API + path, data=data, method=method,
                                  headers={"Authorization": "Basic " + auth, "Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
+            _note_quota(path, r.headers)
             raw = r.read()
             return json.loads(raw) if raw else None
     except urllib.error.HTTPError as e:
+        _note_quota(path, e.headers, e.code)
         msg = e.read().decode(errors="replace")[:300]
         raise TogglError(f"Toggl HTTP {e.code}: {msg}") from e
     except urllib.error.URLError as e:
@@ -63,8 +96,14 @@ def _load_projects_and_clients(max_age: float = 3600) -> tuple[list[dict], dict[
     if _projects_cache and time.time() - _projects_cache[0] < max_age:
         return _projects_cache[1], _projects_cache[2]
     try:
-        raw = _req("GET", "/me/projects") or []
-        cl = {int(c["id"]): str(c["name"]) for c in (_req("GET", "/me/clients") or [])}
+        wid = workspace_id()
+        raw: list[dict] = []
+        for page in range(1, 20):                        # workspace-scoped reads: not the 30-an-hour user bucket
+            batch = _req("GET", f"/workspaces/{wid}/projects?per_page=200&page={page}") or []
+            raw += batch
+            if len(batch) < 200:
+                break
+        cl = {int(c["id"]): str(c["name"]) for c in (_req("GET", f"/workspaces/{wid}/clients") or [])}
     except TogglError as e:
         log.warning("toggl projects unavailable: %s", e)
         return (_projects_cache[1], _projects_cache[2]) if _projects_cache else ([], {})
@@ -88,6 +127,7 @@ def forget_projects() -> None:
     global _projects_cache, _index_cache
     _projects_cache = None
     _index_cache = None
+    _entries_cache.clear()
 
 
 def find_project(name: str | None) -> dict | None:
@@ -139,11 +179,28 @@ def start(description: str, extra_tags: list[str] | None = None, project_id: int
     return _req("POST", f"/workspaces/{wid}/time_entries", body)
 
 
-def entries(days: int = 90) -> list[dict]:
-    """The user's recent time entries (any source), newest first."""
+_entries_cache: dict[int, tuple[float, list[dict]]] = {}
+
+
+def entries(days: int = 90, max_age: float = 3600) -> list[dict]:
+    """The user's recent time entries (any source), newest first. Toggl only offers this as a user-scoped read, so
+    one fetch an hour is shared by everything that needs the history."""
+    days = min(days, 90)
+    hit = _entries_cache.get(days)
+    if hit and time.time() - hit[0] < max_age:
+        return hit[1]
     end = dt.date.today() + dt.timedelta(days=1)
-    start = end - dt.timedelta(days=min(days, 90) + 1)
-    return _req("GET", f"/me/time_entries?start_date={start.isoformat()}&end_date={end.isoformat()}") or []
+    start = end - dt.timedelta(days=days + 1)
+    out = _req("GET", f"/me/time_entries?start_date={start.isoformat()}&end_date={end.isoformat()}") or []
+    _entries_cache[days] = (time.time(), out)
+    try:                                   # every fetch of the history trues up the app's own entries against Toggl's
+        from . import db
+        n = db.reconcile_with_toggl(out)
+        if n:
+            log.info("toggl history: %d of the app's entries corrected to Toggl's times", n)
+    except Exception:
+        log.exception("reconciling entries with toggl")
+    return out
 
 
 def current() -> dict | None:

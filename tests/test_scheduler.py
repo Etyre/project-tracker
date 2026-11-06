@@ -431,13 +431,15 @@ def test_exercise_sessions_parse_and_merge(monkeypatch):
     assert len(same_day) == 1 and same_day[0]["source"] == "sheet" and same_day[0]["minutes"] == 47
 
 
-TOGGL_FAKE = {"/me/projects": [{"id": 1, "name": "Palisade", "client_id": 7, "active": True}, {"id": 2, "name": "Personal", "client_id": None, "active": True}],
-              "/me/clients": [{"id": 7, "name": "Palisade Research"}]}
+TOGGL_FAKE = {"/me": {"default_workspace_id": 1, "fullname": "Test"},
+              "/workspaces/1/projects?per_page=200&page=1": [{"id": 1, "name": "Palisade", "client_id": 7, "active": True}, {"id": 2, "name": "Personal", "client_id": None, "active": True}],
+              "/workspaces/1/clients": [{"id": 7, "name": "Palisade Research"}]}
 
 
 def _fake_toggl(monkeypatch):
     from tracker import toggl
     monkeypatch.setattr(toggl, "_req", lambda m, path, body=None: TOGGL_FAKE.get(path))
+    toggl.me.cache_clear()
     monkeypatch.setattr(toggl, "entries", lambda days=90: [
         {"description": "Going to do squats", "project_id": 2, "tags": ["exercise"], "start": "2026-11-01T20:00:00+00:00"},
         {"description": "going to do squats", "project_id": 1, "tags": [], "start": "2026-10-01T20:00:00+00:00"},
@@ -586,6 +588,67 @@ def test_done_on_a_card_stops_its_timer(monkeypatch):
     db.set_item_status(anki, "pending")
     web._start_timer("routine", "anki review")
     assert c.post("/api/feed/finish_block", json={"item_id": anki}).status_code == 200 and db.running_entry() is None
+
+
+def test_toggl_quota_backoff(monkeypatch):
+    """A 402 from Toggl stops further calls to that bucket (fast, no network) until the reported reset; the other
+    bucket is untouched; a success with headers records what is left."""
+    import io, urllib.error, urllib.request
+    from tracker import toggl
+    calls = []
+    class Resp(io.BytesIO):
+        headers = {"X-Toggl-Quota-Remaining": "12", "X-Toggl-Quota-Resets-In": "100"}
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    def fake_open(req, timeout=20):
+        calls.append(req.full_url)
+        if "/me/" in req.full_url:
+            raise urllib.error.HTTPError(req.full_url, 402, "Payment Required", {"X-Toggl-Quota-Remaining": "0", "X-Toggl-Quota-Resets-In": "600"}, io.BytesIO(b"quota"))
+        return Resp(b'{"ok": true}')
+    monkeypatch.setattr(urllib.request, "urlopen", fake_open)
+    monkeypatch.setattr(config, "secret", lambda name: "tok" if name == "toggl" else None)
+    toggl.quota.clear()
+    with pytest.raises(toggl.TogglError, match="402"):
+        toggl._req("GET", "/me/time_entries/current")
+    with pytest.raises(toggl.TogglError, match="quota used up"):
+        toggl._req("GET", "/me/time_entries/current")                # no second request goes out
+    assert len(calls) == 1 and toggl.quota_left("/me") == 0
+    assert toggl._req("GET", "/workspaces/1/clients") == {"ok": True} and toggl.quota_left("/workspaces/1/x") == 12
+    assert len(calls) == 2
+    toggl.quota.clear()
+
+
+def test_toggl_history_trues_up_local_entries():
+    """A timer stopped from Toggl's side is stopped here at Toggl's time; drifted stops take Toggl's; a timer still
+    running in Toggl, or one that matches, is left alone."""
+    import time as _t
+    now = _t.time()
+    iso = lambda t: dt.datetime.fromtimestamp(t, dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    date = db.today()
+    db.save_plan(date, "09:00", "17:00", "run", "", [dict(kind="routine", task_id=None, title="Reconcile me", start="09:00", end="09:20", minutes=20, note="")], {})
+    item = db.rows("SELECT id FROM plan_items WHERE title='Reconcile me'")[0]["id"]
+    db.set_item_status(item, "active")
+    a = db.start_entry("routine", "Reconcile me", None, 501)             # running here, stopped in Toggl an hour ago
+    db.execute("UPDATE time_entries SET started_at=? WHERE id=?", (now - 7200, a))
+    b = db.start_entry("task", "Drifted", None, 502)                      # stopped here 30 min late
+    db.execute("UPDATE time_entries SET started_at=?, stopped_at=? WHERE id=?", (now - 5400, now - 1800, b))
+    c = db.start_entry("task", "Still running", None, 503)
+    db.execute("UPDATE time_entries SET started_at=? WHERE id=?", (now - 300, c))
+    d = db.start_entry("task", "Matches", None, 504)
+    db.execute("UPDATE time_entries SET started_at=?, stopped_at=? WHERE id=?", (now - 1000, now - 400, d))
+    n = db.reconcile_with_toggl([
+        {"id": 501, "start": iso(now - 7200), "stop": iso(now - 3600), "duration": 3600},
+        {"id": 502, "start": iso(now - 5400), "stop": iso(now - 3600), "duration": 1800},
+        {"id": 503, "start": iso(now - 300), "stop": None, "duration": -1},
+        {"id": 504, "start": iso(now - 1000 + 10), "stop": iso(now - 400 - 10), "duration": 580},
+        {"id": 999, "start": iso(now), "stop": None, "duration": -1}])
+    assert n == 2
+    assert abs(db.row("SELECT stopped_at FROM time_entries WHERE id=?", (a,))["stopped_at"] - (now - 3600)) < 2
+    assert db.plan_item(item)["status"] == "pending"
+    assert abs(db.row("SELECT stopped_at FROM time_entries WHERE id=?", (b,))["stopped_at"] - (now - 3600)) < 2
+    assert db.row("SELECT stopped_at FROM time_entries WHERE id=?", (c,))["stopped_at"] is None
+    assert abs(db.row("SELECT stopped_at FROM time_entries WHERE id=?", (d,))["stopped_at"] - (now - 400)) < 2
+    db.execute("UPDATE time_entries SET stopped_at=? WHERE stopped_at IS NULL", (now,))
 
 
 def test_completed_task_keeps_its_place():
