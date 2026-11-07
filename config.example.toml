@@ -56,6 +56,25 @@ prefetch_time = "23:50"   # sheets and calendar are read afresh here, before the
 rotation = []
 after_done = "zone 2 cardio"   # offered at the bottom of the feed once the day's session is done
 
+[reading]
+routine = "Reading books or papers"   # the daily reading row; its feed card suggests the highest-priority reading task
+minutes = 30
+fallback = "Read a book"
+tag = "reading"           # Toggl tag on every reading timer
+
+[writing]
+routine = "Writing - 40 minutes"   # the daily writing row; its card suggests the highest-priority writing task
+minutes = 40
+fallback = "Free writing"
+tag = "writing"           # Toggl tag on timers for tasks that are mainly writing
+
+[focus_monitor]
+enable = true
+min_minutes = 60          # the feed prompts "review your focus monitor" every 60-120 minutes of the work day
+max_minutes = 120
+item = "Review Focus Monitor"   # the checklist row ticked on the first review of the day
+notify = true
+
 [journal]
 app = "Roam Research"
 desktop = 1

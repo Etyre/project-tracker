@@ -236,6 +236,11 @@ def card_items() -> list[dict]:
         if not title or not mins.strip().isdigit():
             title, mins = line, "20"
         out.append({"title": title.strip(), "minutes": max(5, int(mins.strip()))})
+    for section in ("reading", "writing"):       # the daily reading and writing: cards of their own, suggesting what to read or write
+        r = config.load().get(section) or {}
+        title = str(r.get("routine") or "").strip()
+        if title and not any(c["title"].lower().startswith(title.lower()) or title.lower().startswith(c["title"].lower()) for c in out):
+            out.append({"title": title, "minutes": max(5, int(r.get("minutes") or 30))})
     return out
 
 

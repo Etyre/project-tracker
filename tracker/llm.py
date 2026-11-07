@@ -106,9 +106,12 @@ QUICK_ADD_SCHEMA = {
                     "importance": {"type": ["integer", "null"]},
                     "estimate_minutes": {"type": ["integer", "null"]},
                     "chunkable": {"type": "boolean"},
+                    "work_kind": {"type": "string", "enum": ["task", "focus"]},
+                    "reading": {"type": "boolean"},
+                    "writing": {"type": "boolean"},
                 },
                 "required": ["project_path", "title", "description", "deadline", "blocking", "blocking_for",
-                             "importance", "estimate_minutes", "chunkable"],
+                             "importance", "estimate_minutes", "chunkable", "work_kind", "reading", "writing"],
                 "additionalProperties": False,
             },
         },
@@ -123,7 +126,9 @@ QUICK_ADD_SYSTEM = """You file tasks into a personal GTD project hierarchy.
 Given the user's existing project tree (with a few open tasks per project for flavour) and a free-text note,
 produce one or more tasks, each placed in the best-fitting existing project. Prefer existing projects; create a
 new sub-project only when the note clearly concerns a distinct project that has no home yet. Never invent a new
-top-level project unless nothing fits at all.
+top-level project: the first name of every project_path must be one of the top-level names in the tree, copied
+exactly, and the path must list every level down to the project (parent names included, spelled as the tree
+spells them). Only the last name may be new, and only for a genuinely new sub-project.
 
 Field guidance:
 - title: short imperative phrase, as the user would write it. Keep their wording where it is already a title.
@@ -135,6 +140,13 @@ Field guidance:
   4 high, 5 critical. Words like "urgent", "important", "ASAP" and the presence of a blocked person move it up.
 - estimate_minutes: your honest guess; null if you really cannot tell.
 - chunkable: false only for things that must happen in one sitting (a call, a deploy, a review that must be coherent).
+- work_kind: "focus" for work that needs a stretch of real concentration (writing, analysis, design, coding, careful
+  reading, preparing something substantial); "task" for anything done in minutes or between other things (a message,
+  a call, an errand, admin, a quick check, buying something). When unsure, "task" for short things, "focus" for long.
+- reading: true when the task is mainly reading something (a paper, a report, a doc, a book, a thread) rather than
+  writing, deciding or doing; the user's daily reading slot offers these.
+- writing: true when the task is mainly writing (a draft, a memo, a post, a doc, a long reply); false for a quick
+  message, and for reading, deciding or doing.
 Split the note into several tasks only when it plainly lists separate actions."""
 
 SCHEDULE_SYSTEM_PREFIX = """You build a realistic, prioritised plan for the user's work day.
@@ -156,6 +168,8 @@ Hard constraints:
    minutes, reason): schedule exactly one "exercise" block of that length, titled with the title, at the time of day
    the EXERCISE NOTES below prefer. No block only when exercise is already done today; every day has a session.
 7. Short "break" blocks are welcome between long focus blocks, but keep them few.
+   Each task carries `work_kind`: "focus" (focused work) wants a long uninterrupted block at the user's best hours and should
+   not be chopped into small pieces; "task" items fit short gaps, the slots before meetings and low-energy times.
 8. Follow the user's rules and heuristics below; they override these defaults where they conflict.
 
 Output JSON only, matching the schema. `rationale` is 2-4 sentences the user will read on the plan page.
@@ -190,24 +204,59 @@ SCHEDULE_SCHEMA = {
 }
 
 
+WORK_KIND_GUIDE = """work_kind is "focus" for work that needs a stretch of real concentration (writing, analysis, design,
+coding, careful reading, preparing something substantial) and "task" for anything done in minutes or between other
+things (a message, a call, an errand, admin, a quick check, buying something). When unsure: "task" for short things,
+"focus" for long ones. reading is true when the task is mainly reading something (a paper, a report, a doc, a book,
+a thread) rather than writing, deciding or doing. writing is true when the task is mainly writing (a draft, a memo, a
+post, a doc, a long reply), not for a quick message."""
 ESTIMATE_SCHEMA = {
     "type": "object",
-    "properties": {"estimate_minutes": {"type": "integer"}},
-    "required": ["estimate_minutes"],
+    "properties": {"estimate_minutes": {"type": "integer"}, "work_kind": {"type": "string", "enum": ["task", "focus"]},
+                   "reading": {"type": "boolean"}, "writing": {"type": "boolean"}},
+    "required": ["estimate_minutes", "work_kind", "reading", "writing"],
     "additionalProperties": False,
 }
-ESTIMATE_SYSTEM = """You forecast how many minutes of focused work a personal task will take. Tasks are short
-imperative phrases from a GTD list; the project path gives context. Recent completed tasks with the time they
-actually took are provided when available: calibrate to them. Answer with a single realistic number of minutes
-(round to 5), not a best case."""
+ESTIMATE_SYSTEM = """You forecast how many minutes of focused work a personal task will take, whether it is a quick
+task or focused work, and whether it is reading or writing. Tasks are short imperative phrases from a GTD list; the project path gives context. Recent completed
+tasks with the time they actually took are provided when available: calibrate to them. estimate_minutes is a single
+realistic number of minutes (round to 5), not a best case. """ + WORK_KIND_GUIDE
 
 
-def forecast_estimate(title: str, path: str, description: str, examples: list[dict]) -> int:
-    """Learned/forecast time estimate for a task the user typed without one."""
+def forecast_estimate(title: str, path: str, description: str, examples: list[dict]) -> dict:
+    """Learned/forecast time estimate, and the kind of work, for a task the user typed without them:
+    {estimate_minutes, work_kind}."""
     ex = "\n".join(f"- {e['title']}: {round(e['actual'])} min (forecast was {e['est']})" for e in examples[:12])
     user = (f"## Task\n{title}\nProject: {path or '(none)'}\n{('Notes: ' + description) if description else ''}\n\n"
             f"## Recent completed tasks\n{ex or '(none yet)'}")
-    return max(5, min(600, int(structured(ESTIMATE_SYSTEM, user, ESTIMATE_SCHEMA, "low", max_tokens=2000)["estimate_minutes"])))
+    res = structured(ESTIMATE_SYSTEM, user, ESTIMATE_SCHEMA, "low", max_tokens=2000)
+    return {"estimate_minutes": max(5, min(600, int(res["estimate_minutes"]))),
+            "work_kind": res.get("work_kind") if res.get("work_kind") in ("task", "focus") else None,
+            "reading": None if res.get("reading") is None else int(bool(res["reading"])),
+            "writing": None if res.get("writing") is None else int(bool(res["writing"]))}
+
+
+WORK_KINDS_SCHEMA = {
+    "type": "object",
+    "properties": {"kinds": {"type": "array", "items": {
+        "type": "object",
+        "properties": {"id": {"type": "integer"}, "work_kind": {"type": "string", "enum": ["task", "focus"]}, "reading": {"type": "boolean"},
+                       "writing": {"type": "boolean"}},
+        "required": ["id", "work_kind", "reading", "writing"], "additionalProperties": False}}},
+    "required": ["kinds"],
+    "additionalProperties": False,
+}
+WORK_KINDS_SYSTEM = """For each task in the user's list, judge whether it is a quick task or focused work, and whether it is
+mainly reading, and whether it is mainly writing; answer one entry per task id. """ + WORK_KIND_GUIDE
+
+
+def classify_work_kinds(tasks: list[dict]) -> dict[int, dict]:
+    """{task id: {work_kind: "task" | "focus", reading: 0 | 1, writing: 0 | 1}} for tasks the user never marked (a
+    batch, so the backlog is judged in one call)."""
+    lines = [f"- id {t['id']}: {t['title']} (in {t.get('path') or 'no project'})" + (f" - {t['description'][:200]}" if t.get("description") else "") for t in tasks]
+    res = structured(WORK_KINDS_SYSTEM, "## Tasks\n" + "\n".join(lines), WORK_KINDS_SCHEMA, "low", max_tokens=4000)
+    return {int(k["id"]): {"work_kind": k["work_kind"], "reading": int(bool(k.get("reading"))), "writing": int(bool(k.get("writing")))}
+            for k in res.get("kinds") or [] if k.get("work_kind") in ("task", "focus")}
 
 
 def quick_add(text: str, tree_text: str, today: str) -> dict:

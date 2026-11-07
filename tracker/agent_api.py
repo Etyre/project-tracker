@@ -62,6 +62,9 @@ class TaskIn(BaseModel):
     blocking_for: str = ""
     importance: int | None = None          # 1 (low) .. 5 (critical)
     chunkable: bool = True
+    work_kind: str | None = None           # "task" (quick, fits a gap) | "focus" (focused work); Claude judges when left out
+    reading: bool | None = None            # mainly reading something (offered by the daily reading card); Claude judges when left out
+    writing: bool | None = None            # mainly writing; Claude judges when left out
     estimate_minutes: int | None = None    # normally left to the app's forecast
     note: str | None = None                # context attached as the agent's note straight away
     # With neither project nor parent given, Claude files the task like the quick-add bar (Inbox without Claude).
@@ -141,8 +144,9 @@ def _resolve_project(project_id: int | None, path: list[str] | None, create: boo
         if pid is None:
             if not create:
                 raise HTTPException(404, f"no project at path {clean}; pass create_project=true or an existing path")
-            pid = db.ensure_project_path(clean)
-            db.update_project(pid, source="agent")
+            pid, where = db.resolve_project_path(clean, allow_new_top=True)   # never a duplicate of an existing project
+            if where.startswith("new"):
+                db.update_project(pid, source="agent")
         return pid
     return None
 
@@ -165,7 +169,7 @@ def _schedule_context(day: dt.date) -> dict:
     windows = scheduler.free_windows(day, events, ws, we)
     now = dt.datetime.now()
     settled = {i["task_id"] for i in (p["items"] if p else []) if i["status"] in ("done", "skipped", "active") and i["task_id"]}
-    cands = [{k: c[k] for k in ("id", "title", "path", "deadline", "blocking", "blocking_for", "importance", "chunkable",
+    cands = [{k: c[k] for k in ("id", "title", "path", "deadline", "blocking", "blocking_for", "importance", "chunkable", "work_kind",
                                 "estimate_minutes", "expected_minutes", "score", "agent_notes")}
              | {"description": (c["description"] or "")[:300], "settled_today": c["id"] in settled}
              for c in scheduler.candidates(day)]
@@ -271,6 +275,9 @@ def create_task(t: TaskIn, agent: str = Depends(identity)):
         "blocking": int(t.blocking), "blocking_for": t.blocking_for,
         "importance": None if t.importance is None else max(1, min(5, int(t.importance))),
         "chunkable": int(t.chunkable), "estimate_minutes": t.estimate_minutes, "source": "agent",
+        "work_kind": t.work_kind if t.work_kind in db.WORK_KINDS else None,
+        "reading": None if t.reading is None else int(t.reading),
+        "writing": None if t.writing is None else int(t.writing),
     }
     if t.deadline and not fields["deadline"]:
         raise HTTPException(400, f"could not read deadline '{t.deadline}' (use YYYY-MM-DD)")
@@ -289,9 +296,10 @@ def create_task(t: TaskIn, agent: str = Depends(identity)):
                 try:
                     res = llm.quick_add(t.title + ("\n" + t.description if t.description else ""), scheduler.tree_text(), db.today())
                     first = (res.get("tasks") or [{}])[0]
-                    path = [s for s in first.get("project_path", []) if s.strip()] or ["Inbox"]
-                    pid = db.find_project_by_path(path) or db.ensure_project_path(path)
-                    note = res.get("note", "")
+                    pid, where = db.resolve_project_path(first.get("project_path") or [])
+                    if pid is None:
+                        pid = db.ensure_project_path(["Inbox"])
+                    note = res.get("note", "") + (f" ({where})" if where else "")
                     for k in ("estimate_minutes",):
                         if fields.get(k) is None and first.get(k) is not None:
                             fields[k] = first[k]
@@ -326,8 +334,9 @@ def quick_add(q: QuickAddIn, agent: str = Depends(identity)):
         raise HTTPException(502, str(e))
     created = []
     for t in res["tasks"]:
-        path = [s for s in t["project_path"] if s.strip()] or ["Inbox"]
-        pid = db.find_project_by_path(path) or db.ensure_project_path(path)
+        pid, where = db.resolve_project_path(t["project_path"])
+        if pid is None:
+            pid = db.ensure_project_path(["Inbox"])
         title, tagged = tags.parse_tags(t["title"])
         tid = db.create_task(pid, title, **{"description": t["description"], "deadline": t["deadline"],
                              "blocking": int(t["blocking"]), "blocking_for": t["blocking_for"],

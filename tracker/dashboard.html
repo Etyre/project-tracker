@@ -77,6 +77,7 @@ textarea.inline{display:block;width:100%;padding:2px 4px;margin:0;border:0;borde
 .added .note{padding:6px 10px;border-left:2px solid var(--accent);background:var(--card);border-radius:0 3px 3px 0;font-size:13px;line-height:1.45;white-space:pre-wrap;cursor:default}
 .added .who{font-size:11px;color:var(--muted);margin-top:3px}
 .chip.agent{background:transparent;border:1px solid var(--line);color:var(--muted)}
+.chip.kind{background:transparent;border:1px solid var(--line);color:var(--muted)}.chip.kind.focus{color:var(--ink)}
 .feed .added{margin-top:12px;text-align:left}
 .task .notes textarea{width:100%;min-height:90px;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit;resize:vertical}
 .tasks.sub.collapsed{display:none}
@@ -130,6 +131,7 @@ a{color:var(--accent)}
 .feed{display:flex;flex-direction:column;align-items:center;gap:14px;padding-top:12px}
 /* the line above the deck: the next meeting, once it is close */
 .feed .upcoming{min-height:26px;font-size:15px;color:var(--accent);font-weight:600;margin-bottom:6px}
+.feed .nudge{display:flex;gap:10px;align-items:center;justify-content:center;font-size:15px;font-weight:600;color:var(--ink);margin-bottom:10px}
 .page{width:min(900px,100%);min-height:min(640px,calc(100vh - 150px));background:var(--card);border:1px solid var(--line);border-radius:6px;padding:24px 0 28px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.06);display:flex;flex-direction:column}
 .page .main{flex:1;display:flex;flex-direction:column;justify-content:space-evenly;padding:8px 0}
 /* completing a card: it flashes green, then slides off to the right; the next card slides in */
@@ -258,7 +260,9 @@ function deadlineChip(d) {
   return `<span class="chip ${cls}" title="Due ${full}">${label}</span>`;
 }
 const impDots = n => n ? `<span class="dots" title="importance ${n}/5">${'●'.repeat(n)}${'○'.repeat(5 - n)}</span>` : '';
-const chips = t => `${deadlineChip(t.deadline)}${t.blocking ? `<span class="chip bad">blocking${t.blocking_for ? ': ' + esc(t.blocking_for) : ''}</span>` : ''}${impDots(t.importance)}${t.source === 'agent' ? '<span class="chip agent" title="Added by your assistant agent">agent</span>' : ''}`;
+const readingChip = t => (t.reading === 1 ? '<span class="chip kind" title="Mainly reading: the daily reading card offers it">reading</span>' : '') + (t.writing === 1 ? '<span class="chip kind" title="Mainly writing">writing</span>' : '');
+const kindChip = t => t.work_kind === 'focus' ? '<span class="chip kind focus" title="Focused work: wants a long uninterrupted block">focused work</span>' : t.work_kind === 'task' ? '<span class="chip kind" title="A quick task: fits a gap">task</span>' : '';
+const chips = t => `${deadlineChip(t.deadline)}${t.blocking ? `<span class="chip bad">blocking${t.blocking_for ? ': ' + esc(t.blocking_for) : ''}</span>` : ''}${impDots(t.importance)}${kindChip(t)}${readingChip(t)}${t.source === 'agent' ? '<span class="chip agent" title="Added by your assistant agent">agent</span>' : ''}`;
 // Context added by the assistant agent: kept apart from your own notes and always signed, so what came from it is plain
 const fmtWhen = ts => new Date(ts * 1000).toLocaleString(undefined, {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'});
 const addedNotesHTML = notes => (notes || []).length ? `<div class="added">${notes.map(n => `<div class="note"><div>${linkify(n.body)}</div><div class="who">${esc(n.author)} · ${fmtWhen(n.created_at)}</div></div>`).join('')}</div>` : '';
@@ -343,7 +347,7 @@ async function quickAdd(e) {
   try {
     const r = await api('/quick_add', 'POST', {text});
     inp.value = '';
-    toast(r.created.map(t => `Filed <a onclick="revealTask(${t.id}, ${t.project_id})" title="Show it in the project tree"><b>${esc(t.title)}</b> in ${esc(t.path.join(' / '))}</a>`).join('<br>') + (r.note ? `<br><span class="muted">${esc(r.note)}</span>` : ''), 8000);
+    toast(r.created.map(t => `Filed <a onclick="revealTask(${t.id}, ${t.project_id})" title="Show it in the project tree"><b>${esc(t.title)}</b> in ${esc(t.path.join(' / '))}</a>${t.where ? ` <span class="muted">(${esc(t.where)})</span>` : ''}`).join('<br>') + (r.note ? `<br><span class="muted">${esc(r.note)}</span>` : ''), 8000);
     if (view === 'projects') renderProjects();
   } catch (err) {toast('Quick add failed: ' + esc(err.message), 6000);}
   inp.disabled = false; btn.disabled = false; btn.textContent = 'Add'; inp.focus();
@@ -397,17 +401,24 @@ async function renderFeed() {
   } else {
     const isActive = c.status === 'active';
     const t = c.task;
-    const project = c.kind === 'task' && c.path ? c.path.join(' / ') : c.kind === 'routine' ? 'Daily routine' : '';
+    const project = c.kind === 'task' && c.path ? c.path.join(' / ') : c.kind === 'routine' ? 'Recurring' : '';
     const treeLink = t ? `<a class="treelink" onclick="openInTree(${t.id}, ${t.project_id})" title="Show this task in its project, with its notes open">open in tree</a>` : '';
-    let body = `<div class="head"><div class="kind">${esc(project) || '&nbsp;'}</div><div class="big">${c.kind === 'checklist' ? 'Daily checklist' : mdLine(c.title).html}</div>${treeLink}`;
+    const blockTitle = t && t.title.trim() !== c.title.trim() ? `<div class="muted" style="margin-top:4px">block: ${mdLine(c.title).html}</div>` : '';   // the planner (or the agent) named the block differently
+    let body = `<div class="head"><div class="kind">${esc(project) || '&nbsp;'}</div><div class="big">${c.kind === 'checklist' ? 'Daily checklist' : mdLine(t ? t.title : c.title).html}${t && t.work_kind ? ' ' + kindChip(t) : ''}</div>${blockTitle}${treeLink}`;
     if (c.kind === 'checklist') {
       const cl = c.checklist;
       // a checkbox for rows the sheet lets us tick; computed rows (formulas) show their state; headings stay text
       body += cl.items.length ? `<div class="clist">${cl.items.map(i => i.checkable !== false ? `<label><input type="checkbox" ${i.done ? 'checked' : ''} onchange="checkItem(this, ${JSON.stringify(i.item).replace(/"/g, '&quot;')})"> <span>${esc(i.item)}</span></label>`
         : i.computed ? `<label class="muted" title="computed in the sheet"><span>${i.done ? '☑' : '☐'}</span> <span>${esc(i.item)}</span></label>` : `<div class="muted" style="margin-top:4px">${esc(i.item)}</div>`).join('')}</div>` : `<div class="meta">No checklist sheet configured.</div>`;
     }
-    if (t && t.notes_added && t.notes_added.length) body += addedNotesHTML(t.notes_added);
-    body += '</div>';
+    if (c.suggest) {           // the daily reading / writing card: what to read or write, from the projects, else the fallback
+      const st = c.suggest.task, sg = c.suggest;
+      body += st ? `<div class="meta" style="margin-top:12px">${esc(sg.verb)}: <b>${mdLine(st.title).html}</b> <span class="muted">${esc((sg.path || []).join(' / '))}</span> ${chips(st)}<br>
+          <a class="treelink" onclick="openInTree(${st.id}, ${st.project_id})">open in tree</a> <a class="treelink" onclick="finishSuggested(${st.id})" title="Complete this task; the next one is offered next time">finished it</a></div>`
+        : `<div class="meta" style="margin-top:12px">Nothing queued from your projects: <b>${esc(sg.fallback)}</b><br>
+          <input id="suggestWhat" placeholder="what are you ${esc(sg.flag)}? (names the timer; filed by its title)" style="margin-top:8px;width:100%;max-width:420px;padding:6px 9px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit" onkeydown="event.stopPropagation()"></div>`;
+    }
+    body += '</div>';                       // the agent's notes stay on the Projects page: the card is the task alone
     const actions = `<div class="actions">
         ${isActive ? `<button class="btn" onclick="stopTimer()">Stop</button>` : `<button class="btn primary" onclick="startItem(${c.id})">Start</button>`}
         <label class="btn" style="display:flex;gap:6px;align-items:center"><input type="checkbox" onchange="completeItem(${c.id}, this)"> ${c.kind === 'task' ? 'Complete' : 'Done'}</label>
@@ -417,7 +428,8 @@ async function renderFeed() {
   const meeting = f.meeting_now ? `<div class="meeting">In a meeting until ${f.meeting_now.end}: ${esc(f.meeting_now.title)}</div>` : '';
   feedMeetings = {list: f.meetings || [], alert: f.meeting_alert_all_day ? 0 : (f.meeting_alert_minutes || 45)};   // 0: any meeting still to come today
   const note = f.replanning.active ? `<div class="foot"><span>re-planning…</span></div>` : f.plan.off_track ? `<div class="foot"><span>off track, re-plan pending</span></div>` : '';
-  m.innerHTML = `<div class="feed"><div class="upcoming">${upcomingText()}</div>${meeting}<div class="stack">${card}</div>${note}</div>`;
+  const nudge = f.focus_monitor && f.focus_monitor.due ? `<div class="nudge">Review your focus monitor <button class="btn small" onclick="focusMonitorDone()">Done</button></div>` : '';
+  m.innerHTML = `<div class="feed"><div class="upcoming">${upcomingText()}</div>${nudge}${meeting}<div class="stack">${card}</div>${note}</div>`;
   if (f.replanning.active) setTimeout(() => {if (view === 'feed') renderFeed().catch(() => {});}, 5000);
 }
 // "Daily regather in 12 minutes": the next meeting starting within the alert window, in whole minutes, re-checked
@@ -450,7 +462,8 @@ async function rebuild(fromNow) {
   catch (e) {toast('Plan failed: ' + esc(e.message), 8000);}
 }
 async function startItem(id) {
-  try {const r = await api('/feed/start', 'POST', {item_id: id}); if (r.toggl_error) toast('Toggl: ' + esc(r.toggl_error), 6000);}
+  const what = document.getElementById('suggestWhat');            // the reading / writing card with nothing queued: what is being read or written
+  try {const r = await api('/feed/start', 'POST', {item_id: id, label: what ? what.value.trim() || null : null}); if (r.toggl_error) toast('Toggl: ' + esc(r.toggl_error), 6000);}
   catch (e) {toast('Could not start: ' + esc(e.message), 6000);}
   await refreshStatus(); renderFeed();
 }
@@ -466,6 +479,8 @@ async function completeItem(id, el) {
 async function finishBlock(id) {await api('/feed/finish_block', 'POST', {item_id: id}); pushUndo('done for now', () => api('/feed/reset_item', 'POST', {item_id: id})); await refreshStatus(); renderFeed();}
 async function skipItem(id) {await api('/feed/skip', 'POST', {item_id: id}); pushUndo('skip', () => api('/feed/reset_item', 'POST', {item_id: id})); await refreshStatus(); renderFeed();}
 async function startExercise(title) {const r = await api('/exercise/start', 'POST', title ? {title} : undefined); if (r.toggl_error) toast('Toggl: ' + esc(r.toggl_error), 6000); else toast(`Timer started: ${esc(r.kind)}`); await refreshStatus(); renderFeed();}
+async function finishSuggested(tid) {try {const r = await api(`/tasks/${tid}/complete`, 'POST'); pushUndo('finish', () => api(`/tasks/${tid}/uncomplete`, 'POST')); if (r.linear_error) toast('Linear: ' + esc(r.linear_error), 6000); else toast('Task completed');} catch (e) {toast(esc(e.message), 5000);} await refreshStatus(); renderFeed();}
+async function focusMonitorDone() {try {const r = await api('/focus_monitor/done', 'POST'); toast(`Noted. Next prompt in about ${r.next_in_minutes} minutes` + (r.sheet && !r.sheet.ok ? '; sheet: ' + esc(r.sheet.error) : ''), 4000);} catch (e) {toast(esc(e.message), 5000);} renderFeed();}
 async function startJournal() {const r = await api('/journal/start', 'POST'); toast(r.open_error ? 'Journal timer started; ' + esc(r.open_error) : 'Journal timer started', 5000); await refreshStatus(); renderFeed();}
 async function checkItem(box, item) {
   box.disabled = true;
@@ -741,11 +756,7 @@ function editProjectName(pid, append, caret, text) {
     if (e.key === 'Escape') {e.preventDefault(); await save(false); if (head) pendingFocusProject = pid; renderProjects();}
     else if (plainEnter(e) && splitAt(inp)?.left) {const sp = splitAt(inp); e.preventDefault(); inp.value = sp.left; await save(); pendingAdd = {project_id: pid, parent_id: null, after_id: 0, text: sp.right, caret: 'start', split: true}; renderProjects();}
     else if (!head) {if (e.key === 'Enter') {e.preventDefault(); await save(); pendingAdd = {project_id: pid, parent_id: null, after_id: 0}; renderProjects();}}   // zoomed-in heading
-    else if (e.key === 'Backspace' && !inp.value) {   // an emptied, empty project goes away
-      e.preventDefault(); const prev = neighbourRow(head, -1);
-      try {await deleteLine(lineInfo(head)); done = true; projectEdit = null; editRowLater(prev); renderProjects();}
-      catch (err) {toast(esc(err.message), 5000);}
-    }
+    else if (e.key === 'Backspace' && !inp.value) {e.preventDefault();}   // an emptied project line stays until you click elsewhere
     else await outlineKey(e, head, save);
   };
   // clicking away keeps what was typed: save at once (a re-render then re-opens whatever got the click)
@@ -904,7 +915,8 @@ function openInlineAdd(a, text, caret) {
   wirePaste(inp, rest => commit(false, false, null, rest));
   inp.onkeydown = e => {
     if (e.key === 'Escape') {e.preventDefault(); done = true; closeInlineAdd();}
-    else if (e.key === 'Backspace' && atStart(inp)) {   // Backspace never removes the line itself: emptied, it goes away when you click elsewhere
+    else if (e.key === 'Backspace' && !inp.value) {e.preventDefault();}   // an empty line stays until you click elsewhere
+    else if (e.key === 'Backspace' && atStart(inp)) {   // at the start of text: join it onto the line above (never removes the line itself)
       e.preventDefault(); const text = inp.value.trim(), fromSplit = !!inlineAdd.split; row.dataset.project = inlineAdd.project_id;
       mergeIntoPrev(row, text, async () => {done = true; closeInlineAdd(); return false;}, fromSplit).catch(err => toast(esc(err.message), 5000));
     }
@@ -949,7 +961,7 @@ function outdentInline() {
 //   Up / Down previous / next line           Cmd+Up / Cmd+Down collapse / expand   Cmd+Shift+Up / Down move the line
 //   Cmd+Enter complete (tasks)               Shift+Enter notes                     Alt+Right / Alt+Left zoom in / out
 //   Cmd+B bold = project (and back)          Cmd+E dates & priority                Cmd+Shift+Backspace delete the line
-//   Cmd+Z undo                               Backspace at the start of a line joins it onto the line above
+//   Cmd+Z undo                               Backspace at the start of a line joins its text onto the line above (an empty line stays)
 //   With several lines selected (Shift+Up/Down, Shift+click): # applies tags to all of them, Cmd+E edits all of them
 // where a row sits now, so a move can be undone (after_id 0 = first among its siblings)
 const slotOf = row => ({project_id: +row.dataset.project, parent_id: row.dataset.parent ? +row.dataset.parent : null, after_id: prevTaskRow(row) ? +prevTaskRow(row).dataset.tid : 0});
@@ -1115,7 +1127,7 @@ async function deleteLine(L) {   // throws (with a readable message) when the li
   if (L.kind === 'task') {
     const old = findTask(L.id), slot = slotOf(L.row);
     await api(`/tasks/${L.id}`, 'DELETE');
-    if (old) pushUndo(`delete "${old.title}"`, () => api('/tasks', 'POST', {...slot, title: old.title, description: old.description || '', deadline: old.deadline, blocking: !!old.blocking, blocking_for: old.blocking_for || '', importance: old.importance, chunkable: !!old.chunkable}));
+    if (old) pushUndo(`delete "${old.title}"`, () => api('/tasks', 'POST', {...slot, title: old.title, description: old.description || '', deadline: old.deadline, blocking: !!old.blocking, blocking_for: old.blocking_for || '', importance: old.importance, chunkable: !!old.chunkable, work_kind: old.work_kind || null, reading: old.reading == null ? null : old.reading === 1, writing: old.writing == null ? null : old.writing === 1}));
   } else {
     const p = findProject(L.id);
     await api(`/projects/${L.id}/delete_empty`, 'POST');
@@ -1251,7 +1263,7 @@ async function applyToSelection(body) {   // body: {text: "#p2 #due:fri"} or {fi
   const ids = selectedTaskIds(), keys = selKeys(); if (!ids.length) {toast('No tasks selected'); return false;}
   const r = await api('/tasks/apply', 'POST', {ids, ...body});
   pushUndo(`change ${r.count} task${r.count === 1 ? '' : 's'}`, () => Promise.all(Object.entries(r.before).map(([id, f]) => api(`/tasks/${id}`, 'PATCH', f))));
-  const names = {importance: 'priority', blocking_for: 'who is waiting', chunkable: 'shape'};
+  const names = {importance: 'priority', blocking_for: 'who is waiting', chunkable: 'shape', work_kind: 'kind'};
   toast(`Set ${Object.keys(r.fields).map(k => names[k] || k).join(', ')} on ${r.count} task${r.count === 1 ? '' : 's'}` + (r.linear_error ? '; Linear: ' + esc(r.linear_error) : ''), 4000);
   await renderProjects(); reselect(keys); const c = document.getElementById('multicount'); if (c) c.textContent = `${selectedTaskIds().length} selected`; return true;
 }
@@ -1285,6 +1297,9 @@ function openBulkModal() {
       <label>Importance</label><select name="importance">${keep}<option value="none">none in particular</option>${[5, 4, 3, 2, 1].map(n => `<option value="${n}">${n}${n === 5 ? ' (critical)' : n === 1 ? ' (trivial)' : ''}</option>`).join('')}</select>
       <label>Blocking</label><div class="row"><select name="blocking">${keep}<option value="1">blocking</option><option value="0">not blocking</option></select> <input name="blocking_for" placeholder="who is waiting?"></div>
       <label>Shape</label><select name="chunkable">${keep}<option value="1">can be split across sittings</option><option value="0">one sitting</option></select>
+      <label>Kind</label><select name="work_kind">${keep}<option value="task">task: quick, fits a gap</option><option value="focus">focused work</option><option value="none">not judged (Claude decides)</option></select>
+      <label>Reading</label><select name="reading">${keep}<option value="1">reading</option><option value="0">not reading</option></select>
+      <label>Writing</label><select name="writing">${keep}<option value="1">writing</option><option value="0">not writing</option></select>
       <div class="full row" style="justify-content:flex-end;margin-top:8px"><button class="btn" type="button" id="cancel">Cancel</button><button class="btn primary" type="submit">Apply</button></div>
     </form></div>`;
   document.body.appendChild(el);
@@ -1297,6 +1312,9 @@ function openBulkModal() {
     if (f.get('blocking')) {fields.blocking = f.get('blocking') === '1'; if (!fields.blocking) fields.blocking_for = '';}
     if (f.get('blocking_for')) {fields.blocking_for = f.get('blocking_for'); fields.blocking = true;}
     if (f.get('chunkable')) fields.chunkable = f.get('chunkable') === '1';
+    if (f.get('work_kind')) fields.work_kind = f.get('work_kind') === 'none' ? '' : f.get('work_kind');
+    if (f.get('reading')) fields.reading = f.get('reading') === '1';
+    if (f.get('writing')) fields.writing = f.get('writing') === '1';
     close(); if (!Object.keys(fields).length) return false;
     try {await applyToSelection({fields});} catch (e) {toast(esc(e.message), 5000);}
     return false;
@@ -1404,6 +1422,7 @@ function editTaskTitle(tid, append, caret, text) {
   titleEdit = {tid, row, span, orig, inp, save};
   inp.onkeydown = async e => {
     if (e.key === 'Escape') {e.preventDefault(); inp.value = orig; end(); row.focus();}
+    else if (e.key === 'Backspace' && !inp.value) {e.preventDefault();}   // an emptied line stays until you click elsewhere
     else if (e.key === 'Backspace' && atStart(inp)) {   // at the start of the text: join onto the line above
       const L = lineInfo(row);
       try {if (await mergeIntoPrev(row, inp.value.trim(), async () => {await deleteLine(L); done = true; titleEdit = null; return true;})) e.preventDefault();}
@@ -1531,6 +1550,9 @@ function openTaskModal(t) {
       <label>Blocking</label><div class="row"><input name="blocking" type="checkbox" ${t.blocking ? 'checked' : ''} style="width:auto"> <input name="blocking_for" placeholder="who is waiting?" value="${esc(t.blocking_for || '')}"></div>
       <label>Importance</label><select name="importance"><option value="" ${t.importance ? '' : 'selected'}>none in particular</option>${[1, 2, 3, 4, 5].map(n => `<option value="${n}" ${n === t.importance ? 'selected' : ''}>${n}${n === 5 ? ' (critical)' : n === 1 ? ' (trivial)' : ''}</option>`).join('')}</select>
       <label>Shape</label><div><input name="chunkable" type="checkbox" ${t.chunkable ? 'checked' : ''} style="width:auto"> <span class="muted">can be split across sittings</span></div>
+      <label>Kind</label><select name="work_kind"><option value="" ${t.work_kind ? '' : 'selected'}>not judged yet (Claude will)</option><option value="task" ${t.work_kind === 'task' ? 'selected' : ''}>task: quick, fits a gap</option><option value="focus" ${t.work_kind === 'focus' ? 'selected' : ''}>focused work: needs a stretch of concentration</option></select>
+      <label>Reading</label><div><input name="reading" type="checkbox" ${t.reading === 1 ? 'checked' : ''} style="width:auto"> <span class="muted">mainly reading: offered by the daily reading card</span></div>
+      <label>Writing</label><div><input name="writing" type="checkbox" ${t.writing === 1 ? 'checked' : ''} style="width:auto"> <span class="muted">mainly writing</span></div>
       <label>Notes</label><textarea name="description" placeholder="context, links…">${esc(t.description || '')}</textarea>
       <label>Created</label><div class="muted">${fmtDate(t.created_at)}${t.linear_url ? ` · <a href="${esc(t.linear_url)}" target="_blank">${esc(t.linear_identifier)}</a>` : ''}</div>
       <div class="full row" style="justify-content:flex-end;margin-top:8px"><button class="btn" type="button" id="cancel">Cancel</button><button class="btn primary" type="submit" id="save">Save</button></div>
@@ -1543,10 +1565,10 @@ function openTaskModal(t) {
     const f = new FormData(el.querySelector('form'));
     const body = {title: f.get('title'), project_id: +f.get('project_id'), description: f.get('description'),
       deadline: f.get('deadline') || null, blocking: f.get('blocking') === 'on', blocking_for: f.get('blocking_for'),
-      importance: f.get('importance') ? +f.get('importance') : null, chunkable: f.get('chunkable') === 'on'};
+      importance: f.get('importance') ? +f.get('importance') : null, chunkable: f.get('chunkable') === 'on', work_kind: f.get('work_kind') || '', reading: f.get('reading') === 'on', writing: f.get('writing') === 'on'};
     try {
       const r = await api(`/tasks/${t.id}`, 'PATCH', body);
-      const before = Object.fromEntries(Object.keys(body).map(k => [k, k === 'description' || k === 'blocking_for' ? (t[k] || '') : k === 'blocking' || k === 'chunkable' ? !!t[k] : k === 'deadline' ? (t.deadline || null) : t[k]]));
+      const before = Object.fromEntries(Object.keys(body).map(k => [k, k === 'description' || k === 'blocking_for' || k === 'work_kind' ? (t[k] || '') : k === 'blocking' || k === 'chunkable' ? !!t[k] : k === 'reading' || k === 'writing' ? t[k] === 1 : k === 'deadline' ? (t.deadline || null) : t[k]]));
       pushUndo('edit', () => api(`/tasks/${t.id}`, 'PATCH', before));
       if (r.linear_error) toast('Saved; Linear: ' + esc(r.linear_error), 6000);
       close(); render();
@@ -1590,14 +1612,17 @@ async function renderSettings() {
     ${card('Claude', status.llm, key('anthropic', 'API key', 'sk-ant-…') + f('llm', 'enable', 'Use Claude', 'quick-add filing, estimates and the day plan; without it everything falls back to rules', 'bool') + f('llm', 'model', 'Model') + f('llm', 'effort', 'Plan effort', '', ['low', 'medium', 'high', 'max']) + f('llm', 'quick_add_effort', 'Quick-add effort', '', ['low', 'medium', 'high']))}
     ${card('Work day', undefined, f('general', 'work_start', 'Starts', '', 'time') + f('general', 'work_end', 'Ends', '', 'time') + f('general', 'default_estimate_minutes', 'Default estimate (min)', 'for a task that has no estimate yet', 'number') + f('general', 'min_block_minutes', 'Smallest block (min)', '', 'number') + f('general', 'replan_drift_minutes', 'Re-plan when late by (min)', 'the next block is this late or early', 'number') + f('general', 'overrun_minutes', 'Re-plan after overrun (min)', '', 'number') + f('general', 'replan_min_interval_minutes', 'Re-plan at most every (min)', '', 'number') + f('general', 'meeting_alert_minutes', 'Meeting reminder (min before)', 'the feed shows "N minutes until <meeting>" from this far out', 'number') + f('general', 'meeting_alert_all_day', 'All meetings today', 'show the next meeting however far off it is', 'bool'))}
     ${card('Calendar', status.calendar, f('calendar', 'ics_urls', 'iCal feeds', 'one per line. Google Calendar → Settings → your calendar → "Secret address in iCal format"', 'lines') + f('calendar', 'ignore_titles', 'Ignore events titled', 'comma separated') + f('calendar', 'busy_only', 'Only busy events block time', '', 'bool'))}
-    ${card('Toggl', status.toggl, key('toggl', 'API token', '32 hex characters', 'Toggl Track → Profile → API token') + f('toggl', 'tag', 'Tag on timers') + f('toggl', 'auto_project', 'File timers by project', 'routines go to the Toggl project listed below; a task goes to the Toggl project its project is linked to. Claude decides each one the first time it comes up, creating a Toggl project when none fits, and the answer is kept here or in the opened project, where you can change it', 'bool') + f('toggl', 'routine_projects', 'Routines', 'one per line, "Anki review: Personal | learning, review": the Toggl project for each checklist card, exercise session and journaling, then its tags after a bar', 'lines') + `<label></label><div class="row" style="gap:8px"><button class="btn small" onclick="suggestRoutineProjects(this)">Fill in with Claude</button><span class="muted" id="routineout" style="font-size:12px"></span></div>` + f('toggl', 'project', 'Default project', 'used when nothing above decides') + f('toggl', 'check_minutes', 'Check running timer every (min)', 'asks Toggl whether you stopped the timer there; Toggl allows 30 such calls an hour on every plan below Enterprise', 'number'))}
+    ${card('Toggl', status.toggl, key('toggl', 'API token', '32 hex characters', 'Toggl Track → Profile → API token') + f('toggl', 'tag', 'Tag on timers') + f('toggl', 'auto_project', 'File timers by project', 'recurring cards go to the Toggl project listed below; a task goes to the Toggl project its project is linked to. Claude decides each one the first time it comes up, creating a Toggl project when none fits, and the answer is kept here or in the opened project, where you can change it', 'bool') + f('toggl', 'routine_projects', 'Recurring cards', 'one per line, "Anki review: Personal | learning, review": the Toggl project for each recurring card (checklist rows with a card, exercise sessions, the daily reading, journaling), then its tags after a bar', 'lines') + `<label></label><div class="row" style="gap:8px"><button class="btn small" onclick="suggestRoutineProjects(this)">Fill in with Claude</button><span class="muted" id="routineout" style="font-size:12px"></span></div>` + f('toggl', 'project', 'Default project', 'used when nothing above decides') + f('toggl', 'check_minutes', 'Check running timer every (min)', 'asks Toggl whether you stopped the timer there; Toggl allows 30 such calls an hour on every plan below Enterprise', 'number'))}
     ${card('Linear', status.linear, key('linear', 'API key', 'lin_api_…', 'Linear → Settings → API → personal API key') + f('linear', 'enable', 'Mirror my issues', '', 'bool') + f('linear', 'sync_minutes', 'Sync every (min)', '', 'number') + f('linear', 'category_name', 'Under project') + f('linear', 'group_by', 'Sub-project per', '', ['project', 'team']))}
-    ${card('Checklist & exercise sheets', status.sheets !== 'none' && !!status.sheets, key('sheets', 'Sheet token', 'the SHEET_TOKEN script property', 'the Apps Script in apps_script/Code.gs, deployed as a web app on the checklist spreadsheet') + f('sheets', 'apps_script_url', 'Apps Script URL', 'the deployment\'s /exec URL: reads the checklist and checks items off') + f('sheets', 'exercise_script_url', 'Exercise log script URL', 'the exercise app\'s own Google Sheet sync URL (its /exec address); its logged sessions become the exercise history, read-only') + f('sheets', 'daily_checklist_csv', 'Checklist CSV URL', 'read-only fallback') + f('sheets', 'exercise_csv', 'Exercise CSV URL', 'read-only fallback') + f('sheets', 'cache_minutes', 'Cache (min)', '', 'number') + f('sheets', 'prefetch_time', 'Read afresh at', 'sheets and calendar are fetched again at this time each day, so the copies are fresh if the internet is off at night; empty for never', 'time') + f('sheets', 'card_items', 'Rows with their own card', 'one per line, "Anki review: 20" (minutes); each is scheduled every day as its own feed card and ticked in the sheet when you mark it done', 'lines'))}
+    ${card('Checklist & exercise sheets', status.sheets !== 'none' && !!status.sheets, key('sheets', 'Sheet token', 'the SHEET_TOKEN script property', 'the Apps Script in apps_script/Code.gs, deployed as a web app on the checklist spreadsheet') + f('sheets', 'apps_script_url', 'Apps Script URL', 'the deployment\'s /exec URL: reads the checklist and checks items off') + f('sheets', 'exercise_script_url', 'Exercise log script URL', 'the exercise app\'s own Google Sheet sync URL (its /exec address); its logged sessions become the exercise history, read-only') + f('sheets', 'daily_checklist_csv', 'Checklist CSV URL', 'read-only fallback') + f('sheets', 'exercise_csv', 'Exercise CSV URL', 'read-only fallback') + f('sheets', 'cache_minutes', 'Cache (min)', '', 'number') + f('sheets', 'prefetch_time', 'Read afresh at', 'sheets and calendar are fetched again at this time each day, so the copies are fresh if the internet is off at night; empty for never', 'time') + f('sheets', 'card_items', 'Rows with their own card', 'one per line, "Anki review: 20" (minutes); each is a recurring card in the feed every day, ticked in the sheet when you mark it done', 'lines'))}
     <div class="card"><h3>Exercise</h3><p class="muted" style="margin:0 0 10px;font-size:13px">Your rules, one per line, applied to your exercise log each morning with no model involved: <code>squats: at least every 7 days, at most every 3 days</code>, <code>never back to back: deadlifts, squats</code>, <code>fill: benchpress, deadlifts, shoulder press</code>. When several are due, the one done longest ago goes first. Other lines are notes: the day plan reads them for timing, and Claude reads them to override the rules' pick in rare cases (soreness, travel, a session you ask for). Session length is the typical length of that session in your log.</p>
       <textarea id="exprompt" style="width:100%;min-height:200px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit">${esc(s.exercise_brief)}</textarea>
       <div class="form" style="margin-top:10px">${f('exercise', 'after_done', 'After the day\'s session', 'offered at the bottom of the feed once today\'s exercise is done; empty for none') + f('exercise', 'rotation', 'Rotation without rules', 'comma separated: used only before any rules are written and the log is empty')}</div></div>
     ${card('Assistant agent', undefined, key('agent', 'API token', 'any long random string', 'optional: the agent sends it as <code>Authorization: Bearer …</code>; without one any process on this Mac may call the agent API'),
       `Your executive-assistant agent can add tasks and projects, attach context to any item (shown signed with its name) and set or steer the day's schedule. Base URL <code>http://${esc(c.general.host)}:${esc(String(c.general.port))}/api/agent</code>; the calls are listed there and documented at <a href="/docs#/agent" target="_blank">/docs</a> and in the README.`)}
+    ${card('Reading', undefined, f('reading', 'routine', 'Checklist row', 'the daily reading row in your checklist; it gets a recurring card of its own that offers the highest-priority reading task from your projects') + f('reading', 'minutes', 'Minutes', '', 'number') + f('reading', 'fallback', 'When nothing is queued', 'what the card suggests when no reading task is open') + f('reading', 'tag', 'Toggl tag', 'on every reading timer, whichever project it is filed under'))}
+    ${card('Writing', undefined, f('writing', 'routine', 'Checklist row', 'the daily writing row in your checklist; it gets a recurring card of its own that offers the highest-priority writing task from your projects') + f('writing', 'minutes', 'Minutes', '', 'number') + f('writing', 'fallback', 'When nothing is queued', 'what the card suggests when no writing task is open') + f('writing', 'tag', 'Toggl tag', 'on every writing timer, whichever project it is filed under'))}
+    ${card('Focus monitor', undefined, f('focus_monitor', 'enable', 'Prompt me to review it', '', 'bool') + f('focus_monitor', 'min_minutes', 'At least every (min)', '', 'number') + f('focus_monitor', 'max_minutes', 'At most every (min)', 'a random interval in this range, during the work day; Done on the feed starts the next one', 'number') + f('focus_monitor', 'item', 'Checklist row', 'ticked on the first review of the day; empty for none') + f('focus_monitor', 'notify', 'macOS notification', '', 'bool'))}
     ${card('Journal', undefined, f('journal', 'app', 'App', 'an app name, or a URL for Roam') + f('journal', 'desktop', 'Switch to desktop', 'Mission Control desktop number (needs its ctrl+N shortcut enabled); 0 = stay', 'number'))}
     ${card('Snapshots', undefined, f('snapshots', 'enable', 'Daily snapshot', '', 'bool') + f('snapshots', 'time', 'At', '', 'time') + f('snapshots', 'dir', 'Folder', `empty = ${esc(s.paths.snapshots)}`))}
     <div class="card"><h3>Scheduling rules &amp; heuristics</h3><p class="muted" style="margin:0 0 10px;font-size:13px">Free text that Claude reads when it builds the day. Say how you like your days shaped.</p>
@@ -1618,8 +1643,8 @@ async function saveSettings() {
   try {const r = await api('/settings', 'PUT', {config: cfg, rules: $('#rules').value, exercise_brief: $('#exprompt').value}); await refreshStatus(); toast(r.warnings?.length ? 'Settings saved. ' + esc(r.warnings.join('; ')) : 'Settings saved', r.warnings?.length ? 8000 : undefined); renderSettings();}
   catch (e) {toast('Could not save: ' + esc(e.message), 6000);}
 }
-// Claude sorts every routine (checklist cards, exercise sessions, journaling) into a Toggl project once; the lines
-// land in the Routines box for review and are saved with the rest of the settings.
+// Claude sorts every recurring card (checklist rows, exercise sessions, journaling) into a Toggl project once; the lines
+// land in the Recurring cards box for review and are saved with the rest of the settings.
 async function suggestRoutineProjects(btn) {
   const out = $('#routineout'), ta = document.querySelector('[name="toggl.routine_projects"]');
   btn.disabled = true; out.textContent = 'Asking Claude…';

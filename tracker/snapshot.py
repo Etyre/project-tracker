@@ -33,6 +33,12 @@ def _tags(t: dict) -> str:
         tags.append("#blocking" + (f":{t['blocking_for']}" if t.get("blocking_for") else ""))
     if t.get("chunkable") == 0:
         tags.append("#onesitting")
+    if t.get("work_kind") in ("task", "focus"):
+        tags.append("#" + t["work_kind"])
+    if t.get("reading") == 1:
+        tags.append("#reading")
+    if t.get("writing") == 1:
+        tags.append("#writing")
     return (" " + " ".join(tags)) if tags else ""
 
 

@@ -234,7 +234,7 @@ def build(day: dt.date | None = None, from_now: bool = False, until: str | None 
                          for e in events if not e["all_day"]],
             "all_day_events": [e["title"] for e in events if e["all_day"]],
             "tasks": [{k: t[k] for k in ("id", "title", "path", "deadline", "blocking", "blocking_for", "importance",
-                                         "chunkable", "expected_minutes", "score")}
+                                         "chunkable", "expected_minutes", "score")} | {"work_kind": t.get("work_kind")}
                       | {"description": (t["description"] or "")[:300], "age_days": int((now.timestamp() - t["created_at"]) / 86400)}
                       | ({"agent_notes": [n[:300] for n in t["agent_notes"][-5:]]} if t.get("agent_notes") else {})
                       for t in tasks],
@@ -453,7 +453,7 @@ def tree_text() -> str:
 
     def walk(nodes: list[dict], depth: int) -> None:
         for p in nodes:
-            lines.append("  " * depth + f"- {db.plain_name(p['name'])}")
+            lines.append("  " * depth + f"- {db.display_name(p['name'])}")
             for t in p["tasks"][:5]:
                 lines.append("  " * (depth + 1) + f"· {t['title']}" + (f" ({len(t['children'])} sub-tasks)" if t.get("children") else ""))
             if len(p["tasks"]) > 5:

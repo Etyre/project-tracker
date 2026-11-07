@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import datetime as dt
 import logging
+import random
 import threading
 import time
 from typing import Any
@@ -51,6 +52,9 @@ class TaskIn(BaseModel):
     importance: int | None = None         # None = no particular priority
     estimate_minutes: int | None = None
     chunkable: bool = True
+    work_kind: str | None = None          # "task" | "focus" (focused work); left to Claude when not given
+    reading: bool | None = None           # mainly reading something; left to Claude when not given
+    writing: bool | None = None           # mainly writing; left to Claude when not given
 
 
 class TaskPatch(BaseModel):
@@ -64,6 +68,9 @@ class TaskPatch(BaseModel):
     estimate_minutes: int | None = None
     clear_estimate: bool = False
     chunkable: bool | None = None
+    work_kind: str | None = None          # "task" | "focus"; "" clears it so Claude judges again
+    reading: bool | None = None
+    writing: bool | None = None
     project_id: int | None = None
     parent_id: int | None = None
     after_id: int | None = None
@@ -102,6 +109,7 @@ class QuickAdd(BaseModel):
 
 class ItemRef(BaseModel):
     item_id: int
+    label: str | None = None    # the reading / writing card with nothing queued: what is being read or written (names the timer)
 
 
 class ExerciseStart(BaseModel):
@@ -120,23 +128,117 @@ class RebuildIn(BaseModel):
 
 
 # ============================================================ helpers
+def _work_kind(v: str | None) -> str | None:
+    """A work kind from the API: "task" | "focus" | None (empty string clears)."""
+    v = (v or "").strip().lower()
+    if v in ("", "none", "null"):
+        return None
+    if v in ("focused", "focused work", "focus work"):
+        return "focus"
+    if v not in db.WORK_KINDS:
+        raise HTTPException(400, f"work_kind must be one of {', '.join(db.WORK_KINDS)}")
+    return v
+
+
 def _forecast_estimate_later(tid: int) -> None:
-    """Estimates are learned, not typed: forecast one in the background for a task created without one."""
+    """Estimates and the kind of work are learned, not typed: forecast them in the background for a task created
+    without them (either one the user set is kept)."""
     t = db.task(tid)
-    if not t or t["estimate_minutes"] or not llm.enabled():
+    if not t or (t["estimate_minutes"] and t["work_kind"] and t["reading"] is not None and t["writing"] is not None) or not llm.enabled():
         return
 
     def run() -> None:
         try:
             path = " / ".join(db.project_path(t["project_id"]))
-            est = llm.forecast_estimate(t["title"], path, t["description"], estimates.actuals())
+            res = llm.forecast_estimate(t["title"], path, t["description"], estimates.actuals())
             cur = db.task(tid)
-            if cur and not cur["estimate_minutes"]:
-                db.update_task(tid, estimate_minutes=est)
+            if not cur:
+                return
+            fields = {}
+            if not cur["estimate_minutes"]:
+                fields["estimate_minutes"] = res["estimate_minutes"]
+            if not cur["work_kind"] and res.get("work_kind"):
+                fields["work_kind"] = res["work_kind"]
+            if cur["reading"] is None and res.get("reading") is not None:
+                fields["reading"] = res["reading"]
+            if cur["writing"] is None and res.get("writing") is not None:
+                fields["writing"] = res["writing"]
+            if fields:
+                db.update_task(tid, **fields)
         except Exception as e:  # noqa: BLE001 - a missing forecast must never break task creation
             log.warning("estimate forecast failed for task %s: %s", tid, e)
 
     threading.Thread(target=run, daemon=True, name=f"estimate-{tid}").start()
+
+
+def _classify_backlog() -> int:
+    """Judge the open tasks Claude has not seen yet (older than this feature, or added while it was off), a batch at
+    a time, from the background loop. Returns how many were judged."""
+    todo = db.tasks_without_work_kind(40)
+    if not todo or not llm.enabled():
+        return 0
+    kinds = llm.classify_work_kinds([{"id": t["id"], "title": t["title"], "description": t["description"],
+                                      "path": " / ".join(db.project_path(t["project_id"]))} for t in todo])
+    for tid, judged in kinds.items():
+        cur = db.task(tid)
+        if not cur:
+            continue
+        fields = {}
+        if not cur["work_kind"]:
+            fields["work_kind"] = judged["work_kind"]
+        if cur["reading"] is None:
+            fields["reading"] = judged["reading"]
+        if cur["writing"] is None:
+            fields["writing"] = judged.get("writing", 0)
+        if fields:
+            db.update_task(tid, **fields)
+    return len(kinds)
+
+
+def _task_flag_tags(task_id: int | None) -> list[str]:
+    """Toggl tags a task's own timers carry from what it is: "reading" and "writing" (Settings), whatever its project."""
+    t = db.task(task_id) if task_id else None
+    if not t:
+        return []
+    cfg = config.load()
+    out = []
+    if t["reading"] == 1 and (cfg["reading"].get("tag") or "").strip():
+        out.append(cfg["reading"]["tag"].strip())
+    if t["writing"] == 1 and (cfg["writing"].get("tag") or "").strip():
+        out.append(cfg["writing"]["tag"].strip())
+    return out
+
+
+SUGGEST_FLAGS = ("reading", "writing")       # daily cards that suggest a specific task from the tree
+SUGGEST_VERB = {"reading": "Read", "writing": "Write"}
+
+
+def _suggest_flag(title: str) -> str | None:
+    """Which suggesting card a recurring card title is (its checklist row from Settings), if any."""
+    t = (title or "").strip().lower()
+    for flag in SUGGEST_FLAGS:
+        r = (config.load()[flag].get("routine") or "").strip().lower()
+        if r and (t == r or t.startswith(r) or r.startswith(t)):
+            return flag
+    return None
+
+
+def _is_reading_routine(title: str) -> bool:
+    return _suggest_flag(title) == "reading"
+
+
+def _suggest_pick(flag: str) -> dict | None:
+    """What the daily reading / writing card offers: the open task of that kind with the highest priority."""
+    cands = db.flagged_tasks(flag)
+    if not cands:
+        return None
+    today = dt.date.fromisoformat(db.today())
+    best = max(cands, key=lambda t: (scheduler.priority_score(t, today), -t["id"]))
+    return {"task": {**_tick_task_fields(best), "notes_added": db.notes_for("task", best["id"])}, "path": db.project_path(best["project_id"])}
+
+
+def _reading_pick() -> dict | None:
+    return _suggest_pick("reading")
 
 
 def _tick_task_fields(t: dict) -> dict:
@@ -182,6 +284,9 @@ def _toggl_project_for_timer(kind: str, label: str, task_id: int | None) -> dict
     project of the task's project (or an ancestor) for tasks. {project_id, project, source} or None."""
     if not config.load()["toggl"].get("auto_project", True):
         return None
+    if kind in SUGGEST_FLAGS:                         # filed by what is read or written, never by the card: last time's project for the same title
+        hit = toggl.history_match(label)
+        return {"project_id": hit["project_id"], "project": hit["project"], "tags": [], "source": "history"} if hit and hit.get("project_id") else None
     if kind != "task" or task_id is None:
         return toggl.routine_project(label)
     t = db.task(task_id)
@@ -204,7 +309,7 @@ def _start_timer(kind: str, label: str, task_id: int | None = None, extra_tags: 
         except Exception:                                   # a Toggl hiccup never stops a timer
             log.exception("choosing the Toggl project for '%s'", label)
         try:
-            tags = [*(extra_tags or []), *((chosen or {}).get("tags") or [])]
+            tags = list(dict.fromkeys([*(extra_tags or []), *_task_flag_tags(task_id), *((chosen or {}).get("tags") or [])]))
             toggl_id = toggl.start(label, tags, project_id=chosen["project_id"] if chosen else None)["id"]
         except toggl.TogglError as ex:
             err = str(ex)
@@ -251,6 +356,9 @@ def _file_timer(toggl_id: int, kind: str, label: str, task_id: int | None, conte
         elif t:
             d = toggl.decide_project(f"Task: {t['title']}", (t["description"] or "")[:600])
             tags = []
+        elif kind in SUGGEST_FLAGS:                   # a book, a paper, a piece: judged on its title each time, nothing remembered
+            d = toggl.decide_project(f"{kind.capitalize()}: {label}", context or kind)
+            tags = d["tags"]
         else:
             d = toggl.decide_project(f"Routine: {toggl.routine_key(label)}", context or kind)
             tags = d["tags"]
@@ -267,10 +375,7 @@ def _routine_labels() -> list[str]:
     """Every recurring thing the app starts timers for: checklist rows with a card, the exercise sessions named in
     the exercise rules, journaling."""
     out: list[str] = []
-    for item in config.load()["sheets"].get("card_items") or []:
-        name = str(item).rsplit(":", 1)[0].strip() if ":" in str(item) else str(item).strip()
-        if name:
-            out.append(name)
+    out += [c["title"] for c in sheets.card_items() if not _suggest_flag(c["title"])]   # reading and writing are filed by what is read or written
     rules = exercise.parse_rules(config.exercise_text())
     out += [r["name"] for r in rules.get("required", [])] + list(rules.get("fill", []))
     if config.load()["exercise"].get("after_done"):
@@ -344,6 +449,52 @@ def _checklist_state(date: str) -> dict:
 
 # ============================================================ app
 show_window_hook = None   # set by the native app: called with a page fragment to bring the window to the front
+notify_hook = None        # set by the native app: called with (title, message) for a macOS notification
+
+
+# ---- the focus-monitor prompt: at a random interval (60-120 min by default) through the work day ---------------
+def _in_work_day(now: dt.datetime | None = None) -> bool:
+    cfg = config.load()["general"]
+    now = now or dt.datetime.now()
+    m = now.hour * 60 + now.minute
+    return scheduler.parse_hm(cfg["work_start"]) <= m < scheduler.parse_hm(cfg["work_end"])
+
+
+def _focus_monitor_schedule_next(from_when: float | None = None) -> float:
+    fm = config.load()["focus_monitor"]
+    lo, hi = max(5, int(fm.get("min_minutes") or 60)), max(5, int(fm.get("max_minutes") or 120))
+    nxt = (from_when or time.time()) + random.uniform(min(lo, hi), max(lo, hi)) * 60
+    db.set_setting("focus_monitor_next", str(nxt))
+    return nxt
+
+
+def _focus_monitor_state() -> dict:
+    """{enabled, due, next_in_minutes}: due once the interval has run out, within the work day."""
+    fm = config.load()["focus_monitor"]
+    if not fm.get("enable", True):
+        return {"enabled": False, "due": False, "next_in_minutes": None}
+    raw = db.get_setting("focus_monitor_next")
+    try:
+        nxt = float(raw) if raw else None
+    except ValueError:
+        nxt = None
+    if nxt is None:
+        nxt = _focus_monitor_schedule_next()
+    due = time.time() >= nxt and _in_work_day()
+    return {"enabled": True, "due": due, "next_in_minutes": max(0, int((nxt - time.time()) / 60))}
+
+
+def _focus_monitor_done() -> dict:
+    """The user has reviewed: the next prompt is a fresh random interval away; the checklist row is ticked once a day."""
+    fm = config.load()["focus_monitor"]
+    nxt = _focus_monitor_schedule_next()
+    date = db.today()
+    sheet = None
+    item = (fm.get("item") or "").strip()
+    if item and item not in db.checklist_done_today(date):
+        db.log_checklist(date, item)
+        sheet = sheets.mark_done(item) if sheets.writable() else None
+    return {"ok": True, "next_in_minutes": int((nxt - time.time()) / 60), "sheet": sheet}
 
 
 def create_app() -> FastAPI:
@@ -424,7 +575,7 @@ def create_app() -> FastAPI:
             raise HTTPException(400, "Claude is not configured")
         labels = _routine_labels()
         if not labels:
-            raise HTTPException(400, "no routines: list checklist rows with their own card or exercise rules first")
+            raise HTTPException(400, "no recurring cards: list checklist rows with their own card or exercise rules first")
         try:
             return toggl.suggest_routines(labels)
         except (toggl.TogglError, llm.LLMError) as e:
@@ -483,6 +634,10 @@ def create_app() -> FastAPI:
         d = t.model_dump()
         d["blocking"] = int(d["blocking"])
         d["chunkable"] = int(d["chunkable"])
+        d["work_kind"] = _work_kind(d["work_kind"])
+        for flag in ("reading", "writing"):
+            if d[flag] is not None:
+                d[flag] = int(d[flag])
         if d["importance"] is not None:
             d["importance"] = max(1, min(5, d["importance"]))
         if not _someday(d["project_id"]):
@@ -518,6 +673,11 @@ def create_app() -> FastAPI:
         if fields.get("title") and not _someday(db.task(tid)["project_id"]):
             fields["title"], tagged = tags.parse_tags(fields["title"])
             fields.update(tagged)
+        if "work_kind" in fields:
+            fields["work_kind"] = _work_kind(fields["work_kind"])
+        for flag in ("reading", "writing"):
+            if fields.get(flag) is not None:
+                fields[flag] = int(bool(fields[flag]))
         for b in ("blocking", "chunkable"):
             if fields.get(b) is not None:
                 fields[b] = int(fields[b])
@@ -651,7 +811,7 @@ def create_app() -> FastAPI:
         if a.text and a.text.strip():
             _, tagged = tags.parse_tags("x " + a.text.strip())
             fields.update(tagged)
-        allowed = {"deadline", "blocking", "blocking_for", "importance", "chunkable"}
+        allowed = {"deadline", "blocking", "blocking_for", "importance", "chunkable", "work_kind", "reading", "writing"}
         for k, v in (a.fields or {}).items():
             if k in allowed:
                 fields[k] = v
@@ -750,14 +910,15 @@ def create_app() -> FastAPI:
         except llm.LLMError as e:
             raise HTTPException(502, str(e))
         for t in res["tasks"]:
-            path = [s for s in t["project_path"] if s.strip()] or ["Inbox"]
-            pid = db.find_project_by_path(path) or db.ensure_project_path(path)
+            pid, where = db.resolve_project_path(t["project_path"])
+            if pid is None:                                   # Claude named a top level that does not exist: never a new tree
+                pid, where = db.ensure_project_path(["Inbox"]), f"in Inbox ({where}; file it by hand)"
             title, tagged = tags.parse_tags(t["title"])       # explicit tags in the note win over Claude's reading
             tid = db.create_task(pid, title, **{"description": t["description"], "deadline": t["deadline"],
                                  "blocking": int(t["blocking"]), "blocking_for": t["blocking_for"],
                                  "importance": None if t["importance"] is None else max(1, min(5, int(t["importance"]))),
                                  "estimate_minutes": t["estimate_minutes"], "chunkable": int(t["chunkable"]), "source": "quick_add", **tagged})
-            created.append({**db.task(tid), "path": db.project_path(pid)})
+            created.append({**db.task(tid), "path": db.project_path(pid), "where": where})
         return {"created": created, "note": res.get("note", "")}
 
     # ------------------------------------------------ plan & feed
@@ -784,7 +945,7 @@ def create_app() -> FastAPI:
         now_min = now.hour * 60 + now.minute
         out: dict[str, Any] = {"date": date, "now": now.strftime("%H:%M"), "plan": None, "current": None,
                                "timer": _timer_state(), "exercise": _current_exercise(date),
-                               "replanning": dict(scheduler.replanning),
+                               "replanning": dict(scheduler.replanning), "focus_monitor": _focus_monitor_state(),
                                "status": {"toggl": toggl.enabled(), "sheets_writable": sheets.writable()}}
         cfg = config.load()["general"]
         ws, we = scheduler.parse_hm(cfg["work_start"]), scheduler.parse_hm(p["work_end"] if p else cfg["work_end"])
@@ -808,6 +969,10 @@ def create_app() -> FastAPI:
                        "path": db.project_path(current["project_id"])}
         if current and current["kind"] == "checklist":
             current = {**current, "checklist": _checklist_state(date)}
+        flag = _suggest_flag(current["title"]) if current and current["kind"] == "routine" else None
+        if flag:
+            current = {**current, "suggest": {**(_suggest_pick(flag) or {"task": None, "path": None}), "flag": flag, "verb": SUGGEST_VERB[flag],
+                                              "fallback": config.load()[flag].get("fallback") or ("Read a book" if flag == "reading" else "Free writing")}}
         if current:
             current["behind_minutes"] = max(0, now_min - scheduler.parse_hm(current["start"]))
         done = sum(1 for i in items if i["status"] == "done" and i["kind"] != "meeting")
@@ -835,9 +1000,17 @@ def create_app() -> FastAPI:
         it = db.plan_item(r.item_id)
         if not it:
             raise HTTPException(404)
-        res = _start_timer(it["kind"] if it["kind"] in ("task", "exercise", "routine", "journal") else "task",
-                           _item_label(it), it["task_id"], [it["kind"]] if it["kind"] in ("exercise", "journal") else None,
-                           context={"exercise": "exercise session, travel included", "routine": "daily routine from the checklist", "journal": "journaling"}.get(it["kind"], ""))
+        flag = _suggest_flag(it["title"]) if it["kind"] == "routine" else None
+        pick = _suggest_pick(flag) if flag else None
+        if pick:                                      # the reading / writing card: the timer is the task's, so its time is tracked
+            res = _start_timer("task", pick["task"]["title"], pick["task"]["id"])
+        elif flag:                                    # nothing queued: a book, a paper, a piece, named by the user, filed by its title
+            ftag = [t for t in [(config.load()[flag].get("tag") or "").strip()] if t]     # tagged reading / writing whatever its project
+            res = _start_timer(flag, (r.label or "").strip() or flag.capitalize(), None, ftag, context=f"{flag} a book, paper or piece of writing")
+        else:
+            res = _start_timer(it["kind"] if it["kind"] in ("task", "exercise", "routine", "journal") else "task",
+                               _item_label(it), it["task_id"], [it["kind"]] if it["kind"] in ("exercise", "journal") else None,
+                               context={"exercise": "exercise session, travel included", "routine": "daily routine from the checklist", "journal": "journaling"}.get(it["kind"], ""))
         db.set_item_status(it["id"], "active")
         return {"ok": True, **res}
 
@@ -910,6 +1083,10 @@ def create_app() -> FastAPI:
     def feed_reset(r: ItemRef):
         db.set_item_status(r.item_id, "pending")
         return {"ok": True}
+
+    @app.post("/api/focus_monitor/done")
+    def focus_monitor_done():
+        return _focus_monitor_done()
 
     @app.post("/api/timer/stop")
     def timer_stop():
@@ -992,7 +1169,8 @@ def _start_background() -> None:
 
 
 def _loop() -> None:
-    last_linear = last_check = 0.0
+    last_linear = last_check = last_classify = 0.0
+    notified_for = None
     while True:
         try:
             cfg = config.load()
@@ -1037,6 +1215,22 @@ def _loop() -> None:
                 sheets.prefetch()
                 calendar_feed.prefetch()
                 exercise.history()           # refreshes the Toggl part of the exercise history too
+            # 8. The focus-monitor prompt: a macOS notification once per interval when it comes due
+            fm = _focus_monitor_state()
+            if fm["due"] and config.load()["focus_monitor"].get("notify", True) and notify_hook is not None:
+                key = db.get_setting("focus_monitor_next")
+                if key != notified_for:
+                    notified_for = key
+                    notify_hook("Review your focus monitor", "Then press Done on the feed; the next prompt is 1-2 hours away.")
+            # 9. Tasks Claude has not yet judged quick-task-or-focused-work: a batch every few minutes
+            if llm.enabled() and time.time() - last_classify > 300:
+                last_classify = time.time()
+                try:
+                    n = _classify_backlog()
+                    if n:
+                        log.info("work kind judged for %d tasks", n)
+                except Exception as ex:
+                    log.warning("work kind classification failed: %s", ex)
         except Exception:
             log.exception("background loop")
         time.sleep(60)

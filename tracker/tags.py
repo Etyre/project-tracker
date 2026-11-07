@@ -5,6 +5,9 @@
     #due:fri  #due:nov3  #due:2026-11-03  #due:3nov  #due:11-03   (#deadline:… is the same)
     #blocking  #blocking:Sam
     #onesitting           cannot be split across sittings (#splittable undoes it)
+    #focus  #task         focused work (needs a stretch of concentration) or a quick task (#nokind: let Claude judge again)
+    #reading              mainly reading something: the daily reading card offers it (#notreading undoes it)
+    #writing              mainly writing (#notwriting undoes it)
     #p0  #nodue  #notblocking   clear the priority / deadline / blocking flag (handy on a multi-selection)
 
 Known tags are removed from the title and become fields; anything else starting with # stays as text.
@@ -92,6 +95,20 @@ def parse_tags(title: str, today: dt.date | None = None) -> tuple[str, dict]:
             fields["chunkable"] = 0
         elif name in ("splittable", "chunkable") and not arg:
             fields["chunkable"] = 1
+        elif name in ("focus", "focused", "focusedwork") and not arg:
+            fields["work_kind"] = "focus"
+        elif name in ("task", "quick") and not arg:
+            fields["work_kind"] = "task"
+        elif name == "nokind" and not arg:
+            fields["work_kind"] = None
+        elif name == "reading" and not arg:
+            fields["reading"] = 1
+        elif name == "notreading" and not arg:
+            fields["reading"] = 0
+        elif name == "writing" and not arg:
+            fields["writing"] = 1
+        elif name == "notwriting" and not arg:
+            fields["writing"] = 0
         else:
             return m.group(0)
         return ""

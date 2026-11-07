@@ -73,6 +73,25 @@ DEFAULTS: dict[str, Any] = {
         "rotation": ["run", "strength", "mobility"],   # fallback when Claude is not configured
         "after_done": "zone 2 cardio",       # the extra session the feed offers once the day's exercise is done ("" = none)
     },
+    "reading": {
+        "routine": "Reading books or papers",   # the checklist row that is the daily reading; its card suggests what to read
+        "minutes": 30,
+        "fallback": "Read a book",            # what the card says when no reading task is queued in the projects
+        "tag": "reading",                     # Toggl tag on every reading timer (the project varies with what is read)
+    },
+    "writing": {
+        "routine": "Writing - 40 minutes",    # the checklist row that is the daily writing; its card suggests what to write
+        "minutes": 40,
+        "fallback": "Free writing",           # what the card says when no writing task is queued in the projects
+        "tag": "writing",                     # Toggl tag on every timer for a task that is mainly writing
+    },
+    "focus_monitor": {
+        "enable": True,
+        "min_minutes": 60,                   # the feed prompts "review your focus monitor" at a random interval in this range...
+        "max_minutes": 120,                  # ...during the work day; Done starts the next interval
+        "item": "Review Focus Monitor",      # the checklist row ticked on the first review of the day ("" = none)
+        "notify": True,                      # also a macOS notification when it comes due
+    },
     "journal": {
         "app": "Logseq",                     # or "Roam Research" / a URL like "https://roamresearch.com/..."
         "desktop": 1,                        # Mission Control desktop number to switch to (0 = don't switch)

@@ -142,6 +142,7 @@ class ProjectTrackerApp(rumps.App):
         ]
         from . import web
         web.show_window_hook = lambda fragment=None: AppHelper.callAfter(self.main_window.show, fragment)
+        web.notify_hook = lambda title, message: AppHelper.callAfter(rumps.notification, APP_NAME, title, message)
         threading.Thread(target=self._serve, daemon=True, name="web").start()
         rumps.Timer(self.refresh, 30).start()
         self._open_when_ready()

@@ -38,6 +38,9 @@ CREATE TABLE IF NOT EXISTS tasks (
     importance INTEGER,                              -- 1 (low) .. 5 (critical); NULL = no particular priority
     estimate_minutes INTEGER,
     chunkable INTEGER NOT NULL DEFAULT 1,            -- 0 = must be done in one sitting
+    work_kind TEXT,                                  -- 'task' (quick, fits a gap) | 'focus' (focused work: needs a stretch of concentration); NULL = not judged yet
+    reading INTEGER,                                 -- 1 = the task is mainly reading something (the daily reading card offers it); NULL = not judged yet
+    writing INTEGER,                                 -- 1 = the task is mainly writing; NULL = not judged yet
     position INTEGER NOT NULL DEFAULT 0,
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL,
@@ -142,6 +145,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         cols = {r["name"]: r for r in conn.execute("PRAGMA table_info(tasks)")}
     if "archived_at" not in cols:
         conn.execute("ALTER TABLE tasks ADD COLUMN archived_at REAL")
+        conn.commit()
+    if "work_kind" not in cols:
+        conn.execute("ALTER TABLE tasks ADD COLUMN work_kind TEXT")
+        conn.commit()
+    if "reading" not in cols:
+        conn.execute("ALTER TABLE tasks ADD COLUMN reading INTEGER")
+        conn.commit()
+    if "writing" not in cols:
+        conn.execute("ALTER TABLE tasks ADD COLUMN writing INTEGER")
         conn.commit()
         cols = {r["name"]: r for r in conn.execute("PRAGMA table_info(tasks)")}
     if cols["importance"]["notnull"]:
@@ -359,16 +371,69 @@ def toggl_project_for(pid: int | None) -> dict | None:
 
 
 def plain_name(name: str) -> str:
-    """A project name as it reads: Markdown heading marks ("## Policy") and extra spaces dropped, lower case. Used to
-    match the names Claude and the agent API give back against the stored ones."""
-    return " ".join(re.sub(r"^\s*#{1,6}\s+", "", name or "").split()).lower()
+    """A project name as it reads, for matching the names Claude and the agent API give back against the stored
+    ones: Markdown heading marks ("## Policy") dropped, case, punctuation and spacing ignored ("Policy-maker
+    engagement" reads as "policymaker engagement")."""
+    return re.sub(r"[^a-z0-9]+", "", re.sub(r"^\s*#{1,6}\s+", "", name or "").lower())
+
+
+def display_name(name: str) -> str:
+    """A project name without its Markdown heading marks, case kept: what Claude is shown and what it gives back."""
+    return " ".join(re.sub(r"^\s*#{1,6}\s+", "", name or "").split())
 
 
 def _child_project(parent: int | None, name: str) -> dict | None:
-    """The live sub-project of `parent` whose name reads as `name` (exact stored name first)."""
+    """The live sub-project of `parent` whose name reads as `name`. When several do (a stray duplicate beside the
+    real one), the one with the most in it wins, then the exact spelling, then the older one."""
     kids = rows("SELECT id,name FROM projects WHERE parent_id IS ? AND archived_at IS NULL AND someday_at IS NULL ORDER BY position, id", (parent,))
-    return (next((k for k in kids if k["name"].lower() == name.lower()), None)
-            or next((k for k in kids if plain_name(k["name"]) == plain_name(name)), None))
+    hits = [k for k in kids if plain_name(k["name"]) == plain_name(name)]
+    if len(hits) <= 1:
+        return hits[0] if hits else None
+    def weight(k):
+        tasks = row("SELECT count(*) AS c FROM tasks WHERE project_id=? AND completed_at IS NULL", (k["id"],))["c"]
+        return (tasks + len(project_descendants(k["id"])), k["name"].lower() == name.lower(), -k["id"])
+    return max(hits, key=weight)
+
+
+def _projects_named(name: str, under: int | None) -> list[dict]:
+    """Live projects anywhere (or anywhere below `under`) whose name reads as `name`."""
+    ps = rows("SELECT id,name,parent_id FROM projects WHERE archived_at IS NULL AND someday_at IS NULL")
+    hits = [p for p in ps if plain_name(p["name"]) == plain_name(name)]
+    if under is not None:
+        below = set(project_descendants(under))
+        hits = [p for p in hits if p["id"] in below]
+    return hits
+
+
+def resolve_project_path(path: list[str], allow_new_top: bool = False) -> tuple[int | None, str]:
+    """Where a task whose project is given as a path of names (by Claude or the agent) goes, without ever making a
+    duplicate of a project that exists. Each name is matched reading-wise under the project matched so far; a name
+    that is not a direct child but is unique below it (Claude skipped a level) or unique anywhere (Claude dropped
+    the top levels) is used as is; a new name is created only as a sub-project of a matched one. A first name that
+    matches nothing is not a reason to create a top-level project: the task goes to Inbox (pid None, with a note),
+    unless `allow_new_top` (the agent asking for exactly that). Returns (project id or None, note)."""
+    clean = [s.strip() for s in path if s and s.strip()]
+    parent: int | None = None
+    created: list[str] = []
+    for i, name in enumerate(clean):
+        hit = _child_project(parent, name)
+        if hit is None:
+            below = _projects_named(name, parent) if parent is not None else []
+            anywhere = _projects_named(name, None) if (parent is None or not below) else []
+            if len(below) == 1:
+                hit = below[0]
+            elif len(anywhere) == 1 and (parent is None or created == []):
+                hit = anywhere[0]
+        if hit is not None:
+            parent = hit["id"]
+            continue
+        if parent is None and not allow_new_top:
+            return None, f"no top-level project called '{name}'"
+        parent = create_project(name, parent)
+        created.append(name)
+    if parent is None:
+        return None, "no project named"
+    return parent, (f"new sub-project {' / '.join(created)}" if created else "")
 
 
 def find_project_by_path(path: list[str]) -> int | None:
@@ -392,7 +457,7 @@ def ensure_project_path(path: list[str]) -> int:
 
 # ---------------------------------------------------------------- tasks
 TASK_FIELDS = {"title", "description", "deadline", "blocking", "blocking_for", "importance",
-               "estimate_minutes", "chunkable", "project_id", "parent_id", "position", "completed_at", "archived_at",
+               "estimate_minutes", "chunkable", "work_kind", "reading", "writing", "project_id", "parent_id", "position", "completed_at", "archived_at",
                "linear_id", "linear_identifier", "linear_url", "linear_state", "linear_team_id",
                "linear_updated_at", "source"}
 
@@ -470,6 +535,27 @@ def task(tid: int) -> dict | None:
     return row("SELECT * FROM tasks WHERE id=?", (tid,))
 
 
+WORK_KINDS = ("task", "focus")
+
+
+def tasks_without_work_kind(limit: int = 40) -> list[dict]:
+    """Open tasks in live projects that Claude has not yet judged (quick task or focused work; reading; writing)."""
+    return rows("""SELECT t.* FROM tasks t JOIN projects p ON p.id=t.project_id
+                   WHERE t.completed_at IS NULL AND (t.work_kind IS NULL OR t.reading IS NULL OR t.writing IS NULL) AND p.archived_at IS NULL AND p.someday_at IS NULL
+                   ORDER BY t.id LIMIT ?""", (limit,))
+
+
+def flagged_tasks(flag: str) -> list[dict]:
+    """Open tasks in live projects that are mainly `flag` ("reading" | "writing"): what that daily card chooses from."""
+    assert flag in ("reading", "writing")
+    return rows(f"""SELECT t.* FROM tasks t JOIN projects p ON p.id=t.project_id
+                    WHERE t.completed_at IS NULL AND t.{flag}=1 AND p.archived_at IS NULL AND p.someday_at IS NULL ORDER BY t.id""")
+
+
+def reading_tasks() -> list[dict]:
+    return flagged_tasks("reading")
+
+
 def task_by_linear_id(lid: str) -> dict | None:
     return row("SELECT * FROM tasks WHERE linear_id=?", (lid,))
 
@@ -526,7 +612,7 @@ def uncomplete_task(tid: int) -> None:
     update_task(tid, completed_at=None, archived_at=None, position=pos, parent_id=parent_id)
 
 
-SUBTREE_FIELDS = ("description", "deadline", "blocking", "blocking_for", "importance", "estimate_minutes", "chunkable", "completed_at")
+SUBTREE_FIELDS = ("description", "deadline", "blocking", "blocking_for", "importance", "estimate_minutes", "chunkable", "work_kind", "reading", "writing", "completed_at")
 
 
 def delete_task_tree(tid: int) -> list[dict]:

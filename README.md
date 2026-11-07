@@ -57,7 +57,7 @@ Google Calendar -> Settings -> your calendar -> *Secret address in iCal format*.
    own copy of the script.
 
 Rows listed under "Rows with their own card" in Settings (`[sheets] card_items`, e.g. `Anki review: 20`) are
-daily routines: each gets its own feed card every day, and marking it done ticks it in the sheet (today's date
+recurring cards: each gets its own feed card every day, and marking it done ticks it in the sheet (today's date
 column, a "Last done" column, or a "Done" checkbox, per `MODE`). The rest of the checklist is left to the sheet. The scheduler reads every other column (frequency, minutes, when...) as-is,
 so you can lay the sheet out however you like: date headers may sit below other rows, real date cells work,
 hidden rows are skipped, and a row is checkable only where today's cell is a checkbox (a formula row shows
@@ -101,7 +101,7 @@ on the lines: you navigate with the arrow keys and type.
   closes them (the box also closes by itself when you move to another line), Cmd+E opens its dates and priority, Alt+Right /
   Alt+Left zoom into and out of a project, Cmd+Shift+Backspace deletes a line. Backspace itself never removes a
   line: a line you empty out goes away when you click elsewhere. Backspace at the start of a line joins it onto
-  the line above, which undoes an accidental split.
+  the line above, which undoes an accidental split; on an empty line it does nothing, so the line stays until you click elsewhere.
   Deleting is refused, with a message, for anything with sub-items, tracked time or a Linear link.
 - Right-click a line for a small menu: complete, notes, dates & priority, make project (or open / make task on
   a project line) and Delete. From the menu a task is deleted together with its sub-items (Cmd+Z brings the
@@ -111,7 +111,8 @@ on the lines: you navigate with the arrow keys and type.
   The raw text shows only while you edit it. Lines wrap while you type, so a long line stays fully visible.
 - Tags typed in a line set its fields and disappear from the title: `#p1` to `#p5` for priority (`#p1`
   highest), `#today`, `#tomorrow` or `#due:fri` / `#due:nov3` / `#due:2026-11-03` for the deadline,
-  `#blocking` or `#blocking:Sam`, and `#onesitting`. `#nodue`, `#p0` and `#notblocking` clear those again. They
+  `#blocking` or `#blocking:Sam`, `#onesitting`, and `#focus` or `#task` for the kind of work. `#nodue`, `#p0`,
+  `#notblocking` and `#nokind` clear those again. They
   work in pasted outlines and the quick-add bar too; any other `#tag` stays in the text.
 - Shift+Up / Shift+Down (or Shift+click) select several lines; Cmd+C copies them, with everything under
   them, as an indented bulleted list that pastes back into the app or anywhere else. With several lines
@@ -128,6 +129,14 @@ on the lines: you navigate with the arrow keys and type.
 - A task's title line carries its deadline, a "blocking" tag and importance dots when set (there is no
   priority by default); its notes box has a "dates & priority…" link for the rest. Time estimates are never
   typed: the app forecasts one when a task is created and learns from tracked time.
+- Every task is also judged to be a quick **task** (done in minutes, fits a gap) or **focused work** (needs a
+  stretch of concentration), shown as a small tag on the line. Claude makes the call when the task is created
+  (quick add, the outline, the agent) and works through older tasks in the background; `#focus` / `#task` in the
+  title, the edit dialog or the dates-and-priority dialog set it by hand, `#nokind` hands it back to Claude. The
+  day plan uses it: focused work gets long uninterrupted blocks, tasks fill the gaps. Claude also marks tasks that
+  are mainly **reading** (`#reading` / `#notreading` by hand), which the daily reading card draws on, and mainly
+  **writing** (`#writing` / `#notwriting`); a timer on such a task carries the "reading" or "writing" Toggl tag
+  (`[reading] tag`, `[writing] tag`) whatever project it is filed under.
 - **Someday / maybe** (its own tab) is a plain nested list of ideas you are not committing to: items with
   sub-items if you like, but no projects and no checkboxes, nothing there is ever completed (Enter or a click on
   the empty space adds one). Right-click a task anywhere for
@@ -138,8 +147,12 @@ on the lines: you navigate with the arrow keys and type.
   sub-projects and open tasks with it (restore brings them back). The Filters button (hidden by default)
   opens a small panel to show completed tasks and archived projects alongside the active ones.
 
+**Focus monitor** - through the work day the feed prompts "Review your focus monitor" at a random interval of
+`[focus_monitor] min_minutes` to `max_minutes` (60 to 120), with a macOS notification; Done on the feed starts the
+next interval and ticks the "Review Focus Monitor" row in the sheet the first time each day.
+
 **Nightly prefetch** - at `[sheets] prefetch_time` (23:50) the checklist, the exercise log and the calendar feeds
-are read afresh and kept, so a midnight decision (the day's exercise, the routines) uses that copy when the internet
+are read afresh and kept, so a midnight decision (the day's exercise, the recurring cards) uses that copy when the internet
 is off at night. A session decided while the exercise log cannot be read is provisional and is decided again as soon
 as the log is readable.
 
@@ -149,6 +162,17 @@ nested list, open tasks as checkboxes with their tags, notes underneath, and the
 snapshot at the end. If the app was asleep at that hour the file is written when it next runs that day.
 The **Snapshots** tab lists them by day and shows any of them; its **Snapshot now** button (or
 `python -m tracker snapshot`) writes one on demand.
+
+**Reading and writing** - the daily reading and writing rows of your checklist (`[reading] routine`, "Reading
+books or papers"; `[writing] routine`, "Writing - 40 minutes") are recurring cards every day, like Anki review.
+Each card offers the highest-priority open task of its kind from your projects (by the same priority score the
+planner uses: blocking, deadline, importance, age), with "open in tree" and "finished it" links; Start runs the
+timer on that task, so its time is tracked and filed under the task's project, and Done ticks the row in the sheet.
+When nothing of that kind is queued the card falls back to `[reading] fallback` ("Read a book") or `[writing]
+fallback` ("Free writing") and asks what you are reading or writing: that names the timer, which is filed by its
+title (the project it had last time, else Claude's judgement for that title), never under a fixed project, since
+it depends on the piece. Every reading or writing timer carries the "reading" or "writing" Toggl tag whatever its
+project.
 
 **Exercise** - the exercise logging sheet written by your exercise app is the record. Its own sync script answers
 `?action=export` with the logged sessions; paste that script's /exec URL as "Exercise log script URL" in Settings
@@ -168,7 +192,11 @@ Claude the plan cycles through `[exercise] rotation`.
 
 **Quick add** (⌘K) - free text goes to Claude with the project tree; it returns one or more tasks placed in the
 best project (creating a sub-project only when nothing fits), with deadline / blocking / importance / estimate
-inferred. Without an API key it files into "Inbox". The "Filed … in …" lines of the notice at the bottom are links:
+inferred. Without an API key it files into "Inbox". Claude's project path is matched against your tree by how the
+names read (heading marks, case, punctuation and spacing ignored); a skipped or dropped level is found when the
+name is unique; only the last name may be new, and only as a sub-project. A path whose first name is no top-level
+project of yours puts the task in Inbox, with the notice saying so, rather than starting a new tree. The "Filed …
+in …" lines of the notice at the bottom are links:
 click one and the Projects page opens zoomed into that project, with the new task selected and its notes open.
 
 **The schedule** is internal. It is built at the start of the work day (and on demand) from the free windows
@@ -179,10 +207,10 @@ the free windows is clamped or dropped).
 
 **Toggl filing** - every timer the app starts goes to the right Toggl project, and nearly always without a model:
 
-- *Routines* (the checklist rows with their own card, the exercise sessions named in your exercise rules,
-  journaling) use the **Routines** list on the Settings page's Toggl card: one line each, `Anki review: Personal`.
-  "Fill in with Claude" sorts every routine into one of your Toggl projects in one go (creating a project when
-  none fits, and saying so); you edit the lines and save. A routine missing from the list is decided by Claude
+- *Recurring cards* (the checklist rows with their own card, the exercise sessions named in your exercise rules,
+  journaling) use the **Recurring cards** list on the Settings page's Toggl card: one line each, `Anki review: Personal`.
+  "Fill in with Claude" sorts every recurring card into one of your Toggl projects in one go (creating a project when
+  none fits, and saying so); you edit the lines and save. A card missing from the list is decided by Claude
   the first time its timer starts, and the line is added for you.
 - *Tasks* use the Toggl project their project is **linked** to (sub-projects inherit their parent's link). The
   opened project shows it as "Toggl: Palisade" in its header line; click it to pick another, or clear it so Claude
@@ -209,7 +237,9 @@ a minute take Toggl's values, so tracked time and the estimates learned from it 
 **The feed** shows one card; completing it flashes it green and slides it away, and the next card takes its place. Above the deck, from `meeting_alert_minutes` (45) before a meeting, or all day with `meeting_alert_all_day`, a line
 says "12 minutes until Daily regather", counting down in whole minutes (hours and minutes when it is over an hour away). The top card is the one the schedule says is next: Start (a Toggl timer tagged `task-tracker`, named
 after the task), a completion checkbox (completes the task, pushes to Linear), "Done for now" for a block of a
-task that continues later, Skip, and at the bottom the alternatives: today's exercise and Journal. A task card's
+task that continues later, Skip, and at the bottom the alternatives: today's exercise and Journal. A task card
+shows the task's own title (with the block's name underneath when the planner or the agent named it differently);
+the agent's notes are not on the card at all, only on the Projects page. A task card's
 "open in tree" link opens the Projects page zoomed into the task's own project, with the task selected and its notes
 open. Once the day's
 session is done the exercise button offers the extra session from Settings instead (`[exercise] after_done`, "zone 2

@@ -651,6 +651,151 @@ def test_toggl_history_trues_up_local_entries():
     db.execute("UPDATE time_entries SET stopped_at=? WHERE stopped_at IS NULL", (now,))
 
 
+def test_resolve_project_path_never_duplicates():
+    top = db.create_project("# Resolve top")
+    pol = db.create_project("## Policy-Maker Engagement", top)
+    risch = db.create_project("The Risch Office", pol)
+    sib = db.create_project("Sibling", top)
+    R = db.resolve_project_path
+    assert R(["Resolve top", "Policy-Maker Engagement", "The Risch Office"]) == (risch, "")
+    assert R(["resolve top", "policymaker engagement", "the risch office"]) == (risch, "")      # case, punctuation, marks
+    assert R(["Resolve top", "The Risch Office"]) == (risch, "")                                # a skipped level
+    assert R(["The Risch Office"]) == (risch, "")                                               # dropped top levels
+    assert R(["Policy maker engagement", "The Risch Office"]) == (risch, "")
+    pid, note = R(["Resolve top", "Sibling", "Brand new"])                                      # a new sub-project is fine
+    assert db.project_path(pid) == ["# Resolve top", "Sibling", "Brand new"] and note == "new sub-project Brand new"
+    pid2, note2 = R(["Resolve top", "Sibling", "brand-new"])                                    # ...and found again, not duplicated
+    assert pid2 == pid and note2 == ""
+    assert R(["Nowhere", "Something"]) == (None, "no top-level project called 'Nowhere'")       # never a new top level
+    assert db.find_project_by_path(["Nowhere"]) is None
+    pid3, note3 = R(["Nowhere"], allow_new_top=True)                                            # unless explicitly asked (the agent)
+    assert db.project_path(pid3) == ["Nowhere"] and note3 == "new sub-project Nowhere"
+    assert R([]) == (None, "no project named")
+    db.delete_empty_project(pid3)
+
+
+def test_work_kind_tags_api_and_backlog(monkeypatch):
+    from fastapi.testclient import TestClient
+    from tracker import tags, web, snapshot
+    assert tags.parse_tags("Write the memo #focus")[1] == {"work_kind": "focus"}
+    assert tags.parse_tags("Buy stamps #task")[1] == {"work_kind": "task"}
+    assert tags.parse_tags("Whatever #nokind")[1] == {"work_kind": None}
+    c = TestClient(web.create_app())
+    pid = db.create_project("Kinds")
+    a = c.post("/api/tasks", json={"project_id": pid, "title": "Draft the paper #focus"}).json()
+    assert (a["title"], a["work_kind"]) == ("Draft the paper", "focus")
+    b = c.post("/api/tasks", json={"project_id": pid, "title": "Call the bank", "work_kind": "focused work"}).json()
+    assert b["work_kind"] == "focus"
+    assert c.post("/api/tasks", json={"project_id": pid, "title": "x", "work_kind": "nonsense"}).status_code == 400
+    assert c.patch(f"/api/tasks/{b['id']}", json={"work_kind": "task"}).status_code == 200 and db.task(b["id"])["work_kind"] == "task"
+    assert c.patch(f"/api/tasks/{b['id']}", json={"work_kind": ""}).status_code == 200 and db.task(b["id"])["work_kind"] is None
+    assert c.post("/api/tasks/apply", json={"ids": [a["id"], b["id"]], "fields": {"work_kind": "task"}}).status_code == 200
+    assert db.task(a["id"])["work_kind"] == "task"
+    assert "#task" in snapshot._tags(db.task(a["id"]))
+    # the backlog: tasks never judged get a batch call; a user's own setting is never overwritten
+    unjudged = db.create_task(pid, "Think through the roadmap")
+    monkeypatch.setattr(llm, "enabled", lambda: True)
+    monkeypatch.setattr(llm, "classify_work_kinds", lambda ts: {t["id"]: {"work_kind": "focus", "reading": 0, "writing": int(t["id"] == unjudged)} for t in ts})
+    total, rounds = 0, 0
+    while db.tasks_without_work_kind() and rounds < 20:                 # a batch of 40 per loop pass
+        total += web._classify_backlog(); rounds += 1
+    assert total >= 1 and db.task(unjudged)["work_kind"] == "focus" and db.task(a["id"])["work_kind"] == "task"
+    assert db.task(unjudged)["writing"] == 1 and db.tasks_without_work_kind() == []
+    assert tags.parse_tags("Draft the post #writing")[1] == {"writing": 1}
+    w = c.post("/api/tasks", json={"project_id": pid, "title": "Write the memo #writing #reading"}).json()
+    assert (w["writing"], w["reading"]) == (1, 1) and "#writing" in snapshot._tags(db.task(w["id"]))
+    started = []
+    monkeypatch.setattr(web.toggl, "enabled", lambda: True)
+    monkeypatch.setattr(web.toggl, "start", lambda label, extra_tags=None, project_id=None: started.append(extra_tags) or {"id": 8})
+    monkeypatch.setattr(web.toggl, "current", lambda: None)
+    monkeypatch.setattr(web.toggl, "stop", lambda eid=None: None)
+    monkeypatch.setattr(web.toggl, "find_project", lambda name: None)
+    web._start_timer("task", "Write the memo", w["id"])
+    assert started[-1] == ["reading", "writing"]                                              # its timers carry both tags
+    web._stop_timer()
+    db.complete_task(w["id"]); db.complete_task(unjudged)      # leave no flagged tasks behind for the card tests
+    monkeypatch.setattr(llm, "enabled", lambda: False)
+
+
+def test_reading_card_offers_highest_priority_reading_task(monkeypatch):
+    from fastapi.testclient import TestClient
+    from tracker import web, tags, sheets
+    monkeypatch.setattr(sheets, "writable", lambda: False)
+    assert tags.parse_tags("Read the RSI bill #reading")[1] == {"reading": 1}
+    c = TestClient(web.create_app())
+    pid = db.create_project("Reading list")
+    low = db.create_task(pid, "Read the newsletter", reading=1, importance=2)
+    high = db.create_task(pid, "Read the policy memo", reading=1, importance=5, deadline=db.today())
+    db.create_task(pid, "Write the reply", reading=0, importance=5)
+    assert [t["id"] for t in db.reading_tasks()] == [low, high]
+    assert "Reading books or papers" in [x["title"] for x in sheets.card_items()]          # a card of its own, without listing it
+    date = db.today()
+    db.save_plan(date, "09:00", "17:00", "run", "", [dict(kind="routine", task_id=None, title="Reading books or papers", start="09:00", end="09:30", minutes=30, note="")], {})
+    item = db.rows("SELECT id FROM plan_items WHERE date=? AND title='Reading books or papers'", (date,))[0]["id"]
+    f = c.get("/api/feed").json()
+    assert f["current"]["id"] == item and f["current"]["suggest"]["task"]["id"] == high and f["current"]["suggest"]["fallback"] == "Read a book"
+    assert f["current"]["suggest"]["verb"] == "Read"
+    started = []
+    monkeypatch.setattr(web.toggl, "enabled", lambda: True)
+    monkeypatch.setattr(web.toggl, "start", lambda label, extra_tags=None, project_id=None: started.append((label, extra_tags)) or {"id": 7})
+    monkeypatch.setattr(web.toggl, "current", lambda: None)
+    monkeypatch.setattr(web.toggl, "stop", lambda eid=None: None)
+    monkeypatch.setattr(web.toggl, "find_project", lambda name: None)
+    assert c.post("/api/feed/start", json={"item_id": item}).status_code == 200
+    assert db.running_entry()["task_id"] == high                                             # time goes to the reading task
+    assert started[-1] == ("Read the policy memo", ["reading"])                               # ...tagged reading
+    assert c.post(f"/api/tasks/{high}/complete", json={}).status_code == 200 and db.running_entry() is None
+    db.set_item_status(item, "pending")
+    assert c.get("/api/feed").json()["current"]["suggest"]["task"]["id"] == low                # the next one
+    db.complete_task(low)
+    db.set_item_status(item, "pending")
+    assert c.get("/api/feed").json()["current"]["suggest"]["task"] is None                    # nothing queued: read a book
+    assert c.post("/api/feed/start", json={"item_id": item, "label": "The Making of the Atomic Bomb"}).status_code == 200
+    e = db.running_entry()
+    assert (e["kind"], e["label"], e["task_id"]) == ("reading", "The Making of the Atomic Bomb", None)
+    assert started[-1] == ("The Making of the Atomic Bomb", ["reading"])
+    assert "Reading books or papers" not in web._routine_labels()                             # never given a fixed Toggl project
+    from tracker import toggl
+    monkeypatch.setattr(toggl, "history_match", lambda label: {"project_id": 9, "project": "History", "tags": []} if "Atomic" in label else None)
+    assert web._toggl_project_for_timer("reading", "The Making of the Atomic Bomb", None)["project"] == "History"
+    assert web._toggl_project_for_timer("reading", "Something new", None) is None              # Claude judges it, per title
+    assert c.post("/api/feed/complete", json={"item_id": item}).status_code == 200 and db.running_entry() is None
+    # the writing card: the same shape, from the writing tasks
+    assert "Writing - 40 minutes" in [x["title"] for x in sheets.card_items()] and "Writing - 40 minutes" not in web._routine_labels()
+    memo = db.create_task(pid, "Write the strategy memo", writing=1, importance=5, deadline=db.today(), blocking=1)   # outranks any other writing task
+    db.save_plan(date, "09:00", "17:00", "run", "", [dict(kind="routine", task_id=None, title="Writing - 40 minutes", start="10:00", end="10:40", minutes=40, note="")], {})
+    witem = db.rows("SELECT id FROM plan_items WHERE date=? AND title='Writing - 40 minutes'", (date,))[0]["id"]
+    f = c.get("/api/feed").json()
+    assert f["current"]["id"] == witem and f["current"]["suggest"]["task"]["id"] == memo and f["current"]["suggest"]["verb"] == "Write"
+    assert c.post("/api/feed/start", json={"item_id": witem}).status_code == 200
+    assert db.running_entry()["task_id"] == memo and started[-1] == ("Write the strategy memo", ["writing"])
+    db.complete_task(memo); web._stop_timer(); db.set_item_status(witem, "pending")
+    f = c.get("/api/feed").json()
+    assert f["current"]["suggest"]["task"] is None and f["current"]["suggest"]["fallback"] == "Free writing"
+    assert c.post("/api/feed/start", json={"item_id": witem, "label": "Morning pages"}).status_code == 200
+    assert (db.running_entry()["kind"], started[-1]) == ("writing", ("Morning pages", ["writing"]))
+    web._stop_timer()
+
+
+def test_focus_monitor_prompt(monkeypatch):
+    from fastapi.testclient import TestClient
+    from tracker import web, sheets
+    import time as _t
+    monkeypatch.setattr(sheets, "writable", lambda: False)
+    monkeypatch.setattr(web, "_in_work_day", lambda now=None: True)
+    c = TestClient(web.create_app())
+    db.set_setting("focus_monitor_next", str(_t.time() - 1))
+    assert c.get("/api/feed").json()["focus_monitor"]["due"] is True
+    r = c.post("/api/focus_monitor/done").json()
+    assert 59 <= r["next_in_minutes"] <= 120 and "Review Focus Monitor" in db.checklist_done_today(db.today())
+    assert c.get("/api/feed").json()["focus_monitor"]["due"] is False
+    monkeypatch.setattr(web, "_in_work_day", lambda now=None: False)
+    db.set_setting("focus_monitor_next", str(_t.time() - 1))
+    assert c.get("/api/feed").json()["focus_monitor"]["due"] is False            # never outside the work day
+    monkeypatch.setitem(config.load()["focus_monitor"], "enable", False)
+    assert c.get("/api/feed").json()["focus_monitor"] == {"enabled": False, "due": False, "next_in_minutes": None}
+
+
 def test_completed_task_keeps_its_place():
     pid = db.create_project("Keep order")
     a, b, c = (db.create_task(pid, n) for n in ("first", "second", "third"))
@@ -663,12 +808,16 @@ def test_project_paths_ignore_heading_marks():
     """Quick add gets "Palisade Projects" back from Claude for a project stored as "# Palisade Projects"."""
     top = db.create_project("# Heading top")
     sub = db.create_project("## Policy", top)
-    assert db.plain_name("##  Policy  ") == "policy" and db.plain_name("#tag") == "#tag"
+    assert db.plain_name("##  Policy  ") == "policy" and db.plain_name("Policy-Maker  Engagement") == "policymakerengagement"
     assert db.find_project_by_path(["Heading top", "policy"]) == sub
     assert db.find_project_by_path(["# Heading top", "## Policy"]) == sub
     assert db.ensure_project_path(["heading top", "Policy"]) == sub       # nothing new created
     assert db.find_project_by_path(["Heading top", "Nope"]) is None
-    assert "- heading top" in scheduler.tree_text() and "- # Heading top" not in scheduler.tree_text()
+    assert "- Heading top" in scheduler.tree_text() and "- # Heading top" not in scheduler.tree_text()   # case kept, marks dropped
+    dup = db.create_project("Heading top")                              # a stray empty duplicate beside the real one
+    assert db.find_project_by_path(["Heading top", "Policy"]) == sub     # the populated one wins over the exact spelling
+    assert db.find_project_by_path(["heading top"]) == top
+    db.delete_empty_project(dup)
 
 
 def test_project_toggl_link_api_and_settings(monkeypatch):
@@ -760,6 +909,7 @@ def test_routine_cards_from_checklist(monkeypatch):
     from fastapi.testclient import TestClient
     from tracker import sheets, web
     monkeypatch.setitem(config.load()["sheets"], "card_items", ["Anki review: 20", "Writing - 40 minutes", "Nope: x"])
+    monkeypatch.setitem(config.load()["reading"], "routine", "")          # the daily reading card is tested on its own
     assert sheets.card_items() == [{"title": "Anki review", "minutes": 20}, {"title": "Writing - 40 minutes", "minutes": 20}, {"title": "Nope: x", "minutes": 20}]
     monkeypatch.setattr(sheets, "daily_checklist", lambda: {"items": [{"item": "Anki Review", "done_today": False}, {"item": "Writing - 40 minutes", "done_today": True}], "source": "test"})
     monkeypatch.setattr(sheets, "writable", lambda: False)
