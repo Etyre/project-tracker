@@ -1,5 +1,7 @@
-"""The standalone macOS app: a native window (WKWebView over the local server) plus a menu bar item
-with the current card and quick actions. `python -m tracker app`, or the bundle from build_app.py."""
+"""The standalone macOS app: a native window (WKWebView over the local server on 127.0.0.1:8791) plus a menu bar
+item with the current card and quick actions. `python -m tracker app`, or the bundle from build_app.py.
+Config: config.toml in the project folder + Keychain service "TaskTracker"; data: ~/Library/Application Support/
+TaskTracker/; log: ~/Library/Logs/project-tracker.log (see tracker/__main__.py)."""
 from __future__ import annotations
 
 import json
@@ -293,7 +295,7 @@ class ProjectTrackerApp(rumps.App):
 
 
 def run_app():
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    config.setup_logging()
     # No AppKit window-state restoration: after a crash it would block launch with a modal "reopen windows?"
     # alert before our run loop even starts (the web view and window are rebuilt from scratch anyway).
     NSUserDefaults.standardUserDefaults().registerDefaults_({"ApplePersistenceIgnoreState": True,

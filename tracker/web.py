@@ -750,7 +750,10 @@ def create_app() -> FastAPI:
     def test_integrations():
         """Try each configured integration and say what happened (the `tracker check` command, for the page)."""
         out: dict[str, str] = {}
-        out["claude"] = "key found" if llm.enabled() else ("off in settings" if not config.load()["llm"]["enable"] else "no API key")
+        was_paused = llm.paused()
+        llm.resume()                      # a contact from the model pauses Claude here; testing again is how you resume it
+        out["claude"] = ("key found" if llm.enabled() else ("off in settings" if not config.load()["llm"]["enable"] else "no API key")) \
+            + (f" (resumed; it had stopped: {was_paused})" if was_paused else "")
         if toggl.enabled():
             try:
                 me = toggl.me()

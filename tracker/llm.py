@@ -1,23 +1,40 @@
-"""Claude calls: structured JSON for quick-add placement and day scheduling."""
+"""Claude calls: structured JSON for quick-add placement, estimates, exercise review, Toggl filing and the day plan.
+
+Every call goes through structured(), the one call site. Its system prompt starts with the shared preamble from
+~/Documents/agent-coding/shared (the LLM inbox: the model may call `contact_eli` or write `@ELI:` to reach Eli);
+after each response llm_contact.check() looks for that, records it, and this module then stops asking Claude
+(enabled() is False) until Test connections on the Settings page or a restart.
+"""
 from __future__ import annotations
 
 import json
 import logging
 import os
+import sys
 from functools import lru_cache
 
 import anthropic
 
 from . import config
 
+sys.path.insert(0, "/Users/elityre/Documents/agent-coding/shared")
+import llm_contact  # noqa: E402  (shared/llm_contact.py: system_prompt(), CONTACT_TOOL, check())
+
 log = logging.getLogger("llm")
+APP_NAME = "project-tracker"
 
 
 class LLMError(RuntimeError):
     pass
 
 
+class LLMContact(LLMError):
+    """The model asked to talk to Eli. It has been recorded in the LLM inbox and he has been notified; the task
+    that was running stops here, and no further calls are made until resume()."""
+
+
 _creds_ok = False
+_contact: dict | None = None     # the inbox record of the last contact; while set, enabled() is False
 
 
 def _has_credentials() -> bool:
@@ -39,7 +56,18 @@ def _has_credentials() -> bool:
 
 
 def enabled() -> bool:
-    return bool(config.load()["llm"]["enable"] and _has_credentials())
+    return bool(config.load()["llm"]["enable"] and _contact is None and _has_credentials())
+
+
+def paused() -> str:
+    """Why Claude is not being asked right now, or "" when it is: the message the model sent Eli."""
+    return f"Claude asked to talk to Eli (llm-inbox show {_contact['id']}): {_contact['message'][:200]}" if _contact else ""
+
+
+def resume() -> None:
+    """Ask Claude again after a contact (Settings -> Test connections does this; so does a restart)."""
+    global _contact
+    _contact = None
 
 
 @lru_cache(maxsize=1)
@@ -48,13 +76,22 @@ def client() -> anthropic.Anthropic:
 
 
 def structured(system: str, user: str, schema: dict, effort: str, max_tokens: int = 16000) -> dict:
-    """One call, JSON-schema constrained output. The system prompt (rules doc etc.) is cached as a prefix."""
+    """One call, JSON-schema constrained output. The system prompt (shared preamble, then the rules doc etc.) is
+    cached as a prefix. The contact_eli tool is on every call; a response that uses it (or says `@ELI:`) is
+    recorded in the LLM inbox and raises LLMContact, and Claude is paused for this app until resume()."""
+    global _contact
+    if _contact is not None:
+        raise LLMContact(paused())
     cfg = config.load()["llm"]
+    system_text = llm_contact.system_prompt(system)
+    tools = [llm_contact.CONTACT_TOOL]
+    messages = [{"role": "user", "content": user}]
     kw = dict(
         model=cfg["model"],
         max_tokens=max_tokens,
-        system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
-        messages=[{"role": "user", "content": user}],
+        system=[{"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}],
+        messages=messages,
+        tools=tools,
         output_config={"format": {"type": "json_schema", "schema": schema}, "effort": effort},
     )
     try:
@@ -74,6 +111,11 @@ def structured(system: str, user: str, schema: dict, effort: str, max_tokens: in
         raise LLMError(f"Anthropic API error {e.status_code}: {e.message}") from e
     except anthropic.APIConnectionError as e:
         raise LLMError(f"Anthropic unreachable: {e}") from e
+    rec = llm_contact.check(app=APP_NAME, model=cfg["model"], system=system_text, messages=messages, response=resp, tools=tools)
+    if rec:                       # the model reached for Eli: recorded and notified; stop here, no retry, no fallback call
+        _contact = rec
+        log.warning("Claude contacted Eli (inbox %s); Claude is paused in this app until resumed: %s", rec["id"], rec["message"][:300])
+        raise LLMContact(paused())
     if resp.stop_reason == "refusal":
         det = getattr(resp, "stop_details", None)
         raise LLMError(f"model declined ({getattr(det, 'category', None)})")

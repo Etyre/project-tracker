@@ -1,9 +1,18 @@
-"""CLI: python -m tracker [app|web|plan|sync-linear|check|quick-add TEXT]"""
+"""Project Tracker: a personal GTD system (project outline, Claude-powered quick add, a feed that serves one card at
+a time from a day plan rebuilt from the calendar, checklist sheet, exercise log and open tasks), with Toggl, Linear
+and Google Sheets integrations. Entry point: `python -m tracker [app|web|plan|snapshot|sync-linear|check|quick-add TEXT]`
+(the app bundle built by build_app.py runs `-m tracker app`).
+
+Config:  config.toml in the project folder (or $TASK_TRACKER_CONFIG), edited from the app's Settings page;
+         secrets in the login Keychain, service "TaskTracker" (accounts anthropic, toggl, linear, sheets, agent),
+         or ~/Library/Application Support/TaskTracker/env.
+Data:    ~/Library/Application Support/TaskTracker/ (tracker.sqlite3, snapshots/).
+Logs:    ~/Library/Logs/project-tracker.log (the launcher's own log is launcher.log in the data folder).
+"""
 from __future__ import annotations
 
 import argparse
 import json
-import logging
 import sys
 import threading
 import webbrowser
@@ -12,7 +21,7 @@ from . import config
 
 
 def main(argv=None) -> int:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    config.setup_logging()
     ap = argparse.ArgumentParser(prog="tracker")
     sub = ap.add_subparsers(dest="cmd")
     sub.add_parser("app", help="the standalone app: native window + menu bar item (default)")
@@ -82,7 +91,7 @@ def main(argv=None) -> int:
         import datetime as dt
         print("config:", config.CONFIG_PATH, "(exists)" if config.CONFIG_PATH.exists() else "(missing - using defaults)")
         print("db:", config.DB_PATH)
-        print("Claude:", "ok (key found)" if llm.enabled() else "not configured (ANTHROPIC_API_KEY)")
+        print("Claude:", "ok (key found)" if llm.enabled() else llm.paused() or "not configured (ANTHROPIC_API_KEY)")
         if toggl.enabled():
             try:
                 me = toggl.me()

@@ -14,6 +14,7 @@ replan_drift_minutes = 20
 overrun_minutes = 30
 replan_min_interval_minutes = 10
 meeting_alert_minutes = 45
+meeting_alert_all_day = false   # true: show the next meeting however far off it is today
 
 [snapshots]
 enable = true
@@ -51,6 +52,7 @@ daily_checklist_csv = ""
 exercise_csv = ""
 cache_minutes = 30
 prefetch_time = "23:50"   # sheets and calendar are read afresh here, before the internet goes off at night
+card_items = ["Anki review: 20"]   # checklist rows that get their own feed card every day ("name: minutes")
 
 [exercise]
 rotation = []

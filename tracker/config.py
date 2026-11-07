@@ -1,6 +1,8 @@
-"""Configuration: config.toml next to the package, plus env/keychain secrets."""
+"""Configuration: config.toml next to the package, plus env/keychain secrets, and where the log goes."""
 from __future__ import annotations
 
+import logging
+import logging.handlers
 import os
 import pathlib
 import subprocess
@@ -15,6 +17,28 @@ EXERCISE_PATH = ROOT / "Exercise plan.md"          # the user's own brief to Cla
 APP_SUPPORT = pathlib.Path(os.environ.get("TASK_TRACKER_DATA") or (pathlib.Path.home() / "Library" / "Application Support" / "TaskTracker"))
 DB_PATH = APP_SUPPORT / "tracker.sqlite3"
 ENV_FILE = APP_SUPPORT / "env"
+LOG_PATH = pathlib.Path.home() / "Library" / "Logs" / "project-tracker.log"
+
+
+def setup_logging() -> None:
+    """Timestamped lines to stderr and to ~/Library/Logs/project-tracker.log (a Finder-launched app has no
+    terminal, so without the file its log went nowhere). Safe to call more than once."""
+    root = logging.getLogger()
+    if getattr(root, "_tracker_logging", False):
+        return
+    fmt = logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s")
+    root.setLevel(logging.INFO)
+    sh = logging.StreamHandler()
+    sh.setFormatter(fmt)
+    root.addHandler(sh)
+    try:
+        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        fh = logging.handlers.RotatingFileHandler(LOG_PATH, maxBytes=5_000_000, backupCount=2)
+        fh.setFormatter(fmt)
+        root.addHandler(fh)
+    except OSError as e:
+        root.warning("log file %s not writable: %s", LOG_PATH, e)
+    root._tracker_logging = True
 
 DEFAULTS: dict[str, Any] = {
     "general": {
