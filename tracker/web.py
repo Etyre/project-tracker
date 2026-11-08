@@ -714,18 +714,18 @@ def create_app() -> FastAPI:
     @app.get("/api/settings")
     def get_settings():
         return {"config": config.load(), "secrets": config.secret_status(),
-                "rules": config.RULES_PATH.read_text() if config.RULES_PATH.exists() else "",
+                "rules": config.rules_text(),
                 "exercise_brief": config.exercise_text(),
-                "paths": {"config": str(config.CONFIG_PATH), "data": str(config.APP_SUPPORT), "rules": str(config.RULES_PATH),
+                "paths": {"config": str(config.CONFIG_PATH), "data": str(config.APP_SUPPORT), "rules": str(config.rules_path()),
                           "snapshots": str(snapshot.snapshot_dir())}}
 
     @app.put("/api/settings")
     def put_settings(body: dict[str, Any]):
         cfg = config.save(body.get("config") or {})
         if "rules" in body and isinstance(body["rules"], str):
-            config.RULES_PATH.write_text(body["rules"])
+            config.rules_path().write_text(body["rules"])
         if "exercise_brief" in body and isinstance(body["exercise_brief"], str):
-            config.EXERCISE_PATH.write_text(body["exercise_brief"])
+            config.exercise_path().write_text(body["exercise_brief"])
         calendar_feed._cache.clear()
         warnings = []
         if toggl.enabled() and toggl.projects():          # a routine listed under a Toggl project that does not exist

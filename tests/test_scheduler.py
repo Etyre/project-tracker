@@ -856,7 +856,7 @@ def test_project_toggl_link_api_and_settings(monkeypatch):
 
 def test_exercise_rules_engine():
     from tracker import exercise, tags
-    rules = exercise.parse_rules(pathlib.Path(config.EXERCISE_PATH).read_text())
+    rules = exercise.parse_rules(config.exercise_text())   # seeded from Exercise plan.example.md in the temp data dir
     assert [(r["name"], r["period"], r["gap"], r["ideal"]) for r in rules["required"]] == [("squats", 7, 3, (4, 4)), ("cardio interval training", 4, 2, (2, 3))]
     assert rules["never_adjacent"] == [["deadlifts", "squats"]] and rules["fill"] == ["benchpress", "deadlifts", "shoulder press"]
     today = dt.date(2026, 11, 10)

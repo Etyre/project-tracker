@@ -137,7 +137,7 @@ class ProjectTrackerApp(rumps.App):
             rumps.MenuItem("Set Sheets Token…", callback=lambda _: self._set_secret("sheets", "Apps Script SHEET_TOKEN", "")),
             rumps.MenuItem("Set Agent API Token…", callback=lambda _: self._set_secret("agent", "Token your assistant agent sends as a bearer token", "")),
             rumps.MenuItem("Open Config File", callback=lambda _: subprocess.run(["open", str(config.CONFIG_PATH)])),
-            rumps.MenuItem("Open Rules & Heuristics", callback=lambda _: subprocess.run(["open", str(config.RULES_PATH)])),
+            rumps.MenuItem("Open Rules & Heuristics", callback=lambda _: subprocess.run(["open", str(config.rules_path())])),
             rumps.MenuItem("Open Data Folder", callback=lambda _: subprocess.run(["open", str(config.APP_SUPPORT)])),
             None,
             rumps.MenuItem("Quit " + APP_NAME, callback=lambda _: rumps.quit_application()),

@@ -12,9 +12,11 @@ from typing import Any
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CONFIG_PATH = pathlib.Path(os.environ.get("TASK_TRACKER_CONFIG") or (ROOT / "config.toml"))
-RULES_PATH = ROOT / "Rules and heuristics for scheduling.md"
-EXERCISE_PATH = ROOT / "Exercise plan.md"          # the user's own brief to Claude on how to schedule exercise
 APP_SUPPORT = pathlib.Path(os.environ.get("TASK_TRACKER_DATA") or (pathlib.Path.home() / "Library" / "Application Support" / "TaskTracker"))
+# The user's own documents (edited on the Settings page) live with the data, not in the repo. The repo
+# carries a *.example.md of each, copied into place the first time the app needs it.
+RULES_NAME = "Rules and heuristics for scheduling.md"
+EXERCISE_NAME = "Exercise plan.md"                  # the user's own brief to Claude on how to schedule exercise
 DB_PATH = APP_SUPPORT / "tracker.sqlite3"
 ENV_FILE = APP_SUPPORT / "env"
 LOG_PATH = pathlib.Path.home() / "Library" / "Logs" / "project-tracker.log"
@@ -191,12 +193,35 @@ def secret(name: str) -> str | None:
     return v
 
 
+def _user_doc(name: str) -> pathlib.Path:
+    """The user's copy of a document in APP_SUPPORT, seeded from the repo's example on first use."""
+    path = APP_SUPPORT / name
+    if not path.exists():
+        example = ROOT / name.replace(".md", ".example.md")
+        try:
+            APP_SUPPORT.mkdir(parents=True, exist_ok=True)
+            path.write_text(example.read_text() if example.exists() else "")
+        except OSError as e:
+            logging.getLogger(__name__).warning("could not create %s: %s", path, e)
+    return path
+
+
+def rules_path() -> pathlib.Path:
+    return _user_doc(RULES_NAME)
+
+
+def exercise_path() -> pathlib.Path:
+    return _user_doc(EXERCISE_NAME)
+
+
 def rules_text() -> str:
-    return RULES_PATH.read_text() if RULES_PATH.exists() else ""
+    p = rules_path()
+    return p.read_text() if p.exists() else ""
 
 
 def exercise_text() -> str:
-    return EXERCISE_PATH.read_text() if EXERCISE_PATH.exists() else ""
+    p = exercise_path()
+    return p.read_text() if p.exists() else ""
 
 
 def keychain_set(account: str, value: str) -> None:

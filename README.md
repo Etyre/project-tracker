@@ -128,7 +128,7 @@ project.
 **Exercise** - the exercise logging sheet written by your exercise app is the record. Its own sync script answers
 `?action=export` with the logged sessions; paste that script's /exec URL as "Exercise log script URL" in Settings
 and each session's category, start time and duration become the history (read-only), with the app's timers and
-Toggl filling in only sessions the sheet lacks. `Exercise plan.md` (the Exercise box on the Settings page) holds your rules, one per line:
+Toggl filling in only sessions the sheet lacks. `Exercise plan.md` in the data folder (the Exercise box on the Settings page) holds your rules, one per line:
 `squats: at least every 7 days, at most every 3 days`, `cardio interval training: at least every 4 days, at most
 every 2 days`, `never back to back: deadlifts, squats`, `fill: benchpress, deadlifts, shoulder press`. Once each
 morning (from 06:00, or when the first plan is built) the app applies them to the log with no model involved:
@@ -315,8 +315,8 @@ curl -s -X PUT $A/schedule/instructions "${H[@]}" -d '{"text": "Eli has a dentis
 | `tests/` | pytest suite: scheduler, agent API, LLM-inbox wiring (no network, temp database) |
 | `config.toml` | your settings (untracked: it holds the calendar's secret address); written by the Settings page |
 | `config.example.toml` | every key with its default, to copy |
-| `Rules and heuristics for scheduling.md` | your prose rules for the day plan; Claude reads it on every plan build (edited on the Settings page) |
-| `Exercise plan.md` | your exercise rules and notes (the Exercise box on the Settings page) |
+| `Rules and heuristics for scheduling.example.md` | starter prose rules for the day plan; copied to the data folder on first run, where Claude reads your copy on every plan build (edited on the Settings page) |
+| `Exercise plan.example.md` | starter exercise rules; copied to the data folder on first run (edited in the Exercise box on the Settings page) |
 | `Project Tracker spec.md` | the original brief the app was built from |
 | `requirements.txt` | Python dependencies (anthropic, fastapi, uvicorn, pydantic, icalendar, rumps, pyobjc, pytest…) |
 | `.venv/` | the project's Python 3.12 virtualenv; the app bundle runs this interpreter |
@@ -325,7 +325,8 @@ curl -s -X PUT $A/schedule/instructions "${H[@]}" -d '{"text": "Eli has a dentis
 ## Runtime locations
 
 - **Config**: `config.toml` in this folder (or `$TASK_TRACKER_CONFIG`), edited from the app's Settings page.
-  The rules and exercise documents are `Rules and heuristics for scheduling.md` and `Exercise plan.md` beside it.
+  The rules and exercise documents are `Rules and heuristics for scheduling.md` and `Exercise plan.md` in the data
+  folder below (yours, never in the repo); the repo's `*.example.md` copies seed them on first run.
 - **Secrets**: the login Keychain, service `TaskTracker`, accounts `anthropic`, `toggl`, `linear`, `sheets`, `agent`
   (`security add-generic-password -s TaskTracker -a toggl -w`); or the environment (`ANTHROPIC_API_KEY`,
   `TOGGL_API_TOKEN`, `LINEAR_API_KEY`, `SHEETS_TOKEN`, `AGENT_API_TOKEN`); or `NAME=value` lines in
@@ -390,7 +391,7 @@ as above; `python -m tracker web --reload` in a browser is the quick way to see 
   connections" button), the menu bar item's **Set … Key…** entries, or `~/Library/Application Support/TaskTracker/env`
   as `NAME=value` lines. Secrets can also be put in the Keychain by hand (`security add-generic-password -s TaskTracker
   -a toggl -w`; accounts `toggl`, `linear`, `anthropic`, `sheets`). Everything else is in `config.toml`; scheduling
-  preferences go in `Rules and heuristics for scheduling.md`. `config.toml` is yours and stays out of git (it holds
+  preferences go in `Rules and heuristics for scheduling.md` in the data folder. `config.toml` is yours and stays out of git (it holds
   your calendar's secret address); `config.example.toml` shows every key.
 - **Google Calendar**: Settings -> your calendar -> *Secret address in iCal format* -> `[calendar] ics_urls`.
 - **Google Sheets**: the Apps Script deployed on the checklist spreadsheet as a web app (Execute as me, access
