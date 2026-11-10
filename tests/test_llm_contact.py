@@ -50,9 +50,14 @@ def _fake_client(resp, seen):
 
 
 @pytest.fixture
-def quiet_inbox(monkeypatch):
-    """No inbox file, no ntfy, no notification: record() is replaced and its calls collected."""
+def quiet_inbox(monkeypatch, tmp_path):
+    """No inbox file, no ntfy, no notification: record() is replaced and its calls collected. The files the confirm
+    step writes itself (unconfirmed.jsonl, the log) go to a temp folder, never to the real LLMInbox."""
     records = []
+    monkeypatch.setattr(llm_contact, "INBOX_DIR", tmp_path)
+    monkeypatch.setattr(llm_contact, "MESSAGES_PATH", tmp_path / "messages.jsonl")
+    monkeypatch.setattr(llm_contact, "UNCONFIRMED_PATH", tmp_path / "unconfirmed.jsonl")
+    monkeypatch.setattr(llm_contact, "LOG_PATH", tmp_path / "llm-inbox.log")
 
     def record(app, model, message, via, system=None, messages=None, response=None, tools=None, extra=None):
         rec = {"id": "test-0001", "app": app, "model": model, "message": message, "via": via, "system": system}
@@ -107,3 +112,74 @@ def test_marker_line_counts_as_contact(monkeypatch, quiet_inbox):
     with pytest.raises(llm.LLMContact):
         llm.structured("Rules.", "note", llm.EXERCISE_REVIEW_SCHEMA, "low")
     assert quiet_inbox[0]["via"] == "marker"
+
+
+# ---- confirm step: a contact_eli call is asked about once before anything is sent
+_CONTACT = [{"type": "tool_use", "id": "tu_1", "name": "contact_eli", "input": {"message": "This note has no task in it."}}]
+_ANSWER = [{"type": "text", "text": '{"estimate_minutes": 25, "work_kind": "task", "reading": false, "writing": false}'}]
+
+
+def _decision(meant):
+    return _Resp([{"type": "tool_use", "id": "tu_2", "name": "contact_eli_decision", "input": {"meant": meant}}], "tool_use")
+
+
+def _scripted_client(script, calls):
+    """Each call gets the next item of `script`; an exception in the script is raised instead of returned."""
+    def create(**kw):
+        calls.append(dict(kw, messages=list(kw["messages"])))
+        nxt = script.pop(0)
+        if isinstance(nxt, Exception):
+            raise nxt
+        return nxt
+    beta = types.SimpleNamespace(messages=types.SimpleNamespace(create=create))
+    return types.SimpleNamespace(beta=beta, messages=types.SimpleNamespace(create=create))
+
+
+def test_no_contact_call_means_no_confirm_question(monkeypatch, quiet_inbox):
+    calls = []
+    monkeypatch.setattr(llm, "client", lambda: _scripted_client([_Resp(_ANSWER, "end_turn")], calls))
+    assert llm.structured("Rules.", "note", llm.ESTIMATE_SCHEMA, "low")["estimate_minutes"] == 25
+    assert len(calls) == 1 and quiet_inbox == []
+    assert not llm_contact.UNCONFIRMED_PATH.exists()
+
+
+def test_confirm_keep_working_answers_normally_and_sends_nothing(monkeypatch, quiet_inbox):
+    calls = []
+    script = [_Resp(_CONTACT, "tool_use"), _decision(llm_contact.KEEP), _Resp(_ANSWER, "end_turn")]
+    monkeypatch.setattr(llm, "client", lambda: _scripted_client(script, calls))
+    out = llm.structured("Rules.", "note", llm.ESTIMATE_SCHEMA, "low")
+    assert out["estimate_minutes"] == 25
+    assert quiet_inbox == [] and llm._contact is None and llm.paused() == ""
+    first, decide, again = calls
+    # the question: same model and system prompt, the decision tool forced, no JSON format, no thinking
+    assert decide["model"] == first["model"] and decide["system"] == first["system"]
+    assert decide["tool_choice"] == {"type": "tool", "name": "contact_eli_decision"}
+    assert "output_config" not in decide and "thinking" not in decide and "betas" not in decide
+    assert decide["messages"][-1]["content"][0]["content"] == llm_contact.CONFIRM_TEXT
+    # then the normal call again, on the continued exchange
+    assert again["output_config"] == first["output_config"] and again["tools"] == first["tools"]
+    assert again["messages"][-1]["content"][0]["content"] == llm_contact.KEEP_WORKING_TEXT
+    assert len(first["messages"]) == 1 and len(again["messages"]) == 3
+    # what the model had said is kept for audit, not notified
+    assert "This note has no task in it." in llm_contact.UNCONFIRMED_PATH.read_text()
+
+
+def test_confirm_send_records_the_original_and_pauses(monkeypatch, quiet_inbox):
+    calls = []
+    script = [_Resp(_CONTACT, "tool_use"), _decision(llm_contact.SEND)]
+    monkeypatch.setattr(llm, "client", lambda: _scripted_client(script, calls))
+    with pytest.raises(llm.LLMContact):
+        llm.structured("Rules.", "note", llm.ESTIMATE_SCHEMA, "low")
+    assert len(calls) == 2 and quiet_inbox[0]["message"] == "This note has no task in it."
+    assert llm._contact is not None
+    assert not llm_contact.UNCONFIRMED_PATH.exists()
+
+
+def test_confirm_question_failing_sends_the_original(monkeypatch, quiet_inbox):
+    calls = []
+    script = [_Resp(_CONTACT, "tool_use"), RuntimeError("400 tool_choice not supported")]
+    monkeypatch.setattr(llm, "client", lambda: _scripted_client(script, calls))
+    with pytest.raises(llm.LLMContact):
+        llm.structured("Rules.", "note", llm.ESTIMATE_SCHEMA, "low")
+    assert quiet_inbox[0]["message"] == "This note has no task in it." and quiet_inbox[0]["via"] == "tool"
+    assert not llm_contact.UNCONFIRMED_PATH.exists()

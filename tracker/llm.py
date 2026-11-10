@@ -3,7 +3,9 @@
 Every call goes through structured(), the one call site. Its system prompt starts with the shared preamble from
 ~/Documents/agent-coding/shared (the LLM inbox: the model may call `contact_eli` or write `@ELI:` to reach Eli);
 after each response llm_contact.check() looks for that, records it, and this module then stops asking Claude
-(enabled() is False) until Test connections on the Settings page or a restart.
+(enabled() is False) until Test connections on the Settings page or a restart. A `contact_eli` tool call first goes
+through the shared confirm step (llm_contact.with_confirm): one question, "send to Eli and stop" or "it was a remark
+about the task"; anything but an explicit "task remark" sends the original message.
 """
 from __future__ import annotations
 
@@ -94,15 +96,22 @@ def structured(system: str, user: str, schema: dict, effort: str, max_tokens: in
         tools=tools,
         output_config={"format": {"type": "json_schema", "schema": schema}, "effort": effort},
     )
-    try:
+    def call(msgs: list, decide: bool = False):
+        if decide:                # the confirm question: same model and system, forced choice, no JSON format or effort
+            return client().messages.create(model=kw["model"], system=kw["system"], messages=msgs,
+                                            **llm_contact.decision_kwargs(tools))
+        kw["messages"] = msgs
         try:
             # Server-side refusal fallback: if the safeguards decline, the same request re-runs on a fallback model.
-            resp = client().beta.messages.create(
+            return client().beta.messages.create(
                 betas=["server-side-fallback-2026-07-01"], fallbacks="default", **kw)
         except anthropic.BadRequestError as e:
             if "fallback" not in str(e).lower():
                 raise
-            resp = client().messages.create(**kw)
+            return client().messages.create(**kw)
+
+    try:
+        resp = call(messages)
     except anthropic.AuthenticationError as e:
         raise LLMError("Anthropic API key rejected") from e
     except anthropic.RateLimitError as e:
@@ -111,6 +120,9 @@ def structured(system: str, user: str, schema: dict, effort: str, max_tokens: in
         raise LLMError(f"Anthropic API error {e.status_code}: {e.message}") from e
     except anthropic.APIConnectionError as e:
         raise LLMError(f"Anthropic unreachable: {e}") from e
+    # Confirm step: a contact_eli call is asked about once before anything is sent. Any error or unclear answer in
+    # there hands back the original pair, so check() below sends the original message.
+    messages, resp = llm_contact.with_confirm(APP_NAME, cfg["model"], messages, resp, call)
     rec = llm_contact.check(app=APP_NAME, model=cfg["model"], system=system_text, messages=messages, response=resp, tools=tools)
     if rec:                       # the model reached for Eli: recorded and notified; stop here, no retry, no fallback call
         _contact = rec
