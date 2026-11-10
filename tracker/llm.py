@@ -5,7 +5,9 @@ Every call goes through structured(), the one call site. Its system prompt start
 after each response llm_contact.check() looks for that, records it, and this module then stops asking Claude
 (enabled() is False) until Test connections on the Settings page or a restart. A `contact_eli` tool call first goes
 through the shared confirm step (llm_contact.with_confirm): one question, "send to Eli and stop" or "it was a remark
-about the task"; anything but an explicit "task remark" sends the original message.
+about the task"; anything but an explicit "task remark" sends the original message. The step only runs for models in
+llm_contact.CONFIRM_MODELS (today claude-haiku-4-5), so with this app's default claude-opus-5-5 it is inactive: no
+question is asked and a contact_eli call is sent at once.
 """
 from __future__ import annotations
 
@@ -120,8 +122,9 @@ def structured(system: str, user: str, schema: dict, effort: str, max_tokens: in
         raise LLMError(f"Anthropic API error {e.status_code}: {e.message}") from e
     except anthropic.APIConnectionError as e:
         raise LLMError(f"Anthropic unreachable: {e}") from e
-    # Confirm step: a contact_eli call is asked about once before anything is sent. Any error or unclear answer in
-    # there hands back the original pair, so check() below sends the original message.
+    # Confirm step, only for models in llm_contact.CONFIRM_MODELS (not this app's default model, where this returns
+    # the originals without asking): a contact_eli call is asked about once before anything is sent. Any error or
+    # unclear answer in there hands back the original pair, so check() below sends the original message.
     messages, resp = llm_contact.with_confirm(APP_NAME, cfg["model"], messages, resp, call)
     rec = llm_contact.check(app=APP_NAME, model=cfg["model"], system=system_text, messages=messages, response=resp, tools=tools)
     if rec:                       # the model reached for Eli: recorded and notified; stop here, no retry, no fallback call
