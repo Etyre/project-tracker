@@ -95,7 +95,7 @@ class ScheduleIn(BaseModel):
     work_start: str | None = None
     work_end: str | None = None
     rationale: str = ""
-    pin: bool = True                       # the drift re-planner leaves the day alone
+    pin: bool = False                      # freeze the whole day: no planning around the blocks, no re-planning
     merge_meetings: bool = True            # calendar meetings the schedule left out are added
     validate_windows: bool = True          # blocks are clipped to the free windows between meetings
 
@@ -190,7 +190,8 @@ def _schedule_context(day: dt.date) -> dict:
         "estimate_calibration": estimates.calibration(),
         "instructions": scheduler.day_instructions(date) or None,
         "plan": p and {"built_at": p["built_at"], "source": p["raw"].get("source"), "pinned": bool(p["raw"].get("pinned")),
-                       "fixed_by": p["raw"].get("fixed_by"), "rationale": p["rationale"], "work_start": p["work_start"],
+                       "fixed_by": p["raw"].get("fixed_by") or (p["raw"].get("source") if str(p["raw"].get("source", "")).startswith("agent:") else None),
+                       "rationale": p["rationale"], "work_start": p["work_start"],
                        "work_end": p["work_end"], "dropped": p["raw"].get("dropped") or [], "items": p["items"]},
         "rules_document": config.rules_text(),
         "planning_log": db.plan_log(date),
@@ -241,11 +242,11 @@ def ping(agent: str = Depends(identity)):
             "DELETE /api/agent/notes/{id}": "take a note back",
             "GET /api/agent/schedule?date=": "the day's plan, free windows, prioritised candidates, routines, exercise, the day's planning log and everything the app planned since you last looked",
             "GET /api/agent/schedule/log?date=&since=&limit=": "the planning log: every build, re-plan (with its reason), exercise decision, schedule you set, pin change",
-            "PUT /api/agent/schedule": "set the day's schedule block by block; your blocks are never moved by the app. pin (default) = the whole day is yours; pin=false = the app plans the free time around them",
+            "PUT /api/agent/schedule": "set blocks for the day; the app never moves them and plans and re-plans the rest of the day around them (pin=true freezes the whole day instead)",
             "PUT /api/agent/schedule/instructions": "steer the day in prose; the app re-plans with it (replacing a schedule you set)",
             "DELETE /api/agent/schedule/instructions?date=": "drop the instructions",
             "POST /api/agent/schedule/rebuild": "let the app plan the day from scratch (from_now, until); replaces a schedule you set",
-            "POST /api/agent/schedule/unpin?date=": "let the app plan the free time around your blocks again",
+            "POST /api/agent/schedule/unpin?date=": "undo pin=true: the app plans the free time around your blocks again",
         },
     }
 

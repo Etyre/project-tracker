@@ -342,11 +342,12 @@ def set_day_instructions(date: str, text: str, actor: str = "agent") -> None:
 def set_plan(day: dt.date, items: list[dict], work_start: str | None = None, work_end: str | None = None,
              rationale: str = "", source: str = "external", pin: bool = True, merge_meetings: bool = True,
              validate_windows: bool = True) -> dict:
-    """Replace a day's schedule with one built elsewhere (the executive-assistant agent). Items are
-    {kind, title, start, end, task_id?, note?}; statuses of matching blocks are kept, so re-sending a schedule
-    mid-day does not undo finished work. Every block is fixed: the app never moves or drops it. With `pin` the whole
-    day is the agent's (no automatic re-planning, and a rebuild must be forced); without it the app plans the free
-    time around the blocks and keeps re-planning that part on drift. Raises ValueError for a bad item."""
+    """Put the agent's blocks into a day's schedule. Items are {kind, title, start, end, task_id?, note?}; statuses of
+    matching blocks are kept, so re-sending a schedule mid-day does not undo finished work. Every block is fixed: the
+    app never moves or drops it, and it plans the free time around the blocks straight away (today, in the
+    background) or at the morning build, and keeps re-planning that part on drift. With `pin` the whole day is
+    frozen instead: no planning around the blocks, no re-planning, and a rebuild must be forced.
+    Raises ValueError for a bad item."""
     date = day.isoformat()
     cfg = config.load()["general"]
     ws, we = parse_hm(work_start or cfg["work_start"]), parse_hm(work_end or cfg["work_end"])
@@ -411,11 +412,22 @@ def set_plan(day: dt.date, items: list[dict], work_start: str | None = None, wor
                  keep_statuses=True)
     db.set_setting("last_plan_build", time.time())
     db.log_plan_event(date, "agent_set", f"schedule set by {source.replace('agent:', 'agent ')}: {len(blocks)} blocks, "
-                      f"{'pinned (the app leaves the day alone)' if pin else 'not pinned (the app plans the free time around them)'}"
+                      f"{'pinned (the app leaves the day alone)' if pin else 'the app plans the free time around them'}"
                       + (f"; dropped outside the free windows: {', '.join(dropped)}" if dropped else ""),
                       {"rationale": rationale, "pinned": pin, "dropped": dropped, "work_window": [hm(ws), hm(we)],
                        "exercise": exercise, "items": _log_items(items)}, actor=source)
+    now = dt.datetime.now()
+    if not pin and day == now.date() and ws <= now.hour * 60 + now.minute < we:
+        maybe_replan(f"{source.replace('agent:', 'agent ')} set blocks for the day", force=True)   # the rest of today, around them
     return db.plan(date)
+
+
+def needs_morning_build(date: str) -> bool:
+    """Whether the day's plan still has to be built by the app: no plan yet, or only the agent's blocks so far."""
+    p = db.plan(date)
+    if not p:
+        return True
+    return not p["raw"].get("pinned") and str(p["raw"].get("source", "")).startswith("agent:")
 
 
 def unpin(date: str, actor: str = "agent") -> dict | None:

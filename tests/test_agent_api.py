@@ -116,7 +116,7 @@ def test_agent_sets_the_schedule_and_it_stays_pinned():
              {"kind": "task", "task_id": b, "start": "10:45", "end": "11:15", "title": "Beta (draft)"},
              {"kind": "break", "title": "Break", "start": "11:15", "end": "11:25"},
              {"kind": "task", "task_id": a, "start": "03:00", "end": "03:30"}]          # outside the day: dropped
-    r = client.put("/api/agent/schedule", json={"items": items, "work_start": "09:00", "work_end": "17:00", "rationale": "Ada's plan"}, headers=H)
+    r = client.put("/api/agent/schedule", json={"items": items, "work_start": "09:00", "work_end": "17:00", "rationale": "Ada's plan", "pin": True}, headers=H)
     assert r.status_code == 200, r.text
     out = r.json()
     plan = out["plan"]
@@ -129,7 +129,7 @@ def test_agent_sets_the_schedule_and_it_stays_pinned():
     assert scheduler.off_track(noon) is None                      # pinned: the drift re-planner leaves it alone
     first = next(i for i in plan["items"] if i["title"] == "Alpha")
     db.set_item_status(first["id"], "done")
-    r = client.put("/api/agent/schedule", json={"items": items[:3], "work_start": "09:00", "work_end": "17:00"}, headers=H)
+    r = client.put("/api/agent/schedule", json={"items": items[:3], "work_start": "09:00", "work_end": "17:00", "pin": True}, headers=H)
     assert next(i for i in r.json()["plan"]["items"] if i["title"] == "Alpha")["status"] == "done"   # re-sending keeps progress
     f = client.get("/api/feed").json()
     assert f["plan"]["pinned"] is True and f["plan"]["source"] == "agent:Ada"
@@ -160,7 +160,7 @@ def test_pinned_day_is_replaced_only_when_forced_and_the_agents_exercise_wins():
     a = db.create_task(pid, "Gamma", estimate_minutes=30)
     items = [{"kind": "task", "task_id": a, "start": "09:00", "end": "09:30"},
              {"kind": "exercise", "title": "Exercise: zone 2 cardio", "start": "15:00", "end": "15:45"}]
-    r = client.put("/api/agent/schedule", json={"items": items, "work_start": "09:00", "work_end": "17:00"}, headers=H)
+    r = client.put("/api/agent/schedule", json={"items": items, "work_start": "09:00", "work_end": "17:00", "pin": True}, headers=H)
     assert r.status_code == 200, r.text
     assert r.json()["plan"]["exercise"] == "zone 2 cardio"
     assert client.get("/api/feed").json()["exercise"] == "zone 2 cardio"          # the feed's exercise button follows the agent
@@ -182,9 +182,52 @@ def test_pinned_day_is_replaced_only_when_forced_and_the_agents_exercise_wins():
     assert p["raw"]["source"] == "greedy" and not p["raw"].get("pinned") and not any(i["fixed"] for i in p["items"])
     assert not any(i["title"] == "Exercise: zone 2 cardio" for i in p["items"])
     # the agent's own rebuild and instructions replace its schedule without a force flag
-    client.put("/api/agent/schedule", json={"items": items[:1], "work_start": "09:00", "work_end": "17:00"}, headers=H)
+    client.put("/api/agent/schedule", json={"items": items[:1], "work_start": "09:00", "work_end": "17:00", "pin": True}, headers=H)
     assert client.post("/api/agent/schedule/rebuild", json={}, headers=H).status_code == 200
     assert not db.plan(TODAY.isoformat())["raw"].get("pinned")
+
+
+def _wait_replan():
+    import time
+    for _ in range(100):
+        if not scheduler.replanning["active"] and not scheduler._replan_lock.locked():
+            return
+        time.sleep(0.05)
+
+
+def test_by_default_the_app_keeps_planning_around_the_agents_blocks(monkeypatch):
+    date = TODAY.isoformat()
+    pid = db.create_project("Around")
+    a = db.create_task(pid, "Epsilon", estimate_minutes=30)
+    b = db.create_task(pid, "Zeta", estimate_minutes=45)
+    db.execute("DELETE FROM plans WHERE date=?", (date,)); db.execute("DELETE FROM plan_items WHERE date=?", (date,))
+    now = dt.datetime.combine(TODAY, dt.time(10, 0))
+
+    class Clock(dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now
+    monkeypatch.setattr(scheduler.dt, "datetime", Clock)             # inside the work day, so the rest of today is planned at once
+    r = client.put("/api/agent/schedule", json={"items": [{"kind": "task", "task_id": a, "start": "11:00", "end": "11:30"}],
+                                                "work_start": "09:00", "work_end": "17:00"}, headers=H)
+    assert r.status_code == 200, r.text
+    assert r.json()["plan"]["raw"]["pinned"] is False
+    _wait_replan()
+    p = db.plan(date)
+    assert p["raw"]["source"] == "greedy" and p["raw"]["fixed_by"] == "agent:Ada"    # the app filled in around the block
+    assert [(i["title"], i["start"], i["end"]) for i in p["items"] if i["fixed"]] == [("Epsilon", "11:00", "11:30")]
+    others = [i for i in p["items"] if not i["fixed"] and i["kind"] != "meeting"]
+    assert others and not any(i["task_id"] == a for i in others)                      # the rest of the day filled, Epsilon not twice
+    assert all(i["end"] <= "11:00" or i["start"] >= "11:30" for i in others)
+    assert "set blocks for the day" in [e for e in db.plan_log(date) if e["event"] == "replanned"][-1]["summary"]
+    assert scheduler.off_track(dt.datetime.combine(TODAY, dt.time(12, 30))) is not None   # regular drift re-planning continues
+    assert not scheduler.needs_morning_build(date)
+    # a schedule sent for a later day waits for that day's morning build, which plans around it
+    tomorrow = (TODAY + dt.timedelta(days=1)).isoformat()
+    client.put("/api/agent/schedule", json={"items": [{"kind": "task", "task_id": b, "start": "09:00", "end": "09:45"}], "date": tomorrow,
+                                            "work_start": "09:00", "work_end": "17:00"}, headers=H)
+    assert db.plan(tomorrow)["raw"]["source"] == "agent:Ada" and scheduler.needs_morning_build(tomorrow)
+    db.execute("DELETE FROM plans WHERE date=?", (tomorrow,)); db.execute("DELETE FROM plan_items WHERE date=?", (tomorrow,))
 
 
 def test_the_planning_log_shows_the_agent_what_the_app_did():

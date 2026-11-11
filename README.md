@@ -160,16 +160,18 @@ multiplied by your measured actual/estimate ratio), the checklist, the exercise 
 does the packing when configured; a deterministic packer is the fallback and the validator (anything outside
 the free windows is clamped or dropped).
 
-**The agent's schedule wins.** A schedule your assistant agent sets through the agent API overrides anything the
-app would plan itself. Every block the agent sets is *fixed*: the app never moves, retitles or drops it (an
-exercise block it names, "Exercise: zone 2 cardio", becomes the day's session on the feed too, over the morning
-decision). A *pinned* day (the default when the agent sends a schedule) is wholly the agent's: no automatic
-re-planning, the morning build is skipped, and the Rebuild / Re-plan / Work late buttons are refused with a message
-and a button to replace the agent's schedule with the app's own plan if that is what you want. An unpinned day
-(`pin: false`, or after the agent unpins it) keeps the agent's blocks where they are and the app plans the free time
-around them, re-planning that part on drift like any other day. The plan page marks the agent's blocks with an
-`agent` chip and the feed says whose schedule it is following. Only the agent's own calls (rebuild, instructions
-with rebuild, a new schedule) replace what it set before.
+**The agent's blocks win; the app plans around them.** Blocks your assistant agent sets through the agent API
+override anything the app would plan itself. Every block the agent sets is *fixed*: the app never moves, retitles
+or drops it (an exercise block it names, "Exercise: zone 2 cardio", becomes the day's session on the feed too, over
+the morning decision). Regular planning carries on around them: when the agent sends blocks for today during the
+work day the rest of the day is planned around them at once (in the background); blocks sent for a later day are
+planned around at that day's morning build; and drift re-planning keeps rebuilding the free time as usual, always
+leaving the agent's blocks in place. The plan page marks them with an `agent` chip and the feed says whose blocks
+it is working around. Only the agent's own calls (rebuild, instructions with rebuild, a new schedule) replace what
+it set before. The agent can also send `pin: true` to freeze a whole day: then nothing is planned around its
+blocks, there is no re-planning, the morning build is skipped, and the Rebuild / Re-plan / Work late buttons are
+refused with a message and a button to replace the agent's schedule with the app's own plan if that is what you
+want; `unpin` lifts that again.
 
 **The planning log** records every planning decision so the agent can see everything the app did on its own the
 next time it looks: each build and re-plan (who asked, why it re-planned, the free windows, the candidates
@@ -242,8 +244,8 @@ The checklist card lists the sheet's items with checkboxes.
 more than `replan_drift_minutes` late or early, the active block has overrun by `overrun_minutes`, the day
 finished early, or the calendar changed, the rest of the day is re-planned from now in the background; done,
 skipped and active blocks are kept, and so are the agent's fixed blocks. Never more often than
-`replan_min_interval_minutes`, never on a pinned day, and being late for a block the agent fixed is not drift (the
-re-planner could not move it anyway: Skip it on the feed if it is not going to happen).
+`replan_min_interval_minutes`, never on a day the agent pinned, and being late for a block the agent fixed is not
+drift (the re-planner could not move it anyway: Skip it on the feed if it is not going to happen).
 
 **Estimates** - never user-entered. New tasks get a forecast from Claude (grounded in your recent actuals) and
 time tracked per task (from the app's timers; if you stop the timer in Toggl the app notices) is compared with
@@ -307,10 +309,10 @@ Mac may call the agent API (the server only listens on 127.0.0.1). The agent nam
 | `POST /api/agent/notes` | `{task_id | project_id, body}`: add context to any item; `GET /api/agent/notes?task_id=` lists, `DELETE /api/agent/notes/{id}` takes one back |
 | `GET /api/agent/schedule?date=` | what the agent needs to set a day: the current plan with statuses (each item says whether it is `fixed`, i.e. the agent's), free windows between meetings, prioritised candidate tasks with calibrated estimates and the agent's notes, routines, the day's exercise, your rules document, any standing instructions, the day's `planning_log`, and `since_your_last_visit`: every planning event (any day) since this agent, by name, last called this |
 | `GET /api/agent/schedule/log?date=&since=&limit=` | the planning log, oldest first: `date` for one day, `since` (ISO local date-time or epoch seconds) for everything after a moment. Each entry: `at_local`, `event` (`built`, `replanned`, `agent_set`, `unpinned`, `exercise`, `instructions`), `actor` (`app`, `user`, `agent:<name>`), a one-line `summary` and a `detail` object (for builds: reason, source, rationale, free windows, candidates considered, exercise, routines, the fixed blocks kept and every block produced) |
-| `PUT /api/agent/schedule` | `{items: [{kind, task_id, title, start, end, note}], date, work_start, work_end, rationale, pin}`: set the day's schedule block by block (kinds `task`, `routine`, `exercise`, `journal`, `break`, `meeting`). Blocks are clipped to the free windows (`validate_windows: false` to skip that) and what did not fit is returned in `dropped`; calendar meetings are added; done, skipped and active blocks keep their status when a schedule is re-sent. Every block is fixed: the app never moves it. `pin` (the default) makes the whole day the agent's: no automatic re-planning and the app's Rebuild button asks before replacing it. `pin: false` lets the app plan the free time around the blocks. An `exercise` block names the day's session |
+| `PUT /api/agent/schedule` | `{items: [{kind, task_id, title, start, end, note}], date, work_start, work_end, rationale, pin}`: set the day's schedule block by block (kinds `task`, `routine`, `exercise`, `journal`, `break`, `meeting`). Blocks are clipped to the free windows (`validate_windows: false` to skip that) and what did not fit is returned in `dropped`; calendar meetings are added; done, skipped and active blocks keep their status when a schedule is re-sent. Every block is fixed: the app never moves it, and it plans and re-plans the rest of the day around the blocks (at once for today, at the morning build for a later day). `pin: true` freezes the whole day instead: no planning around the blocks, no automatic re-planning, and the app's Rebuild button asks before replacing it. An `exercise` block names the day's session |
 | `PUT /api/agent/schedule/instructions` | `{text, date, rebuild}`: steer the day in prose ("end by 13:00", "grant report first thing"); the app re-plans with the instructions appended to your rules (replacing a schedule the agent set, pinned or not), and shows them on the plan page. `DELETE` drops them |
 | `POST /api/agent/schedule/rebuild` | `{date, from_now, until}`: let the app plan the day from scratch (this replaces a schedule the agent set, and unpins the day) |
-| `POST /api/agent/schedule/unpin?date=` | keep the agent's blocks but let the app plan and re-plan the free time around them |
+| `POST /api/agent/schedule/unpin?date=` | undo `pin: true`: the app plans and re-plans the free time around the agent's blocks again |
 
 ```bash
 A="http://127.0.0.1:8791/api/agent"; H=(-H "Content-Type: application/json" -H "X-Agent-Name: EA" -H "Authorization: Bearer $AGENT_API_TOKEN")

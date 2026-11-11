@@ -1216,10 +1216,10 @@ def _loop() -> None:
             # 4. Build today's plan automatically once the work day starts
             now = dt.datetime.now()
             ws = scheduler.parse_hm(cfg["general"]["work_start"])
-            if now.hour * 60 + now.minute >= ws - 15 and not db.plan(db.today()) and db.get_setting("auto_plan_date") != db.today():
+            if now.hour * 60 + now.minute >= ws - 15 and scheduler.needs_morning_build(db.today()) and db.get_setting("auto_plan_date") != db.today():
                 db.set_setting("auto_plan_date", db.today())
                 log.info("auto-building today's plan")
-                scheduler.build()
+                scheduler.build(reason="start of the work day")
             # 5. The daily Markdown snapshot of the outline (once the configured hour has passed)
             snapshot.maybe_snapshot(now)
             # 6. Today's exercise: decided once, in the morning (from 06:00), and kept for the day
