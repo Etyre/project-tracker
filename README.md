@@ -107,6 +107,10 @@ are read afresh and kept, so a midnight decision (the day's exercise, the recurr
 is off at night. A session decided while the exercise log cannot be read is provisional and is decided again as soon
 as the log is readable.
 
+**Time** - everything is in your Mac's local time: dates, the work window, plan and feed times, the midnight
+decisions and the calendar. Timestamps sent to Toggl and Linear are UTC, as their APIs require, and are converted
+back to local time when read. There is no timezone setting; change the Mac's clock and the app follows.
+
 **Snapshots** - every day at `[snapshots] time` (05:00) the whole outline is written to
 `~/Library/Application Support/TaskTracker/snapshots/YYYY-MM-DD.md` (or `[snapshots] dir`): projects as a bold
 nested list, open tasks as checkboxes with their tags, notes underneath, and the tasks completed since the last
@@ -156,6 +160,24 @@ multiplied by your measured actual/estimate ratio), the checklist, the exercise 
 does the packing when configured; a deterministic packer is the fallback and the validator (anything outside
 the free windows is clamped or dropped).
 
+**The agent's schedule wins.** A schedule your assistant agent sets through the agent API overrides anything the
+app would plan itself. Every block the agent sets is *fixed*: the app never moves, retitles or drops it (an
+exercise block it names, "Exercise: zone 2 cardio", becomes the day's session on the feed too, over the morning
+decision). A *pinned* day (the default when the agent sends a schedule) is wholly the agent's: no automatic
+re-planning, the morning build is skipped, and the Rebuild / Re-plan / Work late buttons are refused with a message
+and a button to replace the agent's schedule with the app's own plan if that is what you want. An unpinned day
+(`pin: false`, or after the agent unpins it) keeps the agent's blocks where they are and the app plans the free time
+around them, re-planning that part on drift like any other day. The plan page marks the agent's blocks with an
+`agent` chip and the feed says whose schedule it is following. Only the agent's own calls (rebuild, instructions
+with rebuild, a new schedule) replace what it set before.
+
+**The planning log** records every planning decision so the agent can see everything the app did on its own the
+next time it looks: each build and re-plan (who asked, why it re-planned, the free windows, the candidates
+considered, the exercise and routines it had, the blocks it produced and which of the agent's it kept in place),
+each exercise decision, each schedule the agent set, each pin change and each set of instructions. `GET
+/api/agent/schedule` returns the day's log and everything logged since that agent (by name) last looked;
+`GET /api/agent/schedule/log` queries it by day or since a moment.
+
 **Claude and the LLM inbox** - every call to Claude (quick add, estimates and work kinds, the day plan, the
 exercise review, Toggl filing) goes through one function, `structured()` in `tracker/llm.py`: a JSON-schema
 constrained request to `[llm] model` with the system prompt cached as a prefix. Following the house standard in
@@ -167,6 +189,13 @@ that was running stops with the message "Claude asked to talk to Eli (llm-inbox 
 the planner and the other callers fall back to their rules-only paths), and the app asks Claude nothing more until
 **Settings -> Test connections** is pressed (which resumes it and says what had happened) or the app restarts.
 Read and answer such messages with `llm-inbox` (see `../shared/README.md`).
+The shared confirm step (`llm_contact.with_confirm`, added 2026-11-10 because small models use the tool for routine
+remarks) is wired in before that check, but it only runs for models in the shared `llm_contact.CONFIRM_MODELS` list
+(today only `claude-haiku-4-5`), so it is **inactive for the current `[llm] model`, `claude-opus-5-5`**: no question
+is asked and a `contact_eli` call is sent at once. On a listed model a `contact_eli` tool call is followed by one
+forced-choice question, "send to Eli and stop" or "it was a remark about the task, keep working". Only an explicit "task remark" continues: the model then
+answers in the normal format and what it had said is kept in `LLMInbox/unconfirmed.jsonl`. Send, an unclear answer or
+any error in the question sends the original message as above. An `@ELI:` line is never questioned.
 
 **Toggl filing** - every timer the app starts goes to the right Toggl project, and nearly always without a model:
 
@@ -212,7 +241,9 @@ The checklist card lists the sheet's items with checkboxes.
 **Drift** - every minute (and on every feed load) the schedule is compared with reality. If the next block is
 more than `replan_drift_minutes` late or early, the active block has overrun by `overrun_minutes`, the day
 finished early, or the calendar changed, the rest of the day is re-planned from now in the background; done,
-skipped and active blocks are kept. Never more often than `replan_min_interval_minutes`.
+skipped and active blocks are kept, and so are the agent's fixed blocks. Never more often than
+`replan_min_interval_minutes`, never on a pinned day, and being late for a block the agent fixed is not drift (the
+re-planner could not move it anyway: Skip it on the feed if it is not going to happen).
 
 **Estimates** - never user-entered. New tasks get a forecast from Claude (grounded in your recent actuals) and
 time tracked per task (from the app's timers; if you stop the timer in Toggl the app notices) is compared with
@@ -257,7 +288,9 @@ for the terminal). A "Journaling" Toggl timer starts.
 An executive-assistant agent gets its own door into the app, everything under `http://127.0.0.1:8791/api/agent`.
 Whatever comes through it is attributed to the agent: tasks and projects it adds carry an `agent` chip, context it
 attaches to any item is a separate signed note (never merged into your own text), and a schedule it sets is shown as
-the agent's on the plan page. Interactive documentation of every call is at `/docs`; `GET /api/agent` returns the map.
+the agent's on the plan page and overrides the app's own planning (see *The agent's schedule wins* above). Everything
+the app plans by itself is written to the planning log for the agent to read back. Interactive documentation of
+every call is at `/docs`; `GET /api/agent` returns the map.
 
 **Access.** Optional bearer token: paste one into Settings -> Assistant agent (or `AGENT_API_TOKEN`, or the menu bar
 item's *Set Agent API Token…*) and the agent sends `Authorization: Bearer <token>`. Without one, any process on this
@@ -272,11 +305,12 @@ Mac may call the agent API (the server only listens on 127.0.0.1). The agent nam
 | `POST /api/agent/tasks` | `{title, project_id | project_path | parent_id, description, deadline, blocking, blocking_for, importance, chunkable, note}`; hashtags in the title work (`#p2 #due:fri`); `note` is attached as the agent's note straight away; with no project given Claude files it like the quick-add bar (Inbox without Claude); `create_project: true` creates a missing path |
 | `POST /api/agent/quick_add` | `{text}`: Claude turns free text into tasks in the right projects |
 | `POST /api/agent/notes` | `{task_id | project_id, body}`: add context to any item; `GET /api/agent/notes?task_id=` lists, `DELETE /api/agent/notes/{id}` takes one back |
-| `GET /api/agent/schedule?date=` | what the agent needs to set a day: the current plan with statuses, free windows between meetings, prioritised candidate tasks with calibrated estimates and the agent's notes, routines, the day's exercise, your rules document and any standing instructions |
-| `PUT /api/agent/schedule` | `{items: [{kind, task_id, title, start, end, note}], date, work_start, work_end, rationale, pin}`: set the day's schedule block by block (kinds `task`, `routine`, `exercise`, `journal`, `break`, `meeting`). Blocks are clipped to the free windows and what did not fit is returned in `dropped`; calendar meetings are added; done, skipped and active blocks keep their status when a schedule is re-sent. With `pin` (the default) the drift re-planner leaves the day alone |
-| `PUT /api/agent/schedule/instructions` | `{text, date, rebuild}`: steer the day in prose ("end by 13:00", "grant report first thing"); the app re-plans with the instructions appended to your rules, and shows them on the plan page. `DELETE` drops them |
-| `POST /api/agent/schedule/rebuild` | `{date, from_now, until}`: let the app plan the day (this also unpins it) |
-| `POST /api/agent/schedule/unpin?date=` | hand a pinned day back to the automatic re-planner |
+| `GET /api/agent/schedule?date=` | what the agent needs to set a day: the current plan with statuses (each item says whether it is `fixed`, i.e. the agent's), free windows between meetings, prioritised candidate tasks with calibrated estimates and the agent's notes, routines, the day's exercise, your rules document, any standing instructions, the day's `planning_log`, and `since_your_last_visit`: every planning event (any day) since this agent, by name, last called this |
+| `GET /api/agent/schedule/log?date=&since=&limit=` | the planning log, oldest first: `date` for one day, `since` (ISO local date-time or epoch seconds) for everything after a moment. Each entry: `at_local`, `event` (`built`, `replanned`, `agent_set`, `unpinned`, `exercise`, `instructions`), `actor` (`app`, `user`, `agent:<name>`), a one-line `summary` and a `detail` object (for builds: reason, source, rationale, free windows, candidates considered, exercise, routines, the fixed blocks kept and every block produced) |
+| `PUT /api/agent/schedule` | `{items: [{kind, task_id, title, start, end, note}], date, work_start, work_end, rationale, pin}`: set the day's schedule block by block (kinds `task`, `routine`, `exercise`, `journal`, `break`, `meeting`). Blocks are clipped to the free windows (`validate_windows: false` to skip that) and what did not fit is returned in `dropped`; calendar meetings are added; done, skipped and active blocks keep their status when a schedule is re-sent. Every block is fixed: the app never moves it. `pin` (the default) makes the whole day the agent's: no automatic re-planning and the app's Rebuild button asks before replacing it. `pin: false` lets the app plan the free time around the blocks. An `exercise` block names the day's session |
+| `PUT /api/agent/schedule/instructions` | `{text, date, rebuild}`: steer the day in prose ("end by 13:00", "grant report first thing"); the app re-plans with the instructions appended to your rules (replacing a schedule the agent set, pinned or not), and shows them on the plan page. `DELETE` drops them |
+| `POST /api/agent/schedule/rebuild` | `{date, from_now, until}`: let the app plan the day from scratch (this replaces a schedule the agent set, and unpins the day) |
+| `POST /api/agent/schedule/unpin?date=` | keep the agent's blocks but let the app plan and re-plan the free time around them |
 
 ```bash
 A="http://127.0.0.1:8791/api/agent"; H=(-H "Content-Type: application/json" -H "X-Agent-Name: EA" -H "Authorization: Bearer $AGENT_API_TOKEN")
@@ -286,6 +320,7 @@ curl -s -X POST $A/notes "${H[@]}" -d '{"task_id": 42, "body": "The venue replie
 curl -s $A/schedule "${H[@]}" | jq '{free_windows, candidates: [.candidates[:5][] | {id, title, expected_minutes}]}'
 curl -s -X PUT $A/schedule "${H[@]}" -d '{"items": [{"kind": "task", "task_id": 42, "start": "10:30", "end": "11:30"}, {"kind": "break", "title": "Break", "start": "11:30", "end": "11:40"}], "rationale": "Deposit first; rest of the day as planned."}'
 curl -s -X PUT $A/schedule/instructions "${H[@]}" -d '{"text": "Eli has a dentist appointment at 14:00 and wants the afternoon light."}'
+curl -s "$A/schedule/log?date=$(date +%F)" "${H[@]}" | jq '.[] | {at_local, event, actor, summary}'
 ```
 
 ## Files
@@ -297,8 +332,8 @@ curl -s -X PUT $A/schedule/instructions "${H[@]}" -d '{"text": "Eli has a dentis
 | `tracker/web.py` | FastAPI app: the JSON API, the dashboard page, the Settings endpoints and the background loop |
 | `tracker/agent_api.py` | the executive-assistant agent's API under `/api/agent` |
 | `tracker/dashboard.html` | the whole UI, one file: outline, feed, stats, snapshots, settings; drafts kept in `localStorage` |
-| `tracker/db.py` | SQLite schema and queries (projects, tasks, notes, plans, timers, settings) |
-| `tracker/scheduler.py` | free windows, priorities, the deterministic packer, drift detection, schedules set from outside |
+| `tracker/db.py` | SQLite schema and queries (projects, tasks, notes, plans, the planning log, timers, settings) |
+| `tracker/scheduler.py` | free windows, priorities, the deterministic packer, drift detection, schedules set from outside (fixed blocks, pinned days) and the planning log entries |
 | `tracker/llm.py` | the one Claude call site (`structured()`), every prompt and JSON schema; LLM-inbox wiring |
 | `tracker/config.py` | `config.toml` + defaults, Keychain / env secrets, the log file, `save()` for the Settings page |
 | `tracker/tags.py` | `#p2 #due:fri #blocking:Sam …` parsing |
@@ -411,6 +446,14 @@ as above; `python -m tracker web --reload` in a browser is the quick way to see 
 
 ## Gotchas learned
 
+- The WKWebView window has no `confirm()` or `alert()` (nothing implements the WKUIDelegate panels, and a blocking
+  dialog would freeze the page), so anything that needs a yes from the user, such as replacing a schedule the agent
+  pinned, is a toast with a button that re-sends the request with `force: true`.
+- The confirm step for `contact_eli` does nothing on this app's model. It runs only for models in
+  `llm_contact.CONFIRM_MODELS` (`../shared/README.md`, Gotchas: measured 2026-11-10, only `claude-haiku-4-5` is safe;
+  `claude-opus-5-5` rejects the forced tool choice the question needs). Other models are never questioned and no
+  extra request is made, so a `contact_eli` call here is sent exactly as before the step existed. It would start
+  working if `[llm] model` were set to a listed model.
 - A Finder-launched app does not see your shell environment; `ANTHROPIC_API_KEY` exported in `.zshrc` does nothing
   for the bundle. Use the Keychain (Settings page), the menu bar item, or the `env` file.
 - The bundle references this project directory (its venv and `config.toml`): move the project and the app breaks

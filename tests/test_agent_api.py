@@ -1,5 +1,7 @@
 """The executive-assistant agent's API: adding tasks and projects, signed context on any item, setting the schedule."""
 import datetime as dt
+
+import pytest
 import os
 import pathlib
 import tempfile
@@ -136,9 +138,84 @@ def test_agent_sets_the_schedule_and_it_stays_pinned():
     assert client.put("/api/agent/schedule", json={"items": [{"kind": "task", "task_id": a, "start": "10:00", "end": "09:30"}]}, headers=H).status_code == 400
     assert client.put("/api/agent/schedule", json={"items": [{"kind": "task", "start": "10:00", "end": "10:30"}]}, headers=H).status_code == 400
     assert client.put("/api/agent/schedule", json={"items": [{"kind": "nap", "title": "x", "start": "10:00", "end": "10:30"}]}, headers=H).status_code == 400
+    # the user's own Rebuild button is refused while the day is pinned, and replaces everything when forced
+    assert client.post("/api/plan/rebuild", json={"from_now": False}).status_code == 409
     r = client.post("/api/agent/schedule/unpin", headers=H)
     assert r.json()["raw"]["pinned"] is False
-    assert scheduler.off_track(noon) and "should have started" in scheduler.off_track(noon)
+    assert scheduler.off_track(noon) is None                      # unpinned, but the agent's blocks are fixed: being late for them is not drift
+    p = scheduler.build(TODAY, actor="user")                      # the app plans around them
+    fixed = [i for i in p["items"] if i["fixed"]]
+    assert [(i["title"], i["start"], i["end"]) for i in fixed] == [("Beta (draft)", "10:45", "11:15"), ("Break", "11:15", "11:25")]
+    assert not any(i["title"] == "Alpha" and i["status"] == "pending" for i in p["items"])   # finished work is not scheduled again
+    for i in p["items"]:
+        if not i["fixed"] and i["status"] == "pending":
+            assert i["end"] <= "10:45" or i["start"] >= "11:25", i                    # nothing planned over the agent's blocks
+    assert p["raw"]["fixed_by"] == "agent:Ada" and not p["raw"].get("pinned")
+    f = client.get("/api/feed").json()
+    assert f["fixed_by"] == "agent:Ada"
+
+
+def test_pinned_day_is_replaced_only_when_forced_and_the_agents_exercise_wins():
+    pid = db.create_project("Pinned")
+    a = db.create_task(pid, "Gamma", estimate_minutes=30)
+    items = [{"kind": "task", "task_id": a, "start": "09:00", "end": "09:30"},
+             {"kind": "exercise", "title": "Exercise: zone 2 cardio", "start": "15:00", "end": "15:45"}]
+    r = client.put("/api/agent/schedule", json={"items": items, "work_start": "09:00", "work_end": "17:00"}, headers=H)
+    assert r.status_code == 200, r.text
+    assert r.json()["plan"]["exercise"] == "zone 2 cardio"
+    assert client.get("/api/feed").json()["exercise"] == "zone 2 cardio"          # the feed's exercise button follows the agent
+    assert web._agent_exercise(TODAY.isoformat()) == "zone 2 cardio"
+    with pytest.raises(scheduler.PinnedDay):
+        scheduler.build(TODAY)
+    assert scheduler.maybe_replan(reason="x", force=True) is True                  # the background re-planner is refused too
+    import time
+    for _ in range(50):
+        if not scheduler.replanning["active"] and not scheduler._replan_lock.locked():
+            break
+        time.sleep(0.05)
+    assert db.plan(TODAY.isoformat())["raw"]["pinned"] is True and db.plan(TODAY.isoformat())["raw"]["source"] == "agent:Ada"
+    r = client.post("/api/plan/rebuild", json={"from_now": False})
+    assert r.status_code == 409 and "pinned" in r.json()["detail"]
+    r = client.post("/api/plan/rebuild", json={"from_now": False, "force": True})
+    assert r.status_code == 200
+    p = r.json()
+    assert p["raw"]["source"] == "greedy" and not p["raw"].get("pinned") and not any(i["fixed"] for i in p["items"])
+    assert not any(i["title"] == "Exercise: zone 2 cardio" for i in p["items"])
+    # the agent's own rebuild and instructions replace its schedule without a force flag
+    client.put("/api/agent/schedule", json={"items": items[:1], "work_start": "09:00", "work_end": "17:00"}, headers=H)
+    assert client.post("/api/agent/schedule/rebuild", json={}, headers=H).status_code == 200
+    assert not db.plan(TODAY.isoformat())["raw"].get("pinned")
+
+
+def test_the_planning_log_shows_the_agent_what_the_app_did():
+    date = TODAY.isoformat()
+    pid = db.create_project("Logged")
+    a = db.create_task(pid, "Delta", estimate_minutes=30)
+    client.get("/api/agent/schedule", headers={"X-Agent-Name": "Log"})                # sets this agent's cursor
+    scheduler.build(TODAY, force=True, reason="the test asked", actor="user")
+    client.put("/api/agent/schedule", json={"items": [{"kind": "task", "task_id": a, "start": "09:00", "end": "09:30"}], "pin": False,
+                                            "work_start": "09:00", "work_end": "17:00", "rationale": "Delta first"}, headers=H)
+    scheduler.build(TODAY, from_now=False, reason="drifted", actor="app")
+    client.put("/api/agent/schedule/instructions", json={"text": "Light afternoon.", "rebuild": False}, headers=H)
+    log = client.get("/api/agent/schedule/log", params={"date": date}, headers=H).json()
+    events = [(e["event"], e["actor"]) for e in log]
+    assert ("built", "user") in events and ("agent_set", "agent:Ada") in events and ("built", "app") in events and ("instructions", "agent:Ada") in events
+    assert all(e["date"] == date and e["at_local"] and e["summary"] for e in log)
+    assert log == sorted(log, key=lambda e: e["at"])                                    # oldest first
+    built = [e for e in log if e["event"] == "built" and e["actor"] == "app"][-1]
+    assert "drifted" in built["summary"] and built["detail"]["reason"] == "drifted"
+    assert built["detail"]["fixed_blocks"] == [{"title": "Delta", "start": "09:00", "end": "09:30"}]
+    assert built["detail"]["items"] and built["detail"]["free_windows"] and "candidates" in built["detail"]
+    agent_set = [e for e in log if e["event"] == "agent_set"][-1]
+    assert agent_set["detail"]["pinned"] is False and agent_set["detail"]["rationale"] == "Delta first"
+    ctx = client.get("/api/agent/schedule", headers={"X-Agent-Name": "Log"}).json()
+    assert [e["event"] for e in ctx["planning_log"]] == [e["event"] for e in log]
+    new = ctx["since_your_last_visit"]
+    assert [e["event"] for e in new][-4:] == ["built", "agent_set", "built", "instructions"]       # everything since this agent last looked
+    assert client.get("/api/agent/schedule", headers={"X-Agent-Name": "Log"}).json()["since_your_last_visit"] == []
+    since = client.get("/api/agent/schedule/log", params={"since": str(built["at"])}, headers=H).json()
+    assert [e["event"] for e in since] == ["instructions"]
+    assert client.get("/api/agent/schedule/log", params={"since": "yesterday"}, headers=H).status_code == 400
 
 
 def test_instructions_steer_the_days_plan(monkeypatch):

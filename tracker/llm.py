@@ -228,6 +228,9 @@ Hard constraints:
    Each task carries `work_kind`: "focus" (focused work) wants a long uninterrupted block at the user's best hours and should
    not be chopped into small pieces; "task" items fit short gaps, the slots before meetings and low-energy times.
 8. Follow the user's rules and heuristics below; they override these defaults where they conflict.
+9. `fixed_blocks_from_assistant` (when present) are blocks the user's assistant agent placed for the day. They are
+   already taken out of the free windows and stay exactly where they are: do not emit them, move them or schedule
+   their tasks again.
 
 Output JSON only, matching the schema. `rationale` is 2-4 sentences the user will read on the plan page.
 

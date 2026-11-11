@@ -5,7 +5,6 @@
 [general]
 host = "127.0.0.1"
 port = 8791
-timezone = ""
 work_start = "10:30"
 work_end = "15:30"
 default_estimate_minutes = 30

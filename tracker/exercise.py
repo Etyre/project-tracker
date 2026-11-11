@@ -299,8 +299,10 @@ def decide(date: str | None = None, force: bool = False) -> dict:
         decision["provisional"] = True
         log.warning("exercise log unreachable: today's pick (%s) is provisional", decision["title"])
     db.set_setting("exercise_decision", json.dumps(decision))
-    db.retitle_exercise_blocks(date, decision["title"])      # a plan built on an older decision shows the new one
+    db.retitle_exercise_blocks(date, decision["title"])      # a plan built on an older decision shows the new one (never the agent's)
     log.info("exercise for %s: %s (%s min) - %s", date, decision["title"], decision["minutes"], decision["reason"])
+    db.log_plan_event(date, "exercise", f"exercise decided: {decision['title']} ({decision['minutes']} min){' - provisional, the log was unreachable' if decision.get('provisional') else ''}; {decision['reason']}",
+                      {k: decision.get(k) for k in ("kind", "title", "minutes", "reason", "provisional", "overrode")})
     return decision
 
 

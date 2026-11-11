@@ -110,6 +110,7 @@ class RebuildIn(BaseModel):
     date: str | None = None
     from_now: bool = False
     until: str | None = None
+    # A rebuild asked for by the agent replaces whatever the agent set before, pinned or not.
 
 
 # ============================================================ helpers
@@ -189,10 +190,33 @@ def _schedule_context(day: dt.date) -> dict:
         "estimate_calibration": estimates.calibration(),
         "instructions": scheduler.day_instructions(date) or None,
         "plan": p and {"built_at": p["built_at"], "source": p["raw"].get("source"), "pinned": bool(p["raw"].get("pinned")),
-                       "rationale": p["rationale"], "work_start": p["work_start"], "work_end": p["work_end"],
-                       "dropped": p["raw"].get("dropped") or [], "items": p["items"]},
+                       "fixed_by": p["raw"].get("fixed_by"), "rationale": p["rationale"], "work_start": p["work_start"],
+                       "work_end": p["work_end"], "dropped": p["raw"].get("dropped") or [], "items": p["items"]},
         "rules_document": config.rules_text(),
+        "planning_log": db.plan_log(date),
     }
+
+
+def _since(value: str | None) -> float | None:
+    """`since` as epoch seconds, from an ISO date-time (local) or a number."""
+    if not value:
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        try:
+            return dt.datetime.fromisoformat(value).timestamp()
+        except ValueError:
+            raise HTTPException(400, "since must be an ISO date-time or epoch seconds")
+
+
+def _log_since_last_visit(agent: str) -> list[dict]:
+    """Everything the app planned since this agent last looked (by name), then the cursor moves to now."""
+    key = f"agent_log_seen:{agent}"
+    last = db.get_setting(key)
+    out = db.plan_log(since=float(last), limit=500) if last else []
+    db.set_setting(key, dt.datetime.now().timestamp())
+    return out
 
 
 # ============================================================ routes
@@ -215,12 +239,13 @@ def ping(agent: str = Depends(identity)):
             "POST /api/agent/notes": "add context to a task or project, shown as yours",
             "GET /api/agent/notes?task_id=|project_id=": "your notes on an item",
             "DELETE /api/agent/notes/{id}": "take a note back",
-            "GET /api/agent/schedule?date=": "the day's plan, free windows, prioritised candidates, routines, exercise",
-            "PUT /api/agent/schedule": "set the day's schedule block by block (pinned against automatic re-planning)",
-            "PUT /api/agent/schedule/instructions": "steer the day in prose; the app re-plans with it",
+            "GET /api/agent/schedule?date=": "the day's plan, free windows, prioritised candidates, routines, exercise, the day's planning log and everything the app planned since you last looked",
+            "GET /api/agent/schedule/log?date=&since=&limit=": "the planning log: every build, re-plan (with its reason), exercise decision, schedule you set, pin change",
+            "PUT /api/agent/schedule": "set the day's schedule block by block; your blocks are never moved by the app. pin (default) = the whole day is yours; pin=false = the app plans the free time around them",
+            "PUT /api/agent/schedule/instructions": "steer the day in prose; the app re-plans with it (replacing a schedule you set)",
             "DELETE /api/agent/schedule/instructions?date=": "drop the instructions",
-            "POST /api/agent/schedule/rebuild": "let the app plan the day (from_now, until)",
-            "POST /api/agent/schedule/unpin?date=": "hand a pinned day back to the automatic re-planner",
+            "POST /api/agent/schedule/rebuild": "let the app plan the day from scratch (from_now, until); replaces a schedule you set",
+            "POST /api/agent/schedule/unpin?date=": "let the app plan the free time around your blocks again",
         },
     }
 
@@ -382,7 +407,16 @@ def delete_note(nid: int, agent: str = Depends(identity)):
 # ------------------------------------------------ the schedule
 @router.get("/schedule")
 def get_schedule(date: str | None = None, agent: str = Depends(identity)):
-    return _schedule_context(_day(date))
+    ctx = _schedule_context(_day(date))
+    ctx["since_your_last_visit"] = _log_since_last_visit(agent)
+    return ctx
+
+
+@router.get("/schedule/log")
+def get_log(date: str | None = None, since: str | None = None, limit: int = 200, agent: str = Depends(identity)):
+    """Every planning decision the app made (and every schedule the agent set): `date` for one day, `since` (ISO
+    local date-time or epoch seconds) for everything after a moment, newest last."""
+    return db.plan_log(_day(date).isoformat() if date else None, _since(since), limit)
 
 
 @router.put("/schedule")
@@ -400,12 +434,12 @@ def put_schedule(s: ScheduleIn, agent: str = Depends(identity)):
 @router.put("/schedule/instructions")
 def put_instructions(i: InstructionsIn, agent: str = Depends(identity)):
     day = _day(i.date)
-    scheduler.set_day_instructions(day.isoformat(), i.text)
+    scheduler.set_day_instructions(day.isoformat(), i.text, actor=f"agent:{agent}")
     plan = None
     if i.rebuild:
         now = dt.datetime.now()
         from_now = day == now.date() and now.hour * 60 + now.minute > scheduler.parse_hm(config.load()["general"]["work_start"])
-        plan = scheduler.build(day, from_now=from_now)
+        plan = scheduler.build(day, from_now=from_now, force=True, actor=f"agent:{agent}", reason="the agent set instructions for the day")
     return {"ok": True, "date": day.isoformat(), "instructions": scheduler.day_instructions(day.isoformat()), "plan": plan,
             "claude": llm.enabled()}
 
@@ -413,18 +447,19 @@ def put_instructions(i: InstructionsIn, agent: str = Depends(identity)):
 @router.delete("/schedule/instructions")
 def delete_instructions(date: str | None = None, agent: str = Depends(identity)):
     day = _day(date)
-    scheduler.set_day_instructions(day.isoformat(), "")
+    scheduler.set_day_instructions(day.isoformat(), "", actor=f"agent:{agent}")
     return {"ok": True, "date": day.isoformat()}
 
 
 @router.post("/schedule/rebuild")
 def rebuild(r: RebuildIn, agent: str = Depends(identity)):
-    return scheduler.build(_day(r.date), from_now=r.from_now, until=r.until)
+    return scheduler.build(_day(r.date), from_now=r.from_now, until=r.until, force=True, actor=f"agent:{agent}",
+                           reason="the agent asked the app to plan the day")
 
 
 @router.post("/schedule/unpin")
 def unpin(date: str | None = None, agent: str = Depends(identity)):
-    p = scheduler.unpin(_day(date).isoformat())
+    p = scheduler.unpin(_day(date).isoformat(), actor=f"agent:{agent}")
     if not p:
         raise HTTPException(404, "no plan for that day")
     return p

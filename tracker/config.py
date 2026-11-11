@@ -46,7 +46,6 @@ DEFAULTS: dict[str, Any] = {
     "general": {
         "host": "127.0.0.1",
         "port": 8791,
-        "timezone": "",                      # empty = system local
         "work_start": "09:00",
         "work_end": "18:00",
         "default_estimate_minutes": 30,
