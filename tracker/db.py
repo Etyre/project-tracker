@@ -85,15 +85,14 @@ CREATE TABLE IF NOT EXISTS plan_items (
     end TEXT NOT NULL,
     minutes INTEGER NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',          -- pending | active | done | skipped
-    note TEXT NOT NULL DEFAULT '',
-    fixed INTEGER NOT NULL DEFAULT 0                 -- set by the assistant agent: the app plans around it, never over it
+    note TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS plan_items_date ON plan_items(date, position);
 CREATE TABLE IF NOT EXISTS plan_log (                -- every planning decision, for the agent to read back
     id INTEGER PRIMARY KEY,
     date TEXT NOT NULL,                              -- the day planned
     at REAL NOT NULL,
-    event TEXT NOT NULL,                             -- built | replanned | agent_set | unpinned | exercise | instructions | refused
+    event TEXT NOT NULL,                             -- built | replanned | agent_set | exercise | instructions | guidance | task
     actor TEXT NOT NULL DEFAULT 'app',               -- app | user | agent:<name>
     summary TEXT NOT NULL,
     detail TEXT NOT NULL DEFAULT '{}'
@@ -148,10 +147,6 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.commit()
     if "toggl_project" not in pcols:
         conn.execute("ALTER TABLE projects ADD COLUMN toggl_project TEXT")
-        conn.commit()
-    icols = {r["name"] for r in conn.execute("PRAGMA table_info(plan_items)")}
-    if "fixed" not in icols:
-        conn.execute("ALTER TABLE plan_items ADD COLUMN fixed INTEGER NOT NULL DEFAULT 0")
         conn.commit()
     cols = {r["name"]: r for r in conn.execute("PRAGMA table_info(tasks)")}
     if "parent_id" not in cols:
@@ -896,10 +891,10 @@ def save_plan(date: str, work_start: str, work_end: str, exercise: str, rational
                 (date, time.time(), work_start, work_end, exercise, rationale, json.dumps(raw)))
         for i, it in enumerate(items):
             status = it.get("status") or old.get((it["kind"], it.get("task_id"), it["title"]), "pending")
-            execute("INSERT INTO plan_items(date,position,kind,task_id,title,start,end,minutes,status,note,fixed) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            execute("INSERT INTO plan_items(date,position,kind,task_id,title,start,end,minutes,status,note) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?)",
                     (date, i, it["kind"], it.get("task_id"), it["title"], it["start"], it["end"],
-                     int(it["minutes"]), status, it.get("note", ""), int(bool(it.get("fixed")))))
+                     int(it["minutes"]), status, it.get("note", "")))
 
 
 def log_plan_event(date: str, event: str, summary: str, detail: dict | None = None, actor: str = "app") -> int:
@@ -947,7 +942,7 @@ def plan_item(iid: int) -> dict | None:
 def retitle_exercise_blocks(date: str, title: str) -> int:
     """Rename the day's not-yet-started exercise blocks after the exercise decision changed. Returns how many."""
     with _write_lock:
-        cur = connect().execute("UPDATE plan_items SET title=? WHERE date=? AND kind='exercise' AND status='pending' AND fixed=0 AND title<>?",
+        cur = connect().execute("UPDATE plan_items SET title=? WHERE date=? AND kind='exercise' AND status='pending' AND title<>?",
                                 (title, date, title))
         connect().commit()
         return max(0, cur.rowcount)

@@ -55,11 +55,7 @@ def main(argv=None) -> int:
         return 0
     if cmd == "plan":
         from . import scheduler
-        try:
-            plan = scheduler.build(from_now=a.from_now, actor="user")
-        except scheduler.PinnedDay as e:
-            print(f"not rebuilt: {e}")
-            return 1
+        plan = scheduler.build(from_now=a.from_now, actor="user")
         print(plan["rationale"], "\n")
         for it in plan["items"]:
             print(f"{it['start']}-{it['end']}  {it['kind']:9s} {it['title']}  {('(' + it['note'] + ')') if it['note'] else ''}")

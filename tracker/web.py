@@ -125,7 +125,6 @@ class RebuildIn(BaseModel):
     from_now: bool = False
     date: str | None = None
     until: str | None = None      # "HH:MM" - extend the work day for this build
-    force: bool = False           # replace a schedule the agent set and pinned (the UI asks first)
 
 
 # ============================================================ helpers
@@ -394,16 +393,10 @@ def _going_to(title: str) -> str:
     return t if t.lower().startswith("going to") else "going to do " + t
 
 
-def _agent_exercise(date: str) -> str | None:
-    """The session named by an exercise block the agent fixed in the plan ("Exercise: zone 2 cardio"), if any:
-    it overrides the app's own morning decision for that day."""
-    it = db.row("SELECT title FROM plan_items WHERE date=? AND kind='exercise' AND fixed=1 AND status<>'skipped' ORDER BY position LIMIT 1", (date,))
-    return (it["title"].removeprefix("Exercise:").strip() or None) if it else None
-
-
 def _exercise_label(kind: str) -> str:
     """The exercise timer is named for the day's session ("going to do squats"), falling back to the kind."""
-    return _going_to(_agent_exercise(db.today()) or exercise.decide(db.today()).get("title") or kind)
+    d = exercise.decide(db.today())
+    return _going_to(d.get("title") or kind)
 
 
 def _item_label(it: dict) -> str:
@@ -431,11 +424,7 @@ def _timer_is_for(it: dict, e: dict | None) -> bool:
 
 
 def _current_exercise(date: str) -> str:
-    """What the feed's exercise button says: the day's session ("squats"), "rest" on a rest day; the agent's pick
-    when it fixed an exercise block for the day."""
-    agent = _agent_exercise(date)
-    if agent:
-        return agent
+    """What the feed's exercise button says: the day's session ("squats"), "rest" on a rest day."""
     d = exercise.decide(date)
     return d.get("title") or d["kind"]
 
@@ -943,11 +932,7 @@ def create_app() -> FastAPI:
     @app.post("/api/plan/rebuild")
     def rebuild(r: RebuildIn):
         day = dt.date.fromisoformat(r.date) if r.date else None
-        try:
-            return scheduler.build(day, from_now=r.from_now, until=r.until, force=r.force, actor="user",
-                                   reason="the user asked for a rebuild" if r.force else "")
-        except scheduler.PinnedDay as e:
-            raise HTTPException(409, str(e))
+        return scheduler.build(day, from_now=r.from_now, until=r.until, actor="user", reason="the user asked for a rebuild")
 
     @app.get("/api/calendar")
     def calendar(date: str | None = None):
@@ -997,9 +982,9 @@ def create_app() -> FastAPI:
         total = sum(1 for i in items if i["kind"] != "meeting")
         out.update({
             "plan": {"built_at": p["built_at"], "rationale": p["rationale"], "source": p["raw"].get("source"),
-                     "pinned": bool(p["raw"].get("pinned")), "instructions": p["raw"].get("instructions"),
+                     "agent_plan": (p["raw"].get("agent_plan") or {}).get("source"), "instructions": p["raw"].get("instructions"),
                      "work_start": p["work_start"], "work_end": p["work_end"], "off_track": scheduler.off_track()},
-            "current": current, "meeting_now": meeting_now, "fixed_by": p["raw"].get("fixed_by"),
+            "current": current, "meeting_now": meeting_now,
             "meetings": [{"title": i["title"], "start": i["start"], "end": i["end"]} for i in items if i["kind"] == "meeting"],
             "meeting_alert_minutes": cfg["meeting_alert_minutes"], "meeting_alert_all_day": cfg["meeting_alert_all_day"],
             "up_next": [i for i in pending if not current or i["id"] != current["id"]][:5],
@@ -1216,7 +1201,7 @@ def _loop() -> None:
             # 4. Build today's plan automatically once the work day starts
             now = dt.datetime.now()
             ws = scheduler.parse_hm(cfg["general"]["work_start"])
-            if now.hour * 60 + now.minute >= ws - 15 and scheduler.needs_morning_build(db.today()) and db.get_setting("auto_plan_date") != db.today():
+            if now.hour * 60 + now.minute >= ws - 15 and not db.plan(db.today()) and db.get_setting("auto_plan_date") != db.today():
                 db.set_setting("auto_plan_date", db.today())
                 log.info("auto-building today's plan")
                 scheduler.build(reason="start of the work day")

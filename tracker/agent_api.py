@@ -95,7 +95,6 @@ class ScheduleIn(BaseModel):
     work_start: str | None = None
     work_end: str | None = None
     rationale: str = ""
-    pin: bool = False                      # freeze the whole day: no planning around the blocks, no re-planning
     merge_meetings: bool = True            # calendar meetings the schedule left out are added
     validate_windows: bool = True          # blocks are clipped to the free windows between meetings
 
@@ -103,14 +102,28 @@ class ScheduleIn(BaseModel):
 class InstructionsIn(BaseModel):
     text: str
     date: str | None = None
+    standing: bool = False                 # guidance for every day (kept until replaced), not just `date`
     rebuild: bool = True                   # re-plan the day with the instructions now (synchronous)
+
+
+class TaskPriorityIn(BaseModel):
+    """What the agent knows about a task's priority and urgency; every field is optional. Each change is written as
+    a signed note on the task (with `why`), so the planner and the user both see where it came from."""
+    importance: int | None = None          # 1 (low) .. 5 (critical)
+    deadline: str | None = None            # YYYY-MM-DD or "fri", "tomorrow"; "" clears it
+    blocking: bool | None = None
+    blocking_for: str | None = None
+    chunkable: bool | None = None
+    work_kind: str | None = None           # "task" | "focus"; "" hands it back to Claude
+    reading: bool | None = None
+    writing: bool | None = None
+    why: str = ""
 
 
 class RebuildIn(BaseModel):
     date: str | None = None
     from_now: bool = False
     until: str | None = None
-    # A rebuild asked for by the agent replaces whatever the agent set before, pinned or not.
 
 
 # ============================================================ helpers
@@ -189,10 +202,10 @@ def _schedule_context(day: dt.date) -> dict:
         "exercise_today": {k: decision.get(k) for k in ("kind", "title", "minutes", "reason")},
         "estimate_calibration": estimates.calibration(),
         "instructions": scheduler.day_instructions(date) or None,
-        "plan": p and {"built_at": p["built_at"], "source": p["raw"].get("source"), "pinned": bool(p["raw"].get("pinned")),
-                       "fixed_by": p["raw"].get("fixed_by") or (p["raw"].get("source") if str(p["raw"].get("source", "")).startswith("agent:") else None),
-                       "rationale": p["rationale"], "work_start": p["work_start"],
-                       "work_end": p["work_end"], "dropped": p["raw"].get("dropped") or [], "items": p["items"]},
+        "standing_guidance": scheduler.guidance() or None,
+        "plan": p and {"built_at": p["built_at"], "source": p["raw"].get("source"), "agent_plan": p["raw"].get("agent_plan"),
+                       "rationale": p["rationale"], "work_start": p["work_start"], "work_end": p["work_end"],
+                       "dropped": p["raw"].get("dropped") or [], "exercise_note": p["raw"].get("exercise_note"), "items": p["items"]},
         "rules_document": config.rules_text(),
         "planning_log": db.plan_log(date),
     }
@@ -234,6 +247,7 @@ def ping(agent: str = Depends(identity)):
             "GET /api/agent/tree": "projects and open tasks with ids, paths and the notes you added",
             "GET /api/agent/tasks?q=&project_id=": "find open tasks",
             "GET /api/agent/tasks/{id}": "one task with its path, tracked time and notes",
+            "PATCH /api/agent/tasks/{id}": "set a task's priority and urgency (importance, deadline, blocking, work_kind...) with `why`; recorded as your note on the task and used by every plan",
             "POST /api/agent/projects": "add a project (name, parent_id | parent_path, notes)",
             "POST /api/agent/tasks": "add a task (title, project_id | project_path | parent_id, fields, note); no project -> Claude files it",
             "POST /api/agent/quick_add": "free text; Claude turns it into tasks in the right projects",
@@ -241,12 +255,11 @@ def ping(agent: str = Depends(identity)):
             "GET /api/agent/notes?task_id=|project_id=": "your notes on an item",
             "DELETE /api/agent/notes/{id}": "take a note back",
             "GET /api/agent/schedule?date=": "the day's plan, free windows, prioritised candidates, routines, exercise, the day's planning log and everything the app planned since you last looked",
-            "GET /api/agent/schedule/log?date=&since=&limit=": "the planning log: every build, re-plan (with its reason), exercise decision, schedule you set, pin change",
-            "PUT /api/agent/schedule": "set blocks for the day; the app never moves them and plans and re-plans the rest of the day around them (pin=true freezes the whole day instead)",
-            "PUT /api/agent/schedule/instructions": "steer the day in prose; the app re-plans with it (replacing a schedule you set)",
-            "DELETE /api/agent/schedule/instructions?date=": "drop the instructions",
-            "POST /api/agent/schedule/rebuild": "let the app plan the day from scratch (from_now, until); replaces a schedule you set",
-            "POST /api/agent/schedule/unpin?date=": "undo pin=true: the app plans the free time around your blocks again",
+            "GET /api/agent/schedule/log?date=&since=&limit=": "the planning log: every build, re-plan (with its reason), exercise decision, schedule you set, instructions, guidance, priorities",
+            "PUT /api/agent/schedule": "set the day's schedule block by block: it replaces the app's plan, and the app then re-plans it on drift as usual, keeping your choices where they still fit; the day's exercise, once decided, does not change",
+            "PUT /api/agent/schedule/instructions": "text the planner keeps in mind: for one day (date), or standing=true for every day until replaced; rebuild re-plans the day with it now",
+            "DELETE /api/agent/schedule/instructions?date=&standing=": "drop the day's instructions, or the standing guidance",
+            "POST /api/agent/schedule/rebuild": "let the app plan the day now (from_now, until)",
         },
     }
 
@@ -279,6 +292,60 @@ def get_task(tid: int, agent: str = Depends(identity)):
     if not t:
         raise HTTPException(404, "task not found")
     return _task_out(t)
+
+
+@router.patch("/tasks/{tid}")
+def set_priority(tid: int, p: TaskPriorityIn, agent: str = Depends(identity)):
+    """Priority and urgency from the agent. The fields are the ones every plan is built from (importance, deadline,
+    blocking, kind of work); the change and its `why` become the agent's note on the task."""
+    t = db.task(tid)
+    if not t:
+        raise HTTPException(404, "task not found")
+    fields: dict[str, Any] = {}
+    said: list[str] = []
+    if p.importance is not None:
+        fields["importance"] = max(1, min(5, int(p.importance)))
+        said.append(f"importance {fields['importance']}")
+    if p.deadline is not None:
+        if p.deadline.strip():
+            parsed = tags.parse_date(p.deadline)
+            if not parsed:
+                raise HTTPException(400, f"could not read deadline '{p.deadline}' (use YYYY-MM-DD)")
+            fields["deadline"] = parsed
+            said.append(f"deadline {parsed}")
+        else:
+            fields["deadline"] = None
+            said.append("no deadline")
+    if p.blocking is not None:
+        fields["blocking"] = int(p.blocking)
+        said.append("blocking" if p.blocking else "not blocking")
+    if p.blocking_for is not None:
+        fields["blocking_for"] = p.blocking_for.strip()
+        if fields["blocking_for"]:
+            fields["blocking"] = 1
+            said.append(f"blocking {fields['blocking_for']}")
+    if p.chunkable is not None:
+        fields["chunkable"] = int(p.chunkable)
+        said.append("can be split" if p.chunkable else "one sitting")
+    if p.work_kind is not None:
+        if p.work_kind and p.work_kind not in db.WORK_KINDS:
+            raise HTTPException(400, f"work_kind must be one of {sorted(db.WORK_KINDS)} or empty")
+        fields["work_kind"] = p.work_kind or None
+        said.append({"focus": "focused work", "task": "quick task"}.get(p.work_kind, "kind of work left to Claude"))
+    for flag in ("reading", "writing"):
+        v = getattr(p, flag)
+        if v is not None:
+            fields[flag] = int(v)
+            said.append(flag if v else f"not {flag}")
+    if not fields and not p.why.strip():
+        raise HTTPException(400, "nothing to set")
+    if fields:
+        db.update_task(tid, **fields)
+    body = (p.why.strip() + (" " if p.why.strip() and said else "") + (f"(set {', '.join(said)})" if said else "")).strip()
+    db.add_note("task", tid, body, agent)
+    db.log_plan_event(db.today(), "task", f"{agent} set priority on '{t['title']}': {', '.join(said) or 'a note'}"
+                      + (f"; {p.why.strip()[:200]}" if p.why.strip() else ""), {"task_id": tid, "fields": fields, "why": p.why}, actor=f"agent:{agent}")
+    return _task_out(db.task(tid))
 
 
 # ------------------------------------------------ adding
@@ -425,42 +492,41 @@ def put_schedule(s: ScheduleIn, agent: str = Depends(identity)):
     day = _day(s.date)
     try:
         p = scheduler.set_plan(day, [i.model_dump() for i in s.items], s.work_start, s.work_end, s.rationale,
-                               source=f"agent:{agent}", pin=s.pin, merge_meetings=s.merge_meetings,
+                               source=f"agent:{agent}", merge_meetings=s.merge_meetings,
                                validate_windows=s.validate_windows)
     except ValueError as e:
         raise HTTPException(400, str(e))
-    return {"ok": True, "dropped": p["raw"].get("dropped") or [], "plan": p}
+    return {"ok": True, "dropped": p["raw"].get("dropped") or [], "exercise_note": p["raw"].get("exercise_note"), "plan": p}
 
 
 @router.put("/schedule/instructions")
 def put_instructions(i: InstructionsIn, agent: str = Depends(identity)):
     day = _day(i.date)
-    scheduler.set_day_instructions(day.isoformat(), i.text, actor=f"agent:{agent}")
+    if i.standing:
+        scheduler.set_guidance(i.text, actor=f"agent:{agent}")
+    else:
+        scheduler.set_day_instructions(day.isoformat(), i.text, actor=f"agent:{agent}")
     plan = None
     if i.rebuild:
         now = dt.datetime.now()
         from_now = day == now.date() and now.hour * 60 + now.minute > scheduler.parse_hm(config.load()["general"]["work_start"])
-        plan = scheduler.build(day, from_now=from_now, force=True, actor=f"agent:{agent}", reason="the agent set instructions for the day")
-    return {"ok": True, "date": day.isoformat(), "instructions": scheduler.day_instructions(day.isoformat()), "plan": plan,
-            "claude": llm.enabled()}
+        plan = scheduler.build(day, from_now=from_now, actor=f"agent:{agent}",
+                               reason="the agent set standing guidance" if i.standing else "the agent set instructions for the day")
+    return {"ok": True, "date": day.isoformat(), "instructions": scheduler.day_instructions(day.isoformat()),
+            "standing_guidance": scheduler.guidance() or None, "plan": plan, "claude": llm.enabled()}
 
 
 @router.delete("/schedule/instructions")
-def delete_instructions(date: str | None = None, agent: str = Depends(identity)):
+def delete_instructions(date: str | None = None, standing: bool = False, agent: str = Depends(identity)):
     day = _day(date)
-    scheduler.set_day_instructions(day.isoformat(), "", actor=f"agent:{agent}")
-    return {"ok": True, "date": day.isoformat()}
+    if standing:
+        scheduler.set_guidance("", actor=f"agent:{agent}")
+    else:
+        scheduler.set_day_instructions(day.isoformat(), "", actor=f"agent:{agent}")
+    return {"ok": True, "date": day.isoformat(), "standing": standing}
 
 
 @router.post("/schedule/rebuild")
 def rebuild(r: RebuildIn, agent: str = Depends(identity)):
-    return scheduler.build(_day(r.date), from_now=r.from_now, until=r.until, force=True, actor=f"agent:{agent}",
+    return scheduler.build(_day(r.date), from_now=r.from_now, until=r.until, actor=f"agent:{agent}",
                            reason="the agent asked the app to plan the day")
-
-
-@router.post("/schedule/unpin")
-def unpin(date: str | None = None, agent: str = Depends(identity)):
-    p = scheduler.unpin(_day(date).isoformat(), actor=f"agent:{agent}")
-    if not p:
-        raise HTTPException(404, "no plan for that day")
-    return p

@@ -228,9 +228,11 @@ Hard constraints:
    Each task carries `work_kind`: "focus" (focused work) wants a long uninterrupted block at the user's best hours and should
    not be chopped into small pieces; "task" items fit short gaps, the slots before meetings and low-energy times.
 8. Follow the user's rules and heuristics below; they override these defaults where they conflict.
-9. `fixed_blocks_from_assistant` (when present) are blocks the user's assistant agent placed for the day. They are
-   already taken out of the free windows and stay exactly where they are: do not emit them, move them or schedule
-   their tasks again.
+9. `assistant_schedule` (when present) is the schedule the user's assistant agent set for this day, with each
+   block's current status. It is the baseline you are adjusting, not a blank slate: keep its choice of tasks and
+   its order wherever they still fit from `replanning_from`, shifting times to reality; drop or shorten only what
+   no longer fits, and say so in the rationale. Nothing in it is fixed in time. The agent's standing guidance and
+   instructions for the day (in the rules below) and its notes on tasks (`agent_notes`) carry its priorities.
 
 Output JSON only, matching the schema. `rationale` is 2-4 sentences the user will read on the plan page.
 

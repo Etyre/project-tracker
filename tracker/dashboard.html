@@ -450,8 +450,8 @@ async function renderFeed() {
   const meeting = f.meeting_now ? `<div class="meeting">In a meeting until ${f.meeting_now.end}: ${esc(f.meeting_now.title)}</div>` : '';
   feedMeetings = {list: f.meetings || [], alert: f.meeting_alert_all_day ? 0 : (f.meeting_alert_minutes || 45)};   // 0: any meeting still to come today
   const agentName = s => esc(String(s || '').replace(/^agent:/, ''));
-  const byAgent = f.plan.pinned ? `<div class="foot"><span>schedule set by ${agentName(f.plan.source)}; the app leaves it alone</span></div>`
-    : f.fixed_by ? `<div class="foot"><span>blocks set by ${agentName(f.fixed_by)} stay in place; the app plans around them</span></div>` : '';
+  const byAgent = String(f.plan.source || '').startsWith('agent:') ? `<div class="foot"><span>schedule set by ${agentName(f.plan.source)}</span></div>`
+    : f.plan.agent_plan ? `<div class="foot"><span>re-planned from the schedule ${agentName(f.plan.agent_plan)} set</span></div>` : '';
   const note = f.replanning.active ? `<div class="foot"><span>re-planning…</span></div>` : f.plan.off_track ? `<div class="foot"><span>off track, re-plan pending</span></div>` : byAgent;
   const nudge = f.focus_monitor && f.focus_monitor.due ? `<div class="nudge">Review your focus monitor <button class="btn small" onclick="focusMonitorDone()">Done</button></div>` : '';
   m.innerHTML = `<div class="feed"><div class="upcoming">${upcomingText()}</div>${nudge}${meeting}<div class="stack">${card}</div>${note}</div>`;
@@ -482,14 +482,10 @@ function altButtons(f) {
   else ex = `<button class="btn alt" disabled>${esc(cap(f.exercise_extra_done ? f.exercise_extra : f.exercise))} (done)</button>`;
   return `<div class="alts">${ex}<button class="btn alt" onclick="startJournal()">Journal</button></div>`;
 }
-// A day the agent set and pinned is the agent's: the server refuses (409) and the toast asks before replacing it.
-async function rebuild(fromNow, force) {
+async function rebuild(fromNow) {
   toast(fromNow ? 'Re-planning the rest of the day…' : 'Building the plan…', 60000);
-  try {await api('/plan/rebuild', 'POST', {from_now: fromNow, force: !!force}); toast('Plan ready'); render();}
-  catch (e) {
-    if (e.status === 409) toast(`${esc(e.message)}. <button class="btn small" onclick="rebuild(${!!fromNow}, true)">Replace it with the app's own plan</button>`, 15000);
-    else toast('Plan failed: ' + esc(e.message), 8000);
-  }
+  try {await api('/plan/rebuild', 'POST', {from_now: fromNow}); toast('Plan ready'); render();}
+  catch (e) {toast('Plan failed: ' + esc(e.message), 8000);}
 }
 async function startItem(id) {
   const what = document.getElementById('suggestWhat');            // the reading / writing card with nothing queued: what is being read or written
@@ -1630,11 +1626,13 @@ async function renderPlan() {
   const m = $('#main');
   if (!p.items) {m.innerHTML = `<div class="card">No plan yet. <button class="btn primary" onclick="rebuild(false)">Build today's plan</button></div>`; return;}
   m.innerHTML = `<div class="card">
-    <div class="row" style="justify-content:space-between"><h3 style="margin:0">Plan for ${esc(p.date)} <span class="muted" style="font-weight:400;font-size:13px">${p.work_start}–${p.work_end} · exercise: ${esc(p.exercise)}${p.raw?.source ? ` · by ${esc(String(p.raw.source).replace(/^agent:/, 'agent '))}${p.raw.pinned ? ', pinned' : ''}` : ''}</span></h3>
+    <div class="row" style="justify-content:space-between"><h3 style="margin:0">Plan for ${esc(p.date)} <span class="muted" style="font-weight:400;font-size:13px">${p.work_start}–${p.work_end} · exercise: ${esc(p.exercise)}${p.raw?.source ? ` · by ${esc(String(p.raw.source).replace(/^agent:/, 'agent '))}${p.raw.agent_plan && !String(p.raw.source).startsWith('agent:') ? `, adjusting the schedule ${esc(String(p.raw.agent_plan.source).replace(/^agent:/, 'agent '))} set` : ''}` : ''}</span></h3>
       <span class="row"><button class="btn small" onclick="rebuild(true)">Re-plan rest of day</button><button class="btn small" onclick="rebuild(false)">Rebuild</button></span></div>
     <p class="muted">${esc(p.rationale)}</p>
+    ${p.raw?.guidance ? `<p class="muted">Standing guidance from your assistant agent: ${esc(p.raw.guidance)}</p>` : ''}
     ${p.raw?.instructions ? `<p class="muted">Instructions for the day from your assistant agent: ${esc(p.raw.instructions)}</p>` : ''}
-    <ul class="timeline" style="list-style:none;padding:0;margin:0">${p.items.map(i => `<li class="${i.status}"><span>${i.start}–${i.end}</span><span class="k">${i.kind}</span><span>${mdLine(i.title).html}${i.fixed ? ' <span class="chip agent" title="Set by your assistant agent; the app plans around it">agent</span>' : ''}${i.note ? ` <span class="muted">— ${esc(i.note)}</span>` : ''}</span>
+    ${p.raw?.exercise_note ? `<p class="muted">${esc(p.raw.exercise_note)}</p>` : ''}
+    <ul class="timeline" style="list-style:none;padding:0;margin:0">${p.items.map(i => `<li class="${i.status}"><span>${i.start}–${i.end}</span><span class="k">${i.kind}</span><span>${mdLine(i.title).html}${i.note ? ` <span class="muted">— ${esc(i.note)}</span>` : ''}</span>
       <span>${i.kind === 'meeting' ? '' : i.status === 'pending' ? `<button class="btn small ghost" onclick="skipItem(${i.id}).then(renderPlan)">skip</button>` : `<button class="btn small ghost" onclick="api('/feed/reset_item','POST',{item_id:${i.id}}).then(renderPlan)">reset</button>`}</span></li>`).join('')}</ul></div>`;
 }
 

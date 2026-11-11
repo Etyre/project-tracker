@@ -281,7 +281,11 @@ def decide(date: str | None = None, force: bool = False) -> dict:
     hist = history()
     if stored and sheets.exercise_log_failed:
         return stored                        # still unreachable (e.g. the internet is off at night): keep it for now
-    if rules["required"] or rules["fill"]:
+    plan = db.plan(date)
+    wanted = (plan or {}).get("raw", {}).get("agent_exercise")
+    if wanted and not stored:                # the assistant agent named the session in its schedule for this day
+        decision = _agent_decision(wanted, hist)
+    elif rules["required"] or rules["fill"]:
         pick = rules_decide(rules, history(), dt.date.fromisoformat(date))
         title = pick["title"]
         if title:
@@ -303,6 +307,40 @@ def decide(date: str | None = None, force: bool = False) -> dict:
     log.info("exercise for %s: %s (%s min) - %s", date, decision["title"], decision["minutes"], decision["reason"])
     db.log_plan_event(date, "exercise", f"exercise decided: {decision['title']} ({decision['minutes']} min){' - provisional, the log was unreachable' if decision.get('provisional') else ''}; {decision['reason']}",
                       {k: decision.get(k) for k in ("kind", "title", "minutes", "reason", "provisional", "overrode")})
+    return decision
+
+
+def _agent_decision(title: str, hist: list[dict]) -> dict:
+    kind = _kind_for(title, hist)
+    same = [h["minutes"] for h in hist if _same(title, h.get("exercise") or "") and h["minutes"] >= 5]
+    mins = int(statistics.median(same[:10])) if same else (typical_minutes(kind, hist) or LAST_RESORT_MINUTES)
+    return {"kind": kind, "title": title, "minutes": mins, "reason": "set by the assistant agent's schedule for the day",
+            "overrode": True, "source": "agent"}
+
+
+def same_session(a: str, b: str) -> bool:
+    return _same(a, b)
+
+
+def adopt(date: str, title: str) -> dict | None:
+    """The agent's schedule names the day's session. If the day's exercise is already decided, that decision is
+    returned unchanged (once set, it does not change). If not and the day is today, it is decided from the agent's
+    title now. For a later day None is returned: the caller keeps the title and decide() uses it when the day comes."""
+    cur = db.get_setting("exercise_decision")
+    if cur:
+        try:
+            d = json.loads(cur)
+            if d.get("date") == date and d.get("title"):
+                return d
+        except ValueError:
+            pass
+    if date != db.today():
+        return None
+    decision = _agent_decision(title, history())
+    decision.update({"date": date, "decided_at": time.time()})
+    db.set_setting("exercise_decision", json.dumps(decision))
+    db.log_plan_event(date, "exercise", f"exercise set from the assistant agent's schedule: {decision['title']} ({decision['minutes']} min)",
+                      {k: decision.get(k) for k in ("kind", "title", "minutes", "reason")}, actor="agent")
     return decision
 
 

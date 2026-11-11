@@ -14,10 +14,6 @@ from . import calendar_feed, config, db, estimates, exercise as exercise_mod, ll
 log = logging.getLogger("scheduler")
 
 
-class PinnedDay(Exception):
-    """The day's schedule was set by the assistant agent and pinned: the app does not build over it unless forced."""
-
-
 # ---------------------------------------------------------------- time helpers
 def hm(minutes: int) -> str:
     return f"{minutes // 60:02d}:{minutes % 60:02d}"
@@ -184,21 +180,18 @@ def validate(items: list[dict], windows: list[tuple[int, int]], task_ids: set[in
 
 
 # ---------------------------------------------------------------- main entry
-def build(day: dt.date | None = None, from_now: bool = False, until: str | None = None, force: bool = False,
+def build(day: dt.date | None = None, from_now: bool = False, until: str | None = None,
           reason: str = "", actor: str = "app") -> dict:
-    """Plan the day (or the rest of it). A day the agent set and pinned is refused (PinnedDay) unless `force`, which
-    replaces the agent's schedule outright. On an unpinned day the agent's blocks are fixed: they stay where they
-    are and the free time is planned around them. Every build is written to the planning log for the agent."""
+    """Plan the day (or the rest of it). When the assistant agent set the day's schedule, that schedule is the
+    baseline the re-plan adjusts (its choices and order kept where they still fit) rather than a blank slate, and
+    its instructions for the day and standing guidance go to the planner with the user's rules. The day's
+    exercise, once decided, never changes. Every build is written to the planning log."""
     cfg = config.load()
     day = day or dt.date.today()
     date = day.isoformat()
     ws, we = parse_hm(cfg["general"]["work_start"]), parse_hm(cfg["general"]["work_end"])
     now = dt.datetime.now()
     prev = db.plan(date)
-    if prev and prev["raw"].get("pinned") and not force:
-        raise PinnedDay(f"the schedule for {date} was set by {str(prev['raw'].get('source', 'the agent')).replace('agent:', 'agent ')} "
-                        "and is pinned; unpin it or force the rebuild to replace it")
-    replaced = bool(prev and prev["raw"].get("pinned"))        # forced over the agent's day: its blocks go too
     if until:
         we = max(we, parse_hm(until))
     elif prev:                                   # a previous "work late" override sticks for the day
@@ -213,36 +206,37 @@ def build(day: dt.date | None = None, from_now: bool = False, until: str | None 
         if active:   # keep the block being worked on; plan the rest after it (or after now if it overran)
             start_min = max(start_min, parse_hm(active["end"]))
     events = calendar_feed.events_for(day)
-    # the agent's blocks (an unpinned day) are busy time like meetings; they come back into the plan untouched
-    fixed = [] if replaced else [i for i in prev_items if i.get("fixed") and i["status"] == "pending"]
-    if active and active.get("fixed"):
-        fixed = [i for i in fixed if i["id"] != active["id"]]
-    fixed_busy = [{"all_day": False, "start": _at(day, parse_hm(i["start"])), "end": _at(day, parse_hm(i["end"]))} for i in fixed]
-    windows = free_windows(day, events + fixed_busy, start_min, we)
+    windows = free_windows(day, events, start_min, we)
     tasks = candidates(day)
     routines = sheets.routines_for_today()
     recent_ex = [{"kind": e["label"].replace("Exercise: ", ""),
                   "date": dt.datetime.fromtimestamp(e["started_at"]).date().isoformat(),
                   "weekday": dt.datetime.fromtimestamp(e["started_at"]).strftime("%a"),
                   "minutes": int(((e["stopped_at"] or time.time()) - e["started_at"]) / 60)} for e in db.last_exercise_entries(14)]
-    decision = exercise_mod.decide(date)          # once a day, in the morning; re-plans keep it
+    decision = exercise_mod.decide(date)          # once a day; re-plans and the agent's schedules keep it
     exercise, ex_minutes = decision["kind"], int(decision["minutes"] or 0)
     # keep done/skipped items of an existing plan so a re-plan does not re-schedule finished work
     finished_task_ids = {i["task_id"] for i in prev_items if i["status"] in ("done", "skipped") and i["task_id"]}
     if active and active["task_id"]:
         finished_task_ids.add(active["task_id"])
-    finished_task_ids |= {i["task_id"] for i in fixed if i["task_id"]}      # the agent placed it: not again elsewhere
     settled = {i["title"].strip().lower() for i in prev_items if i["kind"] == "routine" and i["status"] in ("done", "active", "skipped")}
-    settled |= {i["title"].strip().lower() for i in fixed if i["kind"] == "routine"}
     routines = [r for r in routines if r["title"].strip().lower() not in settled]
-    fixed_ids = {i["id"] for i in fixed}
-    exercise_done = any(i["kind"] == "exercise" and (i["status"] in ("done", "active") or i["id"] in fixed_ids) for i in prev_items)
-    if any(i["kind"] == "exercise" for i in fixed) and prev:
-        exercise = prev["exercise"]                 # the agent named the session: keep it over the morning decision
+    exercise_done = any(i["kind"] == "exercise" and i["status"] in ("done", "active") for i in prev_items)
     tasks = [t for t in tasks if t["id"] not in finished_task_ids]
+    # the agent's schedule for the day, if it set one: the baseline this build adjusts
+    baseline = prev["raw"].get("agent_plan") if prev else None
+    if baseline:
+        status_of = {(i["kind"], i["task_id"], i["title"]): i["status"] for i in prev_items}
+        baseline = dict(baseline, blocks=[dict(b, status=status_of.get((b["kind"], b.get("task_id"), b["title"]), "pending"))
+                                          for b in baseline.get("items", [])])
+        order = {b["task_id"]: n for n, b in enumerate(baseline["blocks"]) if b.get("task_id")}
+        tasks.sort(key=lambda t: (order.get(t["id"], len(order)), -t["score"]))     # the agent's choices first, in its order
 
     instructions = day_instructions(date)
+    standing = guidance()
     rules = config.rules_text()
+    if standing:
+        rules += GUIDANCE_HEADER + standing
     if instructions:
         rules += INSTRUCTIONS_HEADER + instructions
     source, rationale, items = "greedy", "", []
@@ -261,7 +255,9 @@ def build(day: dt.date | None = None, from_now: bool = False, until: str | None 
                       | ({"agent_notes": [n[:300] for n in t["agent_notes"][-5:]]} if t.get("agent_notes") else {})
                       for t in tasks],
             "assistant_instructions_today": instructions or None,
-            "fixed_blocks_from_assistant": [{"kind": i["kind"], "title": i["title"], "start": i["start"], "end": i["end"]} for i in fixed] or None,
+            "assistant_standing_guidance": standing or None,
+            "assistant_schedule": baseline and {"set_by": baseline.get("source"), "set_at": baseline.get("set_at"),
+                                                "rationale": baseline.get("rationale"), "blocks": baseline["blocks"]},
             "routines_today": routines,
             "recent_exercise": recent_ex,
             "exercise_done_today": exercise_done,
@@ -291,40 +287,54 @@ def build(day: dt.date | None = None, from_now: bool = False, until: str | None 
     if from_now:   # history: finished/skipped blocks and the active one stay in the plan as they were
         keep = [i for i in prev_items if i["status"] in ("done", "skipped", "active") and i["kind"] != "meeting"]
         items = [dict(kind=i["kind"], task_id=i["task_id"], title=i["title"], start=i["start"], end=i["end"],
-                      minutes=i["minutes"], note=i["note"], status=i["status"], fixed=i.get("fixed", 0)) for i in keep] + \
+                      minutes=i["minutes"], note=i["note"], status=i["status"]) for i in keep] + \
                 [i for i in items if not (i["kind"] == "meeting" and parse_hm(i["end"]) <= start_min)]
-    items += [dict(kind=i["kind"], task_id=i["task_id"], title=i["title"], start=i["start"], end=i["end"],
-                   minutes=i["minutes"], note=i["note"], status="pending", fixed=1) for i in fixed]
     items.sort(key=lambda i: parse_hm(i["start"]))
-    agent_source = prev["raw"].get("source") if prev and not replaced and fixed else None
-    db.save_plan(date, hm(ws), hm(we), exercise, rationale, items,
-                 {"source": source, "windows": windows, "from_now": from_now, "meetings": _meeting_sig(events),
-                  "instructions": instructions or None, "fixed_by": agent_source, "reason": reason or None},
-                 keep_statuses=True)
+    raw = {"source": source, "windows": windows, "from_now": from_now, "meetings": _meeting_sig(events),
+           "instructions": instructions or None, "guidance": standing or None, "reason": reason or None}
+    if prev:                                     # what the agent set stays known to later re-plans
+        raw |= {k: prev["raw"][k] for k in ("agent_plan", "agent_exercise") if prev["raw"].get(k)}
+    db.save_plan(date, hm(ws), hm(we), exercise, rationale, items, raw, keep_statuses=True)
     db.set_setting("last_plan_build", time.time())
     what = f"re-planned from {hm(start_min)}" if from_now else "built"
-    new = [i for i in items if i.get("status", "pending") == "pending" and not i.get("fixed") and i["kind"] != "meeting"]
+    new = [i for i in items if i.get("status", "pending") == "pending" and i["kind"] != "meeting"]
     db.log_plan_event(date, "replanned" if from_now else "built",
-                      f"plan {what} by {source}: {len(new)} new blocks" + (f", {len(fixed)} of the agent's kept in place" if fixed else "")
-                      + (f" (replacing the agent's pinned schedule)" if replaced else "") + (f"; because {reason}" if reason else ""),
+                      f"plan {what} by {source}: {len(new)} blocks" + (f", adjusting the schedule {str(baseline.get('source', '')).replace('agent:', 'agent ')} set" if baseline else "")
+                      + (f"; because {reason}" if reason else ""),
                       {"source": source, "rationale": rationale, "reason": reason or None, "from_now": from_now, "until": until,
                        "work_window": [hm(ws), hm(we)], "free_windows": [[hm(a), hm(b)] for a, b in windows],
-                       "instructions": instructions or None, "exercise": {"kind": exercise, "minutes": ex_minutes, "done": exercise_done},
+                       "instructions": instructions or None, "guidance": standing or None,
+                       "exercise": {"kind": exercise, "minutes": ex_minutes, "done": exercise_done},
                        "routines": [r["title"] for r in routines],
-                       "candidates": [{k: t.get(k) for k in ("id", "title", "score", "expected_minutes", "work_kind", "deadline", "blocking")} for t in tasks[:25]],
-                       "fixed_blocks": [{"title": i["title"], "start": i["start"], "end": i["end"]} for i in fixed],
-                       "replaced_pinned": replaced, "items": _log_items(items)}, actor=actor)
+                       "candidates": [{k: t.get(k) for k in ("id", "title", "score", "expected_minutes", "work_kind", "deadline", "blocking", "importance")} for t in tasks[:25]],
+                       "assistant_schedule": baseline and {"set_by": baseline.get("source"), "blocks": baseline["blocks"]},
+                       "items": _log_items(items)}, actor=actor)
     return db.plan(date)
 
 
 def _log_items(items: list[dict]) -> list[dict]:
     return [{"kind": i["kind"], "title": i["title"], "start": i["start"], "end": i["end"], "task_id": i.get("task_id"),
-             "status": i.get("status", "pending"), "fixed": bool(i.get("fixed")), "note": i.get("note") or ""} for i in items]
+             "status": i.get("status", "pending"), "note": i.get("note") or ""} for i in items]
 
 
 # ---------------------------------------------------------------- the schedule set or steered from outside
 INSTRUCTIONS_HEADER = ("\n\n===== INSTRUCTIONS FOR THIS DAY FROM THE USER'S ASSISTANT AGENT (follow them; the rules "
                        "above still apply where they do not conflict) =====\n")
+
+
+GUIDANCE_HEADER = ("\n\n===== STANDING GUIDANCE FROM THE USER'S ASSISTANT AGENT (what to keep in mind when scheduling, "
+                   "any day; the rules above still apply where they do not conflict) =====\n")
+
+
+def guidance() -> str:
+    """Standing text from the agent about what matters in scheduling (priorities, context), kept until replaced."""
+    return (db.get_setting("plan_guidance") or "").strip()
+
+
+def set_guidance(text: str, actor: str = "agent") -> None:
+    db.set_setting("plan_guidance", text.strip())
+    db.log_plan_event(db.today(), "guidance", f"standing scheduling guidance {'set' if text.strip() else 'cleared'}: {text.strip()[:200]}",
+                      {"text": text.strip()}, actor=actor)
 
 
 def day_instructions(date: str) -> str:
@@ -340,13 +350,13 @@ def set_day_instructions(date: str, text: str, actor: str = "agent") -> None:
 
 
 def set_plan(day: dt.date, items: list[dict], work_start: str | None = None, work_end: str | None = None,
-             rationale: str = "", source: str = "external", pin: bool = True, merge_meetings: bool = True,
+             rationale: str = "", source: str = "external", merge_meetings: bool = True,
              validate_windows: bool = True) -> dict:
-    """Put the agent's blocks into a day's schedule. Items are {kind, title, start, end, task_id?, note?}; statuses of
-    matching blocks are kept, so re-sending a schedule mid-day does not undo finished work. Every block is fixed: the
-    app never moves or drops it, and it plans the free time around the blocks straight away (today, in the
-    background) or at the morning build, and keeps re-planning that part on drift. With `pin` the whole day is
-    frozen instead: no planning around the blocks, no re-planning, and a rebuild must be forced.
+    """Replace a day's schedule with one built elsewhere (the executive-assistant agent). Items are
+    {kind, title, start, end, task_id?, note?}; statuses of matching blocks are kept, so re-sending a schedule
+    mid-day does not undo finished work. From then on the app treats it as the day's plan: drift re-planning
+    adjusts it like any other plan, with this schedule as the baseline. The day's exercise is the one exception: an
+    exercise block names the session only while none is decided yet; once decided it stays (the block is retitled).
     Raises ValueError for a bad item."""
     date = day.isoformat()
     cfg = config.load()["general"]
@@ -396,47 +406,38 @@ def set_plan(day: dt.date, items: list[dict], work_start: str | None = None, wor
             if e_ > ws and s_ < we and (hm(s_), e["title"]) not in have:
                 meetings.append(dict(kind="meeting", task_id=None, title=e["title"], start=hm(s_), end=hm(e_),
                                      minutes=e_ - s_, note="calendar"))
-    for b in blocks:
-        b["fixed"] = 1
-    items = sorted(blocks + meetings, key=lambda i: parse_hm(i["start"]))
-    prev = db.plan(date)
+    # the exercise: the agent's block names the day's session only if none is decided yet; otherwise the decided
+    # session stands and the block is retitled to it
     ex_block = next((b for b in blocks if b["kind"] == "exercise"), None)
-    if ex_block:                                 # the agent's exercise block names the day's session
-        exercise = ex_block["title"].removeprefix("Exercise:").strip() or ex_block["title"]
-    else:
-        exercise = prev["exercise"] if prev else exercise_mod.decide(date).get("kind", "")
-    db.save_plan(date, hm(ws), hm(we), exercise, rationale, items,
-                 {"source": source, "pinned": pin, "from_now": False, "meetings": _meeting_sig(events),
-                  "windows": free_windows(day, events, ws, we), "dropped": dropped,
-                  "instructions": day_instructions(date) or None},
-                 keep_statuses=True)
+    agent_exercise, exercise_note = None, None
+    if ex_block:
+        wanted = ex_block["title"].removeprefix("Exercise:").strip() or ex_block["title"]
+        decision = exercise_mod.adopt(date, wanted)
+        if decision is None:                                   # a later day: decided from this when that day comes
+            agent_exercise = wanted
+        elif not exercise_mod.same_session(decision["title"], wanted):
+            exercise_note = f"the exercise for {date} was already set to {decision['title']}; the block is titled for it"
+            for b in blocks:
+                if b["kind"] == "exercise":
+                    b["title"] = f"Exercise: {decision['title']}"
+    decided = exercise_mod.decide(date) if date == db.today() else None
+    exercise = decided["kind"] if decided else (agent_exercise or (db.plan(date) or {}).get("exercise", ""))
+    items = sorted(blocks + meetings, key=lambda i: parse_hm(i["start"]))
+    agent_plan = {"source": source, "rationale": rationale, "set_at": dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
+                  "items": [{"kind": b["kind"], "title": b["title"], "start": b["start"], "end": b["end"], "task_id": b["task_id"],
+                             "note": b["note"]} for b in blocks]}
+    raw = {"source": source, "from_now": False, "meetings": _meeting_sig(events), "windows": free_windows(day, events, ws, we),
+           "dropped": dropped, "exercise_note": exercise_note, "instructions": day_instructions(date) or None,
+           "guidance": guidance() or None, "agent_plan": agent_plan}
+    if agent_exercise:
+        raw["agent_exercise"] = agent_exercise
+    db.save_plan(date, hm(ws), hm(we), exercise, rationale, items, raw, keep_statuses=True)
     db.set_setting("last_plan_build", time.time())
-    db.log_plan_event(date, "agent_set", f"schedule set by {source.replace('agent:', 'agent ')}: {len(blocks)} blocks, "
-                      f"{'pinned (the app leaves the day alone)' if pin else 'the app plans the free time around them'}"
-                      + (f"; dropped outside the free windows: {', '.join(dropped)}" if dropped else ""),
-                      {"rationale": rationale, "pinned": pin, "dropped": dropped, "work_window": [hm(ws), hm(we)],
+    db.log_plan_event(date, "agent_set", f"schedule set by {source.replace('agent:', 'agent ')}: {len(blocks)} blocks; the app re-plans it on drift as usual"
+                      + (f"; dropped outside the free windows: {', '.join(dropped)}" if dropped else "")
+                      + (f"; {exercise_note}" if exercise_note else ""),
+                      {"rationale": rationale, "dropped": dropped, "exercise_note": exercise_note, "work_window": [hm(ws), hm(we)],
                        "exercise": exercise, "items": _log_items(items)}, actor=source)
-    now = dt.datetime.now()
-    if not pin and day == now.date() and ws <= now.hour * 60 + now.minute < we:
-        maybe_replan(f"{source.replace('agent:', 'agent ')} set blocks for the day", force=True)   # the rest of today, around them
-    return db.plan(date)
-
-
-def needs_morning_build(date: str) -> bool:
-    """Whether the day's plan still has to be built by the app: no plan yet, or only the agent's blocks so far."""
-    p = db.plan(date)
-    if not p:
-        return True
-    return not p["raw"].get("pinned") and str(p["raw"].get("source", "")).startswith("agent:")
-
-
-def unpin(date: str, actor: str = "agent") -> dict | None:
-    """Let the automatic re-planner manage the day again."""
-    p = db.plan(date)
-    if not p:
-        return None
-    db.execute("UPDATE plans SET raw=? WHERE date=?", (json.dumps(dict(p["raw"], pinned=False)), date))
-    db.log_plan_event(date, "unpinned", "day unpinned: the app re-plans the free time around the agent's blocks again", actor=actor)
     return db.plan(date)
 
 
@@ -463,8 +464,6 @@ def off_track(now: dt.datetime | None = None) -> str | None:
     p = db.plan(date)
     if not p:
         return None
-    if p["raw"].get("pinned"):                   # a schedule set from outside: leave it alone
-        return None
     now_min = now.hour * 60 + now.minute
     ws, we = parse_hm(p["work_start"]), parse_hm(p["work_end"])
     if not (ws <= now_min < we):
@@ -481,10 +480,7 @@ def off_track(now: dt.datetime | None = None) -> str | None:
         if any(parse_hm(i["end"]) < we - drift for i in items if i["status"] in ("done", "skipped")) and we - now_min > drift:
             return "plan finished early with time left in the day"
         return None
-    # a block the agent fixed is never moved: being late for it is not drift the re-planner can mend
-    nxt = next((i for i in pending if not i.get("fixed")), None)
-    if nxt is None:
-        return None
+    nxt = pending[0]
     behind = now_min - parse_hm(nxt["start"])
     if behind > drift:
         return f"next block '{nxt['title']}' should have started {behind} min ago"
@@ -515,8 +511,6 @@ def maybe_replan(reason: str | None = None, force: bool = False) -> bool:
         try:
             log.info("re-planning: %s", reason)
             build(from_now=True, reason=reason)
-        except PinnedDay as e:
-            log.info("not re-planning: %s", e)
         except Exception:
             log.exception("re-plan failed")
         finally:

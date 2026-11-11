@@ -160,24 +160,29 @@ multiplied by your measured actual/estimate ratio), the checklist, the exercise 
 does the packing when configured; a deterministic packer is the fallback and the validator (anything outside
 the free windows is clamped or dropped).
 
-**The agent's blocks win; the app plans around them.** Blocks your assistant agent sets through the agent API
-override anything the app would plan itself. Every block the agent sets is *fixed*: the app never moves, retitles
-or drops it (an exercise block it names, "Exercise: zone 2 cardio", becomes the day's session on the feed too, over
-the morning decision). Regular planning carries on around them: when the agent sends blocks for today during the
-work day the rest of the day is planned around them at once (in the background); blocks sent for a later day are
-planned around at that day's morning build; and drift re-planning keeps rebuilding the free time as usual, always
-leaving the agent's blocks in place. The plan page marks them with an `agent` chip and the feed says whose blocks
-it is working around. Only the agent's own calls (rebuild, instructions with rebuild, a new schedule) replace what
-it set before. The agent can also send `pin: true` to freeze a whole day: then nothing is planned around its
-blocks, there is no re-planning, the morning build is skipped, and the Rebuild / Re-plan / Work late buttons are
-refused with a message and a button to replace the agent's schedule with the app's own plan if that is what you
-want; `unpin` lifts that again.
+**The agent's schedule replaces the app's.** A schedule your assistant agent sends through the agent API
+overwrites whatever plan the app had for that day and becomes the day's plan. From then on the app treats it like
+any plan: the feed follows it, and drift re-planning adjusts it as usual (late, early, overrun, calendar change).
+A re-plan does not start from a blank slate, though: the agent's schedule and its rationale go to the planner as
+the baseline to adjust (keep its choice of tasks and its order where they still fit, shift times to reality, drop
+only what no longer fits), and the deterministic fallback keeps the agent's order too. The plan page and the feed
+say when the plan is the agent's and when it was re-planned from the agent's schedule. The one thing that never
+changes once set is the **day's exercise**: the morning decision stands for the day, and an exercise block the
+agent sends only names the session when nothing is decided yet for that day (for a later day the choice waits in
+the plan until that morning); otherwise the block is retitled to the decided session and the reply says so.
+
+**The agent's priorities steer every plan.** `PATCH /api/agent/tasks/{id}` sets a task's importance, deadline,
+blocking (and for whom), kind of work, reading/writing and whether it may be split, with a `why`. The change is
+written as the agent's signed note on the task, and those are exactly the inputs every build and re-plan is made
+from, so the app's own planning follows the agent's priorities and urgency. Text about what to keep in mind goes
+through `PUT /api/agent/schedule/instructions`: for one day, or with `standing: true` for every day until replaced.
+Both are appended to your rules document for the planner and shown on the plan page.
 
 **The planning log** records every planning decision so the agent can see everything the app did on its own the
 next time it looks: each build and re-plan (who asked, why it re-planned, the free windows, the candidates
-considered, the exercise and routines it had, the blocks it produced and which of the agent's it kept in place),
-each exercise decision, each schedule the agent set, each pin change and each set of instructions. `GET
-/api/agent/schedule` returns the day's log and everything logged since that agent (by name) last looked;
+considered with their priorities, the exercise and routines it had, the agent's schedule it adjusted and the blocks
+it produced), each exercise decision, each schedule the agent set, each instruction, guidance and priority change.
+`GET /api/agent/schedule` returns the day's log and everything logged since that agent (by name) last looked;
 `GET /api/agent/schedule/log` queries it by day or since a moment.
 
 **Claude and the LLM inbox** - every call to Claude (quick add, estimates and work kinds, the day plan, the
@@ -243,9 +248,8 @@ The checklist card lists the sheet's items with checkboxes.
 **Drift** - every minute (and on every feed load) the schedule is compared with reality. If the next block is
 more than `replan_drift_minutes` late or early, the active block has overrun by `overrun_minutes`, the day
 finished early, or the calendar changed, the rest of the day is re-planned from now in the background; done,
-skipped and active blocks are kept, and so are the agent's fixed blocks. Never more often than
-`replan_min_interval_minutes`, never on a day the agent pinned, and being late for a block the agent fixed is not
-drift (the re-planner could not move it anyway: Skip it on the feed if it is not going to happen).
+skipped and active blocks are kept; a schedule the agent set is the baseline the re-plan adjusts. Never more often
+than `replan_min_interval_minutes`.
 
 **Estimates** - never user-entered. New tasks get a forecast from Claude (grounded in your recent actuals) and
 time tracked per task (from the app's timers; if you stop the timer in Toggl the app notices) is compared with
@@ -289,9 +293,10 @@ for the terminal). A "Journaling" Toggl timer starts.
 
 An executive-assistant agent gets its own door into the app, everything under `http://127.0.0.1:8791/api/agent`.
 Whatever comes through it is attributed to the agent: tasks and projects it adds carry an `agent` chip, context it
-attaches to any item is a separate signed note (never merged into your own text), and a schedule it sets is shown as
-the agent's on the plan page and overrides the app's own planning (see *The agent's schedule wins* above). Everything
-the app plans by itself is written to the planning log for the agent to read back. Interactive documentation of
+attaches to any item is a separate signed note (never merged into your own text), a schedule it sets replaces the
+app's plan for the day and is shown as the agent's on the plan page, and the priorities and guidance it gives steer
+every plan the app builds (see *The agent's schedule replaces the app's* above). Everything the app plans by itself
+is written to the planning log for the agent to read back. Interactive documentation of
 every call is at `/docs`; `GET /api/agent` returns the map.
 
 **Access.** Optional bearer token: paste one into Settings -> Assistant agent (or `AGENT_API_TOKEN`, or the menu bar
@@ -303,16 +308,16 @@ Mac may call the agent API (the server only listens on 127.0.0.1). The agent nam
 | --- | --- |
 | `GET /api/agent/tree` | projects (with id, path, open-task count) and the full tree of open tasks, including the notes the agent added |
 | `GET /api/agent/tasks?q=&project_id=` / `GET /api/agent/tasks/{id}` | find open tasks; one task with its path, tracked minutes and notes |
+| `PATCH /api/agent/tasks/{id}` | `{importance 1-5, deadline ("2026-11-20", "fri", "" clears), blocking, blocking_for, chunkable, work_kind ("task" / "focus" / "" back to Claude), reading, writing, why}`: the agent's priority and urgency for a task. Applied to the fields every plan is built from and recorded as the agent's note on the task (the `why` first) |
 | `POST /api/agent/projects` | `{name, parent_id | parent_path, notes}`; the parent must exist |
 | `POST /api/agent/tasks` | `{title, project_id | project_path | parent_id, description, deadline, blocking, blocking_for, importance, chunkable, note}`; hashtags in the title work (`#p2 #due:fri`); `note` is attached as the agent's note straight away; with no project given Claude files it like the quick-add bar (Inbox without Claude); `create_project: true` creates a missing path |
 | `POST /api/agent/quick_add` | `{text}`: Claude turns free text into tasks in the right projects |
 | `POST /api/agent/notes` | `{task_id | project_id, body}`: add context to any item; `GET /api/agent/notes?task_id=` lists, `DELETE /api/agent/notes/{id}` takes one back |
-| `GET /api/agent/schedule?date=` | what the agent needs to set a day: the current plan with statuses (each item says whether it is `fixed`, i.e. the agent's), free windows between meetings, prioritised candidate tasks with calibrated estimates and the agent's notes, routines, the day's exercise, your rules document, any standing instructions, the day's `planning_log`, and `since_your_last_visit`: every planning event (any day) since this agent, by name, last called this |
-| `GET /api/agent/schedule/log?date=&since=&limit=` | the planning log, oldest first: `date` for one day, `since` (ISO local date-time or epoch seconds) for everything after a moment. Each entry: `at_local`, `event` (`built`, `replanned`, `agent_set`, `unpinned`, `exercise`, `instructions`), `actor` (`app`, `user`, `agent:<name>`), a one-line `summary` and a `detail` object (for builds: reason, source, rationale, free windows, candidates considered, exercise, routines, the fixed blocks kept and every block produced) |
-| `PUT /api/agent/schedule` | `{items: [{kind, task_id, title, start, end, note}], date, work_start, work_end, rationale, pin}`: set the day's schedule block by block (kinds `task`, `routine`, `exercise`, `journal`, `break`, `meeting`). Blocks are clipped to the free windows (`validate_windows: false` to skip that) and what did not fit is returned in `dropped`; calendar meetings are added; done, skipped and active blocks keep their status when a schedule is re-sent. Every block is fixed: the app never moves it, and it plans and re-plans the rest of the day around the blocks (at once for today, at the morning build for a later day). `pin: true` freezes the whole day instead: no planning around the blocks, no automatic re-planning, and the app's Rebuild button asks before replacing it. An `exercise` block names the day's session |
-| `PUT /api/agent/schedule/instructions` | `{text, date, rebuild}`: steer the day in prose ("end by 13:00", "grant report first thing"); the app re-plans with the instructions appended to your rules (replacing a schedule the agent set, pinned or not), and shows them on the plan page. `DELETE` drops them |
-| `POST /api/agent/schedule/rebuild` | `{date, from_now, until}`: let the app plan the day from scratch (this replaces a schedule the agent set, and unpins the day) |
-| `POST /api/agent/schedule/unpin?date=` | undo `pin: true`: the app plans and re-plans the free time around the agent's blocks again |
+| `GET /api/agent/schedule?date=` | what the agent needs to set a day: the current plan with statuses (and `agent_plan`, the schedule the agent last set for it), free windows between meetings, prioritised candidate tasks with calibrated estimates and the agent's notes, routines, the day's exercise, your rules document, the day's instructions and the `standing_guidance`, the day's `planning_log`, and `since_your_last_visit`: every planning event (any day) since this agent, by name, last called this |
+| `GET /api/agent/schedule/log?date=&since=&limit=` | the planning log, oldest first: `date` for one day, `since` (ISO local date-time or epoch seconds) for everything after a moment. Each entry: `at_local`, `event` (`built`, `replanned`, `agent_set`, `exercise`, `instructions`, `guidance`, `task`), `actor` (`app`, `user`, `agent:<name>`), a one-line `summary` and a `detail` object (for builds: reason, source, rationale, free windows, candidates considered with their priorities, exercise, routines, the agent's schedule it adjusted and every block produced) |
+| `PUT /api/agent/schedule` | `{items: [{kind, task_id, title, start, end, note}], date, work_start, work_end, rationale}`: set the day's schedule block by block (kinds `task`, `routine`, `exercise`, `journal`, `break`, `meeting`). It replaces the app's plan for the day. Blocks are clipped to the free windows (`validate_windows: false` to skip that) and what did not fit is returned in `dropped`; calendar meetings are added; done, skipped and active blocks keep their status when a schedule is re-sent. The app then re-plans it on drift as usual, from this schedule as the baseline. An `exercise` block names the day's session only while none is decided; otherwise it is retitled and `exercise_note` says so |
+| `PUT /api/agent/schedule/instructions` | `{text, date, standing, rebuild}`: what the planner should keep in mind, in prose. For one day ("end by 13:00", "grant report first thing"), or with `standing: true` for every day until replaced ("Eli is recovering from a cold: nothing heavy before 11"). Appended to your rules for every build and shown on the plan page; `rebuild` (default) re-plans the day with it now. `DELETE ...?date=` drops the day's, `DELETE ...?standing=true` the standing guidance |
+| `POST /api/agent/schedule/rebuild` | `{date, from_now, until}`: let the app plan the day now |
 
 ```bash
 A="http://127.0.0.1:8791/api/agent"; H=(-H "Content-Type: application/json" -H "X-Agent-Name: EA" -H "Authorization: Bearer $AGENT_API_TOKEN")
@@ -322,6 +327,8 @@ curl -s -X POST $A/notes "${H[@]}" -d '{"task_id": 42, "body": "The venue replie
 curl -s $A/schedule "${H[@]}" | jq '{free_windows, candidates: [.candidates[:5][] | {id, title, expected_minutes}]}'
 curl -s -X PUT $A/schedule "${H[@]}" -d '{"items": [{"kind": "task", "task_id": 42, "start": "10:30", "end": "11:30"}, {"kind": "break", "title": "Break", "start": "11:30", "end": "11:40"}], "rationale": "Deposit first; rest of the day as planned."}'
 curl -s -X PUT $A/schedule/instructions "${H[@]}" -d '{"text": "Eli has a dentist appointment at 14:00 and wants the afternoon light."}'
+curl -s -X PUT $A/schedule/instructions "${H[@]}" -d '{"text": "The grant is the priority all week; email can wait until 16:00.", "standing": true}'
+curl -s -X PATCH $A/tasks/42 "${H[@]}" -d '{"importance": 5, "deadline": "fri", "blocking_for": "Sam", "why": "Sam needs it before the board meeting."}'
 curl -s "$A/schedule/log?date=$(date +%F)" "${H[@]}" | jq '.[] | {at_local, event, actor, summary}'
 ```
 
@@ -335,7 +342,7 @@ curl -s "$A/schedule/log?date=$(date +%F)" "${H[@]}" | jq '.[] | {at_local, even
 | `tracker/agent_api.py` | the executive-assistant agent's API under `/api/agent` |
 | `tracker/dashboard.html` | the whole UI, one file: outline, feed, stats, snapshots, settings; drafts kept in `localStorage` |
 | `tracker/db.py` | SQLite schema and queries (projects, tasks, notes, plans, the planning log, timers, settings) |
-| `tracker/scheduler.py` | free windows, priorities, the deterministic packer, drift detection, schedules set from outside (fixed blocks, pinned days) and the planning log entries |
+| `tracker/scheduler.py` | free windows, priorities, the deterministic packer, drift detection, schedules, instructions and guidance set from outside, the planning log entries |
 | `tracker/llm.py` | the one Claude call site (`structured()`), every prompt and JSON schema; LLM-inbox wiring |
 | `tracker/config.py` | `config.toml` + defaults, Keychain / env secrets, the log file, `save()` for the Settings page |
 | `tracker/tags.py` | `#p2 #due:fri #blocking:Sam …` parsing |
@@ -449,8 +456,8 @@ as above; `python -m tracker web --reload` in a browser is the quick way to see 
 ## Gotchas learned
 
 - The WKWebView window has no `confirm()` or `alert()` (nothing implements the WKUIDelegate panels, and a blocking
-  dialog would freeze the page), so anything that needs a yes from the user, such as replacing a schedule the agent
-  pinned, is a toast with a button that re-sends the request with `force: true`.
+  dialog would freeze the page), so anything that needs a yes from the user has to be a toast with a button or an
+  inline control, never a dialog.
 - The confirm step for `contact_eli` does nothing on this app's model. It runs only for models in
   `llm_contact.CONFIRM_MODELS` (`../shared/README.md`, Gotchas: measured 2026-11-10, only `claude-haiku-4-5` is safe;
   `claude-opus-5-5` rejects the forced tool choice the question needs). Other models are never questioned and no
