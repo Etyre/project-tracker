@@ -53,7 +53,9 @@ on the lines: you navigate with the arrow keys and type.
   a project line) and Delete. From the menu a task is deleted together with its sub-items (Cmd+Z brings the
   whole subtree back); a project with content is archived rather than deleted.
 - Text is Markdown everywhere: **bold**, *italic*, `code`, ~~strike~~ and [links](url) render in titles, names
-  and notes, and a line that starts with one to six hashes (`## Big step`) is shown as a heading of that size.
+  and notes, and a line that starts with one to six hashes (`## Big step`) is shown as a heading of that level:
+  `#` is large and heavy with a solid rule under it, `##` bold with a thin rule, `###` semibold in the accent
+  colour, `####` and `#####` plain semibold in smaller sizes, `######` small capitals in grey.
   The raw text shows only while you edit it. Lines wrap while you type, so a long line stays fully visible.
 - Tags typed in a line set its fields and disappear from the title: `#p1` to `#p5` for priority (`#p1`
   highest), `#today`, `#tomorrow` or `#due:fri` / `#due:nov3` / `#due:2026-11-03` for the hard deadline,
