@@ -92,7 +92,7 @@ textarea.inline{display:block;width:100%;padding:2px 4px;margin:0;border:0;borde
 .pdetails .notes{margin-top:10px;white-space:pre-wrap;font-size:14px;cursor:text;min-height:20px;line-height:1.45}
 .pdetails textarea{width:100%;min-height:120px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit;resize:vertical}
 .hint{color:var(--muted);opacity:.6;padding:24px 10px;cursor:text;pointer-events:none}
-.tasks.zoomroot{min-height:60px;padding-bottom:24px}
+.tasks.zoomroot{min-height:40px;padding-bottom:14px}   /* the project's own tasks, above its sub-projects; the space below them is the click target for a new task */
 #tree{min-height:120px;padding-bottom:40px}
 .crumb{font-size:14px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .crumb a{cursor:pointer;color:var(--muted);text-decoration:none}.crumb a:hover{color:var(--ink)}
@@ -612,8 +612,8 @@ async function renderProjects() {
         ${someday ? '' : `<button class="btn" onclick="openInlineProjectAdd(${focus ? focus.id : 'null'}, 0)">${focus ? '+ Sub-project' : '+ Project'}</button>`}</div></div>
     ${focus ? projectDetailsHTML(focus) : ''}
     <div id="tree">${focus
-      ? `<div class="children" data-childlist="${focus.id}">${focus.children.map(c => projectHTML(c, false)).join('')}</div>
-         <div class="tasks zoomroot" data-tasklist="${focus.id}" data-parent="">${focus.tasks.map(taskHTML).join('')}</div>`
+      ? `<div class="tasks zoomroot" data-tasklist="${focus.id}" data-parent="">${focus.tasks.map(taskHTML).join('')}</div>
+         <div class="children" data-childlist="${focus.id}">${focus.children.map(c => projectHTML(c, false)).join('')}</div>`
       : someday ? somedayListHTML() : tree.map(p => projectHTML(p, true)).join('') + (tree.length ? '' : `<div class="hint">Click here, or press Enter, to add your first project.</div>`)}</div>`;
   if (!focus) $('#tree').addEventListener('click', e => {if (e.target.id === 'tree') someday ? addSomedayItem() : openInlineProjectAdd(null, lastRootProjectId());});
   wireDnD();

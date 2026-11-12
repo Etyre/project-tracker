@@ -24,7 +24,8 @@ judge the kind of work of tasks nobody marked. `python -m tracker web` serves th
 
 **Projects** - one outline, modelled on Workflowy and Roam. Every project header and task is a line; projects
 are the bold lines. Every project heading gets a box, with sub-projects as boxes inside their parent's box;
-nested tasks are simply indented. Inside an opened project its own tasks sit below its sub-projects; in the list they come first. There are no buttons
+nested tasks are simply indented. A project's own tasks, the ones not in any sub-project, come first, above its
+sub-projects, both in the list and inside the opened project. There are no buttons
 on the lines: you navigate with the arrow keys and type.
 
 - Click a task line, or arrow onto it, and it is open for editing (click on the text to put the caret there).
