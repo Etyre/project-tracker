@@ -79,6 +79,11 @@ class TaskPatch(BaseModel):
     # Any field sent explicitly (including null) is applied; the clear_* flags are kept for older callers.
 
 
+class TagsIn(BaseModel):
+    """A task's whole tag line ("#p2 #due:fri #focus"): what it names is set, what it leaves out is cleared."""
+    text: str
+
+
 class ApplyIn(BaseModel):
     """Set fields on several tasks at once: from hashtag text ("#p2 #due:fri") and/or explicit fields."""
     ids: list[int]
@@ -844,6 +849,29 @@ def create_app() -> FastAPI:
             if err := linear.safe_push(tid):
                 errors.append(err)
         return {"fields": fields, "before": before, "count": len(before), "linear_error": errors[0] if errors else None}
+
+    @app.get("/api/tasks/{tid}/tags")
+    def task_tags(tid: int):
+        cur = db.task(tid)
+        if not cur:
+            raise HTTPException(404)
+        return {"text": tags.render(cur)}
+
+    @app.put("/api/tasks/{tid}/tags")
+    def set_task_tags(tid: int, o: TagsIn):
+        """The opened task's tag line, edited by hand: replaces the task's tags with exactly what the line says."""
+        cur = db.task(tid)
+        if not cur:
+            raise HTTPException(404)
+        try:
+            fields = tags.replace_fields(cur, o.text)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        before = {k: cur[k] for k in fields}
+        if fields:
+            db.update_task(tid, **fields)
+        err = linear.safe_push(tid) if fields else None
+        return {"fields": fields, "before": before, "text": tags.render(db.task(tid)), "linear_error": err}
 
     @app.post("/api/tasks/bulk")
     def create_tasks_bulk(o: OutlineIn):

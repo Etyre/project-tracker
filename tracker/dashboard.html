@@ -72,6 +72,10 @@ textarea.inline{display:block;width:100%;padding:2px 4px;margin:0;border:0;borde
 .caret{cursor:pointer;color:var(--muted);width:14px;text-align:center;font-size:12px}
 .task .notes{margin:6px 0 2px;padding:8px 10px;background:var(--card);border:1px solid var(--line);border-radius:3px;white-space:pre-wrap;font-size:14px;cursor:text;min-height:20px;line-height:1.45;color:var(--ink)}
 .task .notes .more{margin-top:6px;font-size:12px;color:var(--muted)}
+.task .notes .fields{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;margin-top:8px;font-size:12px;color:var(--muted);cursor:default}
+.task .notes .fields input{border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);font:inherit;font-size:12px;padding:2px 6px}
+.task .notes .fields input.tags{flex:1;min-width:220px;font-family:ui-monospace,Menlo,monospace}
+.task .notes .fields label{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
 .task .notes .more a{color:var(--muted);cursor:pointer;text-decoration:none}.task .notes .more a:hover{color:var(--ink)}
 .added{margin:6px 0 2px;display:flex;flex-direction:column;gap:6px}
 .added .note{padding:6px 10px;border-left:2px solid var(--accent);background:var(--card);border-radius:0 3px 3px 0;font-size:13px;line-height:1.45;white-space:pre-wrap;cursor:default}
@@ -613,6 +617,7 @@ async function renderProjects() {
       : someday ? somedayListHTML() : tree.map(p => projectHTML(p, true)).join('') + (tree.length ? '' : `<div class="hint">Click here, or press Enter, to add your first project.</div>`)}</div>`;
   if (!focus) $('#tree').addEventListener('click', e => {if (e.target.id === 'tree') someday ? addSomedayItem() : openInlineProjectAdd(null, lastRootProjectId());});
   wireDnD();
+  Draft.bindAll(m);
   if (pendingAdd) {const a = pendingAdd; pendingAdd = null; openInlineAdd(a, a.text, a.caret);}
   if (pendingFocus) {const r = m.querySelector(`.task[data-tid="${pendingFocus}"]`); pendingFocus = null; if (r) r.focus();}
   if (pendingEdit) {const pe = pendingEdit; pendingEdit = null; typeof pe === 'object' ? editTaskTitle(pe.id, null, pe.caret) : editTaskTitle(pe);}
@@ -705,17 +710,28 @@ function taskHTML(t) {
     ${view === 'someday' ? '<span class="bullet">•</span>' : `<input type="checkbox" ${done ? 'checked' : ''} title="${done ? 'Restore' : 'Complete'}" onchange="${done ? `uncomplete(${t.id})` : `completeTask(${t.id}, this)`}">`}
     <div class="body" onmousedown="if (event.shiftKey) event.preventDefault()" onclick="if (event.shiftKey) {event.stopPropagation(); extendSelTo(this.closest('.task'));} else if (!event.target.closest('a') && !selecting()) {clearSel(); ${done ? "this.closest('.task').focus()" : `editTaskTitle(${t.id}, null, 1e9)`};}" ondblclick="if (!event.target.closest('a, input, textarea, .notes')) {event.preventDefault(); toggleTask(${t.id});}">
 <span class="title ${t.linear_id ? 'lin' : ''} ${mdLine(t.title).level ? 'md-h' + mdLine(t.title).level : ''}" onclick="event.stopPropagation(); if (!selecting()) editTaskTitle(${t.id}, null, caretFromClick(event, this))" title="Click to edit, double-click for notes" ondblclick="event.stopPropagation()">${mdLine(t.title).html}</span>
-      <span style="margin-left:6px">${done ? `<span class="chip">completed ${fmtDay(t.completed_at)}</span>` : view === 'someday' ? '' : chips(t)}</span>
+      <span class="chips" style="margin-left:6px">${done ? `<span class="chip">completed ${fmtDay(t.completed_at)}</span>` : view === 'someday' ? '' : chips(t)}</span>
       ${open ? taskNotesHTML(t) : ''}
     </div>
   </div>
   <div class="tasks sub ${folded ? 'collapsed' : ''}" data-tasklist="${t.project_id}" data-parent="${t.id}">${t.children.map(taskHTML).join('')}</div>`;
 }
-// Expanding a task shows one thing: its notes / links / context box, editable in place. The other fields
-// (deadline, blocking, importance) live on the title line and in the "edit" dialog.
+// Expanding a task shows its notes / links / context box, editable in place, then its tag line and its two
+// deadlines, also editable in place. The tag line is the task's fields written as tags (`#p2 #due:2026-11-14
+// #focus`): edit it and press Enter; a tag you remove clears that field. Everything else is in the "edit" dialog.
 const notesPlaceholder = '<span class="muted">Add notes, context, links…</span>';
+const tagText = t => [t.importance ? '#p' + (6 - t.importance) : '', t.deadline ? '#due:' + t.deadline.slice(0, 10) : '', t.soft_deadline ? '#soft:' + t.soft_deadline.slice(0, 10) : '',
+  t.blocking ? (t.blocking_for && !/\s/.test(t.blocking_for.trim()) ? '#blocking:' + t.blocking_for.trim() : '#blocking') : '', t.chunkable === 0 ? '#onesitting' : '',
+  t.work_kind === 'focus' || t.work_kind === 'task' ? '#' + t.work_kind : '', t.reading === 1 ? '#reading' : '', t.writing === 1 ? '#writing' : ''].filter(Boolean).join(' ');
+function fieldsHTML(t) {
+  if (view === 'someday' || t.completed_at) return '';
+  const date = (name, label, title) => `<label title="${title}">${label} <input type="date" data-field="${name}" value="${esc((t[name] || '').slice(0, 10))}" onchange="saveDate(${t.id}, '${name}', this)" onkeydown="event.stopPropagation()"></label>`;
+  return `<div class="fields" onclick="event.stopPropagation()">
+    <input class="tags" data-draft="tags:${t.id}" value="${esc(tagText(t))}" placeholder="#p2 #due:fri #soft:mon #blocking:Sam #focus …" spellcheck="false" title="This task's tags. Edit the line and press Enter; a tag you remove clears that field." onkeydown="tagKeys(event, ${t.id}, this)" onblur="saveTags(${t.id}, this)">
+    ${date('deadline', 'due', 'Hard deadline: cannot move')}${date('soft_deadline', 'aim', 'Soft deadline: ideally by')}</div>`;
+}
 function taskNotesHTML(t) {
-  return `<div class="notes" onclick="event.stopPropagation(); if (!event.target.closest('a, .added') && !selecting()) editTaskNotes(${t.id}, this)">${t.description ? linkify(t.description) : notesPlaceholder}${addedNotesHTML(t.notes_added)}<div class="more">${t.linear_url ? `<a href="${esc(t.linear_url)}" target="_blank">${esc(t.linear_identifier)}</a> · ` : ''}${view === 'someday' ? '' : `<a onclick="event.stopPropagation(); editTask(${t.id})">dates &amp; priority…</a>`}</div></div>`;
+  return `<div class="notes" onclick="event.stopPropagation(); if (!event.target.closest('a, .added, .fields') && !selecting()) editTaskNotes(${t.id}, this)">${t.description ? linkify(t.description) : notesPlaceholder}${addedNotesHTML(t.notes_added)}${fieldsHTML(t)}<div class="more">${t.linear_url ? `<a href="${esc(t.linear_url)}" target="_blank">${esc(t.linear_identifier)}</a> · ` : ''}${view === 'someday' ? '' : `<a onclick="event.stopPropagation(); editTask(${t.id})">dates &amp; priority…</a>`}</div></div>`;
 }
 function findTask(id, nodes = tree) {
   const walk = ts => {for (const t of ts) {if (t.id === id) return t; const r = walk(t.children); if (r) return r;} return null;};
@@ -735,12 +751,49 @@ function editTaskNotes(tid, el) {
     Draft.clear(`notes:${tid}`);
     if (closeBox) {expandOnly(tid); pendingFocus = tid; renderProjects(); return;}
     const t2 = findTask(tid) || {id: tid}; t2.description = description; el.outerHTML = taskNotesHTML(t2);
+    const row = document.querySelector(`.task[data-tid="${tid}"]`); if (row) Draft.bindAll(row);
   };
   ta.onkeydown = e => {
     if (e.key === 'Escape') {ta.value = orig; ta.blur();}
     else if (e.key === 'Enter' && e.shiftKey) {e.preventDefault(); closeBox = true; ta.blur();}
     e.stopPropagation();
   };
+}
+// Saving a field from the opened box updates the line in place (chips, tag line, dates): nothing re-renders, so
+// the box stays open and whatever the user clicked next keeps its focus.
+function refreshFields(tid) {
+  const t = findTask(tid), row = document.querySelector(`.task[data-tid="${tid}"]`); if (!t || !row) return;
+  const c = row.querySelector(':scope > .body > .chips'); if (c && !t.completed_at && view !== 'someday') c.innerHTML = chips(t);
+  const tags = row.querySelector(':scope > .body > .notes .fields .tags'); if (tags) {tags.value = tags.defaultValue = tagText(t);}
+  row.querySelectorAll(':scope > .body > .notes .fields input[data-field]').forEach(i => {i.value = (t[i.dataset.field] || '').slice(0, 10);});
+}
+let tagsKey = null;   // the Enter / Escape that is blurring the tag line, so the line gets focus back
+function tagKeys(e, tid, inp) {
+  e.stopPropagation();
+  if (e.key === 'Enter') {e.preventDefault(); tagsKey = 'save'; inp.blur();}
+  else if (e.key === 'Escape') {e.preventDefault(); const t = findTask(tid); inp.value = t ? tagText(t) : inp.defaultValue; Draft.clear(`tags:${tid}`); tagsKey = 'cancel'; inp.blur();}
+}
+async function saveTags(tid, inp) {
+  const key = tagsKey; tagsKey = null;
+  const t = findTask(tid), text = inp.value.trim(), orig = (t ? tagText(t) : inp.defaultValue).trim();
+  const back = () => {if (key) {const row = document.querySelector(`.task[data-tid="${tid}"]`); row?.focus();}};
+  if (text === orig) {Draft.clear(`tags:${tid}`); back(); return;}
+  try {
+    const r = await api(`/tasks/${tid}/tags`, 'PUT', {text});
+    Draft.clear(`tags:${tid}`);
+    if (Object.keys(r.fields).length) {pushUndo('tags change', () => api(`/tasks/${tid}`, 'PATCH', r.before).then(() => renderProjects())); if (t) Object.assign(t, r.fields);}
+    if (r.linear_error) toast('Saved; Linear: ' + esc(r.linear_error), 6000);
+    refreshFields(tid); back();
+  } catch (e) {toast(esc(e.message), 5000); inp.focus();}   // the text stays in the field (and in its draft) to fix
+}
+async function saveDate(tid, field, inp) {
+  const t = findTask(tid); const value = inp.value || null, before = t ? (t[field] || null) : null;
+  if (value === before) return;
+  try {
+    await api(`/tasks/${tid}`, 'PATCH', {[field]: value});
+    pushUndo(field === 'deadline' ? 'hard deadline change' : 'soft deadline change', () => api(`/tasks/${tid}`, 'PATCH', {[field]: before}).then(() => renderProjects()));
+    if (t) t[field] = value; refreshFields(tid);
+  } catch (e) {toast(esc(e.message), 5000); inp.value = (before || '').slice(0, 10);}
 }
 function toggleTaskFold(id) {collapsedTasks.has(id) ? collapsedTasks.delete(id) : collapsedTasks.add(id); saveFold(); pendingFocus = id; renderProjects();}
 function unfold(id) {if (collapsedTasks.delete(id)) saveFold();}

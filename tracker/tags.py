@@ -120,3 +120,47 @@ def parse_tags(title: str, today: dt.date | None = None) -> tuple[str, dict]:
     clean = TAG.sub(take, title)
     clean = re.sub(r"[ \t]{2,}", " ", clean).strip()
     return clean or title.strip(), fields
+
+
+# The tag line of a task: its fields written back as tags, the inverse of parse_tags. The opened task shows
+# this line editable; what the user leaves out is cleared (see replace_fields).
+def render(task: dict) -> str:
+    out: list[str] = []
+    if task.get("importance"):
+        out.append("#p%d" % (6 - int(task["importance"])))
+    if task.get("deadline"):
+        out.append("#due:" + str(task["deadline"])[:10])
+    if task.get("soft_deadline"):
+        out.append("#soft:" + str(task["soft_deadline"])[:10])
+    if task.get("blocking"):
+        who = (task.get("blocking_for") or "").strip()
+        out.append("#blocking:" + who if who and not re.search(r"\s", who) else "#blocking")
+    if task.get("chunkable") == 0:
+        out.append("#onesitting")
+    if task.get("work_kind") in ("focus", "task"):
+        out.append("#" + task["work_kind"])
+    if task.get("reading") == 1:
+        out.append("#reading")
+    if task.get("writing") == 1:
+        out.append("#writing")
+    return " ".join(out)
+
+
+# What a field becomes when its tag is removed from the line.
+CLEARED = {"importance": None, "deadline": None, "soft_deadline": None, "blocking": 0, "blocking_for": "",
+           "chunkable": 1, "work_kind": None, "reading": 0, "writing": 0}
+
+
+def replace_fields(task: dict, text: str, today: dt.date | None = None) -> dict:
+    """The fields that make `text` the task's whole tag line: what it names is set, what it drops (compared with
+    render(task)) is cleared, and anything else it touches is left alone. Raises ValueError for text that is not tags."""
+    clean, new = parse_tags("x " + text.strip(), today) if text.strip() else ("x", {})
+    if clean != "x":
+        raise ValueError("not tags: " + clean[2:].strip())
+    _, old = parse_tags("x " + render(task), today)
+    for k in old:
+        if k not in new:
+            new[k] = CLEARED[k]
+    if new.get("blocking") == 0:
+        new["blocking_for"] = ""
+    return {k: v for k, v in new.items() if task.get(k) != v}   # only what actually changes

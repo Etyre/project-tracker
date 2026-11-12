@@ -73,8 +73,14 @@ on the lines: you navigate with the arrow keys and type.
 - Drag the handle to reorder; rows move live under the pointer, and dragging to the right over a row nests
   under it.
 - A task's title line carries its deadlines, a "blocking" tag and importance dots when set (there is no
-  priority by default); its notes box has a "dates & priority…" link for the rest. Time estimates are never
-  typed: the app forecasts one when a task is created and learns from tracked time.
+  priority by default). The opened task (double-click, or Notes in the menu) shows its notes, then its **tag
+  line** and its two deadlines, all editable in place. The tag line is the task's fields written as tags
+  (`#p2 #due:2026-11-14 #blocking:Sam #onesitting #focus #reading`): edit it and press Enter, and the task has
+  exactly those tags, so a tag you delete clears that field (Escape puts the line back; words that are not
+  tags are refused with a toast and the text stays to fix; a "who is waiting" name with a space shows as plain
+  `#blocking` and is kept). The "due" and "aim" date fields beside it save as soon as they change. Saving
+  updates the line in place and is undone with Cmd+Z. The "dates & priority…" link still opens the full dialog.
+  Time estimates are never typed: the app forecasts one when a task is created and learns from tracked time.
 - **Two kinds of deadline.** A *hard* deadline ("due Fri") cannot move: someone else's date, a meeting, a filing.
   A *soft* deadline ("aim Fri") is your own ideal or preference. A task may have either or both (aim for Wednesday,
   must be in by Friday). The planner treats them differently: a hard deadline is met with margin even at the cost
@@ -357,7 +363,7 @@ curl -s "$A/schedule/log?date=$(date +%F)" "${H[@]}" | jq '.[] | {at_local, even
 | `tracker/scheduler.py` | free windows, priorities, the deterministic packer, drift detection, schedules, instructions and guidance set from outside, the planning log entries |
 | `tracker/llm.py` | the one Claude call site (`structured()`), every prompt and JSON schema; LLM-inbox wiring |
 | `tracker/config.py` | `config.toml` + defaults, Keychain / env secrets, the log file, `save()` for the Settings page |
-| `tracker/tags.py` | `#p2 #due:fri #soft:wed #blocking:Sam …` parsing |
+| `tracker/tags.py` | `#p2 #due:fri #soft:wed #blocking:Sam …` parsing, the inverse (`render`: a task's fields as a tag line) and `replace_fields` (the edited tag line, what it drops cleared) behind `PUT /api/tasks/{id}/tags` |
 | `tracker/estimates.py` | actual-vs-estimate calibration from tracked time |
 | `tracker/exercise.py` | the exercise rules engine (cadence, gaps, never-back-to-back, fill-ins) and Claude's review |
 | `tracker/calendar_feed.py` | iCal feeds: recurring events expanded, busy windows |

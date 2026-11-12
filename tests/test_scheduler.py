@@ -303,6 +303,39 @@ def test_clearing_tags_and_apply_endpoint():
     assert c.post("/api/tasks/apply", json={"ids": [a], "text": "#random"}).status_code == 400
 
 
+def test_the_opened_tasks_tag_line_round_trips_and_removing_a_tag_clears_the_field():
+    from fastapi.testclient import TestClient
+    from tracker import tags, web
+    pid = db.create_project("Tag line")
+    tid = db.create_task(pid, "Draft", importance=4, deadline="2031-03-04", blocking=1, blocking_for="Sam", chunkable=0, work_kind="focus", reading=1)
+    line = tags.render(db.task(tid))
+    assert line == "#p2 #due:2031-03-04 #blocking:Sam #onesitting #focus #reading"
+    assert tags.parse_tags("x " + line)[1] == {"importance": 4, "deadline": "2031-03-04", "blocking": 1, "blocking_for": "Sam", "chunkable": 0, "work_kind": "focus", "reading": 1}
+    # a name with a space cannot be written as a tag: the line says #blocking and keeps the name as it is
+    assert tags.render({"blocking": 1, "blocking_for": "Sam Smith"}) == "#blocking"
+    assert tags.replace_fields({"blocking": 1, "blocking_for": "Sam Smith"}, "#blocking #p1") == {"importance": 5}
+    c = TestClient(web.create_app())
+    assert c.get(f"/api/tasks/{tid}/tags").json()["text"] == line
+    # the line edited by hand: priority raised, the hard deadline dropped, a soft one added, the name and the reading flag removed
+    r = c.put(f"/api/tasks/{tid}/tags", json={"text": "#p1 #soft:2031-03-01 #blocking #onesitting #focus"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["fields"] == {"importance": 5, "soft_deadline": "2031-03-01", "deadline": None, "blocking_for": "", "reading": 0}   # only what changed
+    assert body["before"] == {"importance": 4, "soft_deadline": None, "deadline": "2031-03-04", "blocking_for": "Sam", "reading": 1}
+    assert body["text"] == "#p1 #soft:2031-03-01 #blocking #onesitting #focus"
+    t = db.task(tid)
+    assert (t["importance"], t["deadline"], t["soft_deadline"], t["blocking_for"], t["reading"], t["chunkable"]) == (5, None, "2031-03-01", "", 0, 0)
+    # an empty line clears everything the line controlled; the title and notes are untouched
+    assert c.put(f"/api/tasks/{tid}/tags", json={"text": ""}).status_code == 200
+    t = db.task(tid)
+    assert (t["title"], t["importance"], t["soft_deadline"], t["blocking"], t["chunkable"], t["work_kind"]) == ("Draft", None, None, 0, 1, None)
+    # words that are not tags are refused, and nothing changes
+    r = c.put(f"/api/tasks/{tid}/tags", json={"text": "#p3 call Sam"})
+    assert r.status_code == 400 and "call Sam" in r.json()["detail"] and db.task(tid)["importance"] is None
+    assert c.put("/api/tasks/999999/tags", json={"text": "#p1"}).status_code == 404
+    db.delete_task(tid)   # the shared test DB: a reading-flagged task left here would reach the reading card test
+
+
 def test_delete_subtree_and_recreate():
     pid = db.create_project("Subtree")
     a = db.create_task(pid, "Parent", description="notes here", importance=3)
