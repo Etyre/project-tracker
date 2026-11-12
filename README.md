@@ -293,7 +293,8 @@ for the terminal). A "Journaling" Toggl timer starts.
 
 An executive-assistant agent gets its own door into the app, everything under `http://127.0.0.1:8791/api/agent`.
 Whatever comes through it is attributed to the agent: tasks and projects it adds carry an `agent` chip, context it
-attaches to any item is a separate signed note (never merged into your own text), a schedule it sets replaces the
+attaches to any item is a separate signed note (never merged into your own text), a move or a priority it sets
+leaves such a note on the item saying what changed and why, a schedule it sets replaces the
 app's plan for the day and is shown as the agent's on the plan page, and the priorities and guidance it gives steer
 every plan the app builds (see *The agent's schedule replaces the app's* above). Everything the app plans by itself
 is written to the planning log for the agent to read back. Interactive documentation of
@@ -308,13 +309,15 @@ Mac may call the agent API (the server only listens on 127.0.0.1). The agent nam
 | --- | --- |
 | `GET /api/agent/tree` | projects (with id, path, open-task count) and the full tree of open tasks, including the notes the agent added |
 | `GET /api/agent/tasks?q=&project_id=` / `GET /api/agent/tasks/{id}` | find open tasks; one task with its path, tracked minutes and notes |
+| `POST /api/agent/tasks/{id}/move` | `{project_id | project_path | parent_id, create_project, after_id, why}`: move a task, sub-tasks included, to another project or under another task (its project is used). Into Someday / maybe it drops its deadline, priority and blocking tag. Recorded as the agent's note on the task ("moved here from Home: …") |
+| `POST /api/agent/projects/{id}/move` | `{parent_id | parent_path | top_level: true, why}`: move a project with everything in it under another project or to the top level; never under itself, never into Someday / maybe. Recorded as the agent's note on the project |
 | `PATCH /api/agent/tasks/{id}` | `{importance 1-5, deadline ("2026-11-20", "fri", "" clears), blocking, blocking_for, chunkable, work_kind ("task" / "focus" / "" back to Claude), reading, writing, why}`: the agent's priority and urgency for a task. Applied to the fields every plan is built from and recorded as the agent's note on the task (the `why` first) |
 | `POST /api/agent/projects` | `{name, parent_id | parent_path, notes}`; the parent must exist |
 | `POST /api/agent/tasks` | `{title, project_id | project_path | parent_id, description, deadline, blocking, blocking_for, importance, chunkable, note}`; hashtags in the title work (`#p2 #due:fri`); `note` is attached as the agent's note straight away; with no project given Claude files it like the quick-add bar (Inbox without Claude); `create_project: true` creates a missing path |
 | `POST /api/agent/quick_add` | `{text}`: Claude turns free text into tasks in the right projects |
 | `POST /api/agent/notes` | `{task_id | project_id, body}`: add context to any item; `GET /api/agent/notes?task_id=` lists, `DELETE /api/agent/notes/{id}` takes one back |
 | `GET /api/agent/schedule?date=` | what the agent needs to set a day: the current plan with statuses (and `agent_plan`, the schedule the agent last set for it), free windows between meetings, prioritised candidate tasks with calibrated estimates and the agent's notes, routines, the day's exercise, your rules document, the day's instructions and the `standing_guidance`, the day's `planning_log`, and `since_your_last_visit`: every planning event (any day) since this agent, by name, last called this |
-| `GET /api/agent/schedule/log?date=&since=&limit=` | the planning log, oldest first: `date` for one day, `since` (ISO local date-time or epoch seconds) for everything after a moment. Each entry: `at_local`, `event` (`built`, `replanned`, `agent_set`, `exercise`, `instructions`, `guidance`, `task`), `actor` (`app`, `user`, `agent:<name>`), a one-line `summary` and a `detail` object (for builds: reason, source, rationale, free windows, candidates considered with their priorities, exercise, routines, the agent's schedule it adjusted and every block produced) |
+| `GET /api/agent/schedule/log?date=&since=&limit=` | the planning log, oldest first: `date` for one day, `since` (ISO local date-time or epoch seconds) for everything after a moment. Each entry: `at_local`, `event` (`built`, `replanned`, `agent_set`, `exercise`, `instructions`, `guidance`, `task`), `project`, `actor` (`app`, `user`, `agent:<name>`), a one-line `summary` and a `detail` object (for builds: reason, source, rationale, free windows, candidates considered with their priorities, exercise, routines, the agent's schedule it adjusted and every block produced) |
 | `PUT /api/agent/schedule` | `{items: [{kind, task_id, title, start, end, note}], date, work_start, work_end, rationale}`: set the day's schedule block by block (kinds `task`, `routine`, `exercise`, `journal`, `break`, `meeting`). It replaces the app's plan for the day. Blocks are clipped to the free windows (`validate_windows: false` to skip that) and what did not fit is returned in `dropped`; calendar meetings are added; done, skipped and active blocks keep their status when a schedule is re-sent. The app then re-plans it on drift as usual, from this schedule as the baseline. An `exercise` block names the day's session only while none is decided; otherwise it is retitled and `exercise_note` says so |
 | `PUT /api/agent/schedule/instructions` | `{text, date, standing, rebuild}`: what the planner should keep in mind, in prose. For one day ("end by 13:00", "grant report first thing"), or with `standing: true` for every day until replaced ("Eli is recovering from a cold: nothing heavy before 11"). Appended to your rules for every build and shown on the plan page; `rebuild` (default) re-plans the day with it now. `DELETE ...?date=` drops the day's, `DELETE ...?standing=true` the standing guidance |
 | `POST /api/agent/schedule/rebuild` | `{date, from_now, until}`: let the app plan the day now |
@@ -329,6 +332,8 @@ curl -s -X PUT $A/schedule "${H[@]}" -d '{"items": [{"kind": "task", "task_id": 
 curl -s -X PUT $A/schedule/instructions "${H[@]}" -d '{"text": "Eli has a dentist appointment at 14:00 and wants the afternoon light."}'
 curl -s -X PUT $A/schedule/instructions "${H[@]}" -d '{"text": "The grant is the priority all week; email can wait until 16:00.", "standing": true}'
 curl -s -X PATCH $A/tasks/42 "${H[@]}" -d '{"importance": 5, "deadline": "fri", "blocking_for": "Sam", "why": "Sam needs it before the board meeting."}'
+curl -s -X POST $A/tasks/42/move "${H[@]}" -d '{"project_path": ["Admin", "Travel"], "why": "It is a travel item, not general admin."}'
+curl -s -X POST $A/projects/7/move "${H[@]}" -d '{"parent_path": ["Palisade Projects"]}'
 curl -s "$A/schedule/log?date=$(date +%F)" "${H[@]}" | jq '.[] | {at_local, event, actor, summary}'
 ```
 

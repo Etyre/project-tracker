@@ -126,6 +126,24 @@ class RebuildIn(BaseModel):
     until: str | None = None
 
 
+class MoveTaskIn(BaseModel):
+    """Where a task goes: an existing project (id or path), or under another task (its project is used)."""
+    project_id: int | None = None
+    project_path: list[str] | None = None
+    create_project: bool = False           # create a missing project_path
+    parent_id: int | None = None           # make it a sub-task of this task
+    after_id: int | None = None            # place it right after this sibling; otherwise last
+    why: str = ""
+
+
+class MoveProjectIn(BaseModel):
+    """Where a project goes: under another project (id or path), or the top level."""
+    parent_id: int | None = None
+    parent_path: list[str] | None = None
+    top_level: bool = False
+    why: str = ""
+
+
 # ============================================================ helpers
 def _day(date: str | None) -> dt.date:
     try:
@@ -248,6 +266,8 @@ def ping(agent: str = Depends(identity)):
             "GET /api/agent/tasks?q=&project_id=": "find open tasks",
             "GET /api/agent/tasks/{id}": "one task with its path, tracked time and notes",
             "PATCH /api/agent/tasks/{id}": "set a task's priority and urgency (importance, deadline, blocking, work_kind...) with `why`; recorded as your note on the task and used by every plan",
+            "POST /api/agent/tasks/{id}/move": "move a task (with its sub-tasks) to another project (project_id | project_path) or under another task (parent_id); recorded as your note",
+            "POST /api/agent/projects/{id}/move": "move a project (with everything in it) under another project (parent_id | parent_path) or to the top level; recorded as your note",
             "POST /api/agent/projects": "add a project (name, parent_id | parent_path, notes)",
             "POST /api/agent/tasks": "add a task (title, project_id | project_path | parent_id, fields, note); no project -> Claude files it",
             "POST /api/agent/quick_add": "free text; Claude turns it into tasks in the right projects",
@@ -346,6 +366,66 @@ def set_priority(tid: int, p: TaskPriorityIn, agent: str = Depends(identity)):
     db.log_plan_event(db.today(), "task", f"{agent} set priority on '{t['title']}': {', '.join(said) or 'a note'}"
                       + (f"; {p.why.strip()[:200]}" if p.why.strip() else ""), {"task_id": tid, "fields": fields, "why": p.why}, actor=f"agent:{agent}")
     return _task_out(db.task(tid))
+
+
+@router.post("/tasks/{tid}/move")
+def move_task(tid: int, m: MoveTaskIn, agent: str = Depends(identity)):
+    """Move a task, sub-tasks included, to another project or under another task. Into Someday / maybe it loses its
+    deadline, priority and blocking tag like a task the user moves there. The move is written as the agent's note."""
+    t = db.task(tid)
+    if not t:
+        raise HTTPException(404, "task not found")
+    parent = None
+    if m.parent_id is not None:
+        parent = db.task(m.parent_id)
+        if not parent:
+            raise HTTPException(404, "parent task not found")
+        pid = parent["project_id"]
+    else:
+        pid = _resolve_project(m.project_id, m.project_path, create=m.create_project)
+        if pid is None:
+            raise HTTPException(400, "give project_id, project_path or parent_id")
+    before = " / ".join(db.display_name(n) for n in db.project_path(t["project_id"]))
+    try:
+        db.move_task(tid, pid, m.parent_id, m.after_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    from . import web
+    if web._someday(pid):
+        db.update_task(tid, deadline=None, importance=None, blocking=0, blocking_for="")
+    after = " / ".join(db.display_name(n) for n in db.project_path(pid)) + (f" under '{parent['title']}'" if parent else "")
+    body = f"moved here from {before}" + (f": {m.why.strip()}" if m.why.strip() else "")
+    db.add_note("task", tid, body, agent)
+    db.log_plan_event(db.today(), "task", f"{agent} moved '{t['title']}' from {before} to {after}"
+                      + (f"; {m.why.strip()[:200]}" if m.why.strip() else ""), {"task_id": tid, "from": before, "to": after, "why": m.why}, actor=f"agent:{agent}")
+    return _task_out(db.task(tid))
+
+
+@router.post("/projects/{pid}/move")
+def move_project(pid: int, m: MoveProjectIn, agent: str = Depends(identity)):
+    """Move a project, with its sub-projects and tasks, under another project or to the top level."""
+    p = db.row("SELECT id, name, parent_id FROM projects WHERE id=? AND archived_at IS NULL", (pid,))
+    if not p:
+        raise HTTPException(404, "project not found (or archived)")
+    if m.top_level:
+        parent = None
+    else:
+        parent = _resolve_project(m.parent_id, m.parent_path)
+        if parent is None:
+            raise HTTPException(400, "give parent_id, parent_path or top_level=true")
+        from . import web
+        if web._someday(parent):
+            raise HTTPException(400, "Someday / maybe holds no projects")
+    before = " / ".join(db.display_name(n) for n in db.project_path(pid))
+    try:
+        db.move_project(pid, parent)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    after = " / ".join(db.display_name(n) for n in db.project_path(pid))
+    db.add_note("project", pid, f"moved here from {before}" + (f": {m.why.strip()}" if m.why.strip() else ""), agent)
+    db.log_plan_event(db.today(), "project", f"{agent} moved project '{db.display_name(p['name'])}' from {before} to {after}"
+                      + (f"; {m.why.strip()[:200]}" if m.why.strip() else ""), {"project_id": pid, "from": before, "to": after, "why": m.why}, actor=f"agent:{agent}")
+    return {"id": pid, "path": db.project_path(pid), "parent_id": parent}
 
 
 # ------------------------------------------------ adding

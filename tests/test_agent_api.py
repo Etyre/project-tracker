@@ -310,3 +310,45 @@ def test_plain_patch_reads_deadline_words_and_deleting_a_task_drops_its_notes():
     nid = client.post("/api/agent/notes", json={"task_id": tid, "body": "ctx"}, headers=H).json()["id"]
     assert client.delete(f"/api/tasks/{tid}").status_code == 200
     assert all(n["id"] != nid for n in client.get("/api/agent/notes", headers=H).json())
+
+
+def test_the_agent_moves_tasks_and_projects_between_projects():
+    work = client.post("/api/agent/projects", json={"name": "Work"}, headers=H).json()["id"]
+    paper = client.post("/api/agent/projects", json={"name": "Paper", "parent_id": work}, headers=H).json()["id"]
+    home = client.post("/api/agent/projects", json={"name": "Home"}, headers=H).json()["id"]
+    tid = client.post("/api/agent/tasks", json={"title": "Draft intro", "project_id": home}, headers=H).json()["id"]
+    sub = client.post("/api/agent/tasks", json={"title": "Find citations", "parent_id": tid}, headers=H).json()["id"]
+    # a task moves by project path, sub-tasks come along, and the move is the agent's signed note
+    r = client.post(f"/api/agent/tasks/{tid}/move", json={"project_path": ["Work", "Paper"], "why": "It is part of the paper."}, headers=H)
+    assert r.status_code == 200, r.text
+    assert r.json()["project_id"] == paper and r.json()["path"] == ["Work", "Paper"]
+    assert db.task(sub)["project_id"] == paper
+    notes = db.notes_for("task", tid)
+    assert notes[-1]["author"] == "Ada" and notes[-1]["body"] == "moved here from Home: It is part of the paper."
+    # under another task: its project is used
+    other = client.post("/api/agent/tasks", json={"title": "Outline", "project_id": home}, headers=H).json()["id"]
+    r = client.post(f"/api/agent/tasks/{sub}/move", json={"parent_id": other}, headers=H)
+    assert r.status_code == 200 and db.task(sub)["parent_id"] == other and db.task(sub)["project_id"] == home
+    assert client.post(f"/api/agent/tasks/{other}/move", json={"parent_id": sub}, headers=H).status_code == 400   # under itself
+    assert client.post(f"/api/agent/tasks/{tid}/move", json={}, headers=H).status_code == 400
+    assert client.post(f"/api/agent/tasks/{tid}/move", json={"project_path": ["Nowhere"]}, headers=H).status_code == 404
+    assert client.post("/api/agent/tasks/999999/move", json={"project_id": home}, headers=H).status_code == 404
+    r = client.post(f"/api/agent/tasks/{tid}/move", json={"project_path": ["Work", "Admin"], "create_project": True}, headers=H)
+    assert r.status_code == 200 and r.json()["path"] == ["Work", "Admin"]
+    # into Someday / maybe the task drops its deadline and priority, like one the user moves there
+    client.patch(f"/api/agent/tasks/{tid}", json={"importance": 4, "deadline": "fri", "blocking": True}, headers=H)
+    r = client.post(f"/api/agent/tasks/{tid}/move", json={"project_id": db.someday_root()}, headers=H)
+    assert r.status_code == 200 and r.json()["deadline"] is None and r.json()["importance"] is None and r.json()["blocking"] == 0
+    # a project moves under another, with everything in it; never under itself; never into Someday
+    r = client.post(f"/api/agent/projects/{home}/move", json={"parent_path": ["Work"], "why": "Home admin is work now."}, headers=H)
+    assert r.status_code == 200 and r.json()["path"] == ["Work", "Home"]
+    assert db.project_path(db.task(other)["project_id"]) == ["Work", "Home"]
+    assert db.notes_for("project", home)[-1]["body"] == "moved here from Home: Home admin is work now."
+    assert client.post(f"/api/agent/projects/{work}/move", json={"parent_id": paper}, headers=H).status_code == 400
+    assert client.post(f"/api/agent/projects/{home}/move", json={"parent_id": db.someday_root()}, headers=H).status_code == 400
+    assert client.post(f"/api/agent/projects/{home}/move", json={}, headers=H).status_code == 400
+    r = client.post(f"/api/agent/projects/{home}/move", json={"top_level": True}, headers=H)
+    assert r.status_code == 200 and r.json()["path"] == ["Home"] and r.json()["parent_id"] is None
+    events = [e for e in db.plan_log(TODAY.isoformat()) if e["event"] in ("task", "project") and "moved" in e["summary"]]
+    assert events and events[-1]["actor"] == "agent:Ada"
+    assert client.post(f"/api/agent/tasks/{tid}/move", json={"project_id": home}, headers=H).status_code == 200   # out of Someday again (shared test DB)

@@ -239,6 +239,16 @@ def update_project(pid: int, **fields) -> None:
     execute(f"UPDATE projects SET {', '.join(k+'=?' for k in sets)} WHERE id=?", (*sets.values(), pid))
 
 
+def move_project(pid: int, parent_id: int | None) -> None:
+    """Put a project under another project (or at the top level with None), last among its new siblings; its
+    sub-projects and tasks come along. Raises ValueError for a move under itself."""
+    if parent_id is not None and (parent_id == pid or parent_id in project_descendants(pid)):
+        raise ValueError("cannot move a project under itself")
+    with _write_lock:
+        pos = _next_position("projects", "parent_id IS ?" if parent_id is None else "parent_id=?", (parent_id,))
+        execute("UPDATE projects SET parent_id=?, position=? WHERE id=?", (parent_id, pos, pid))
+
+
 def reorder_projects(parent_id: int | None, ids: list[int]) -> None:
     with _write_lock:
         for i, pid in enumerate(ids):
