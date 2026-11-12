@@ -57,7 +57,8 @@ class TaskIn(BaseModel):
     create_project: bool = False
     parent_id: int | None = None           # sub-task of this task (its project is used)
     description: str = ""
-    deadline: str | None = None            # YYYY-MM-DD, or "fri", "tomorrow", "nov3"
+    deadline: str | None = None            # the hard deadline: YYYY-MM-DD, or "fri", "tomorrow", "nov3"
+    soft_deadline: str | None = None       # the soft one, ideally by; a task may have both
     blocking: bool = False
     blocking_for: str = ""
     importance: int | None = None          # 1 (low) .. 5 (critical)
@@ -110,7 +111,8 @@ class TaskPriorityIn(BaseModel):
     """What the agent knows about a task's priority and urgency; every field is optional. Each change is written as
     a signed note on the task (with `why`), so the planner and the user both see where it came from."""
     importance: int | None = None          # 1 (low) .. 5 (critical)
-    deadline: str | None = None            # YYYY-MM-DD or "fri", "tomorrow"; "" clears it
+    deadline: str | None = None            # the hard deadline: YYYY-MM-DD or "fri", "tomorrow"; "" clears it
+    soft_deadline: str | None = None       # the soft deadline (ideally by); "" clears it
     blocking: bool | None = None
     blocking_for: str | None = None
     chunkable: bool | None = None
@@ -201,7 +203,7 @@ def _schedule_context(day: dt.date) -> dict:
     windows = scheduler.free_windows(day, events, ws, we)
     now = dt.datetime.now()
     settled = {i["task_id"] for i in (p["items"] if p else []) if i["status"] in ("done", "skipped", "active") and i["task_id"]}
-    cands = [{k: c[k] for k in ("id", "title", "path", "deadline", "blocking", "blocking_for", "importance", "chunkable", "work_kind",
+    cands = [{k: c[k] for k in ("id", "title", "path", "deadline", "soft_deadline", "blocking", "blocking_for", "importance", "chunkable", "work_kind",
                                 "estimate_minutes", "expected_minutes", "score", "agent_notes")}
              | {"description": (c["description"] or "")[:300], "settled_today": c["id"] in settled}
              for c in scheduler.candidates(day)]
@@ -265,7 +267,7 @@ def ping(agent: str = Depends(identity)):
             "GET /api/agent/tree": "projects and open tasks with ids, paths and the notes you added",
             "GET /api/agent/tasks?q=&project_id=": "find open tasks",
             "GET /api/agent/tasks/{id}": "one task with its path, tracked time and notes",
-            "PATCH /api/agent/tasks/{id}": "set a task's priority and urgency (importance, deadline, blocking, work_kind...) with `why`; recorded as your note on the task and used by every plan",
+            "PATCH /api/agent/tasks/{id}": "set a task's priority and urgency (importance, deadline = hard, soft_deadline = ideally by, blocking, work_kind...) with `why`; recorded as your note on the task and used by every plan",
             "POST /api/agent/tasks/{id}/move": "move a task (with its sub-tasks) to another project (project_id | project_path) or under another task (parent_id); recorded as your note",
             "POST /api/agent/projects/{id}/move": "move a project (with everything in it) under another project (parent_id | parent_path) or to the top level; recorded as your note",
             "POST /api/agent/projects": "add a project (name, parent_id | parent_path, notes)",
@@ -326,16 +328,19 @@ def set_priority(tid: int, p: TaskPriorityIn, agent: str = Depends(identity)):
     if p.importance is not None:
         fields["importance"] = max(1, min(5, int(p.importance)))
         said.append(f"importance {fields['importance']}")
-    if p.deadline is not None:
-        if p.deadline.strip():
-            parsed = tags.parse_date(p.deadline)
+    for k, label in (("deadline", "hard deadline"), ("soft_deadline", "soft deadline")):
+        v = getattr(p, k)
+        if v is None:
+            continue
+        if v.strip():
+            parsed = tags.parse_date(v)
             if not parsed:
-                raise HTTPException(400, f"could not read deadline '{p.deadline}' (use YYYY-MM-DD)")
-            fields["deadline"] = parsed
-            said.append(f"deadline {parsed}")
+                raise HTTPException(400, f"could not read {label} '{v}' (use YYYY-MM-DD)")
+            fields[k] = parsed
+            said.append(f"{label} {parsed}")
         else:
-            fields["deadline"] = None
-            said.append("no deadline")
+            fields[k] = None
+            said.append(f"no {label}")
     if p.blocking is not None:
         fields["blocking"] = int(p.blocking)
         said.append("blocking" if p.blocking else "not blocking")
@@ -392,7 +397,7 @@ def move_task(tid: int, m: MoveTaskIn, agent: str = Depends(identity)):
         raise HTTPException(400, str(e))
     from . import web
     if web._someday(pid):
-        db.update_task(tid, deadline=None, importance=None, blocking=0, blocking_for="")
+        db.update_task(tid, deadline=None, soft_deadline=None, importance=None, blocking=0, blocking_for="")
     after = " / ".join(db.display_name(n) for n in db.project_path(pid)) + (f" under '{parent['title']}'" if parent else "")
     body = f"moved here from {before}" + (f": {m.why.strip()}" if m.why.strip() else "")
     db.add_note("task", tid, body, agent)
@@ -445,6 +450,7 @@ def create_task(t: TaskIn, agent: str = Depends(identity)):
         raise HTTPException(400, "title required")
     fields: dict[str, Any] = {
         "description": t.description, "deadline": tags.parse_date(t.deadline) if t.deadline else None,
+        "soft_deadline": tags.parse_date(t.soft_deadline) if t.soft_deadline else None,
         "blocking": int(t.blocking), "blocking_for": t.blocking_for,
         "importance": None if t.importance is None else max(1, min(5, int(t.importance))),
         "chunkable": int(t.chunkable), "estimate_minutes": t.estimate_minutes, "source": "agent",
@@ -454,6 +460,8 @@ def create_task(t: TaskIn, agent: str = Depends(identity)):
     }
     if t.deadline and not fields["deadline"]:
         raise HTTPException(400, f"could not read deadline '{t.deadline}' (use YYYY-MM-DD)")
+    if t.soft_deadline and not fields["soft_deadline"]:
+        raise HTTPException(400, f"could not read soft_deadline '{t.soft_deadline}' (use YYYY-MM-DD)")
     fields.update(tagged)
     note = ""
     if t.parent_id:
@@ -511,7 +519,7 @@ def quick_add(q: QuickAddIn, agent: str = Depends(identity)):
         if pid is None:
             pid = db.ensure_project_path(["Inbox"])
         title, tagged = tags.parse_tags(t["title"])
-        tid = db.create_task(pid, title, **{"description": t["description"], "deadline": t["deadline"],
+        tid = db.create_task(pid, title, **{"description": t["description"], "deadline": t["deadline"], "soft_deadline": t.get("soft_deadline"),
                              "blocking": int(t["blocking"]), "blocking_for": t["blocking_for"],
                              "importance": None if t["importance"] is None else max(1, min(5, int(t["importance"]))),
                              "estimate_minutes": t["estimate_minutes"], "chunkable": int(t["chunkable"]), "source": "agent", **tagged})

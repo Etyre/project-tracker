@@ -157,7 +157,8 @@ QUICK_ADD_SCHEMA = {
                                      "description": "Path of project names from the top level down. Reuse existing names exactly; a new trailing name creates a sub-project."},
                     "title": {"type": "string"},
                     "description": {"type": "string"},
-                    "deadline": {"type": ["string", "null"], "description": "YYYY-MM-DD or null"},
+                    "deadline": {"type": ["string", "null"], "description": "the hard deadline, YYYY-MM-DD, or null"},
+                    "soft_deadline": {"type": ["string", "null"], "description": "the soft deadline (ideally by), YYYY-MM-DD, or null"},
                     "blocking": {"type": "boolean"},
                     "blocking_for": {"type": "string"},
                     "importance": {"type": ["integer", "null"]},
@@ -167,7 +168,7 @@ QUICK_ADD_SCHEMA = {
                     "reading": {"type": "boolean"},
                     "writing": {"type": "boolean"},
                 },
-                "required": ["project_path", "title", "description", "deadline", "blocking", "blocking_for",
+                "required": ["project_path", "title", "description", "deadline", "soft_deadline", "blocking", "blocking_for",
                              "importance", "estimate_minutes", "chunkable", "work_kind", "reading", "writing"],
                 "additionalProperties": False,
             },
@@ -190,8 +191,12 @@ spells them). Only the last name may be new, and only for a genuinely new sub-pr
 Field guidance:
 - title: short imperative phrase, as the user would write it. Keep their wording where it is already a title.
 - description: context, links, names, anything in the note that is not the title. Empty string if nothing.
-- deadline: only if the note states or strongly implies a date ("by Friday", "before the 3rd"). Resolve relative dates
-  against today's date given below. Otherwise null.
+- deadline: the HARD deadline, only if the note states or strongly implies a date that cannot be pushed (someone
+  else's date, a meeting, a flight, a filing, "must be in by", "no later than"). Resolve relative dates against
+  today's date given below. Otherwise null.
+- soft_deadline: the SOFT one, the user's own aim or preference ("ideally by Friday", "would like to", "aim for",
+  "try to get it done this week"). A task may have both (aim for Wednesday, must be in by Friday). Otherwise null.
+  A plain "by Friday" with nothing to say which it is goes in deadline.
 - blocking: true only if someone else is waiting on this ("X needs this", "send to Y so they can start").
 - importance: null unless the note signals it (default: no particular priority). 1 trivial, 2 low, 3 normal,
   4 high, 5 critical. Words like "urgent", "important", "ASAP" and the presence of a blocked person move it up.
@@ -216,6 +221,9 @@ windows (meetings are added by the system; do not emit them).
 Hard constraints:
 1. Every block lies inside one free window; blocks never overlap; times are HH:MM in the user's local time.
 2. Prioritise (a) tasks that block other people, (b) deadlines at risk, (c) high importance. Then age.
+   A task may carry a `deadline` (hard: it cannot be pushed; plan so it is met with margin, even at the cost of other
+   work) and/or a `soft_deadline` (the user's ideal or preference: aim for it, but it yields to hard deadlines,
+   blocking work and higher importance).
 3. Everything must fit: never schedule more than the time available. Leave the rest for another day.
 4. A task marked not-chunkable needs a single block at least as long as its estimate; chunkable tasks may be split
    or given a partial block (say so in the note).

@@ -46,7 +46,8 @@ class TaskIn(BaseModel):
     parent_id: int | None = None          # make it a sub-task of this task (project follows the parent)
     after_id: int | None = None           # insert right after this sibling instead of at the end
     description: str = ""
-    deadline: str | None = None
+    deadline: str | None = None           # the hard deadline: cannot move
+    soft_deadline: str | None = None      # ideally by: a preference; a task may have both
     blocking: bool = False
     blocking_for: str = ""
     importance: int | None = None         # None = no particular priority
@@ -61,6 +62,7 @@ class TaskPatch(BaseModel):
     title: str | None = None
     description: str | None = None
     deadline: str | None = None
+    soft_deadline: str | None = None
     clear_deadline: bool = False
     blocking: bool | None = None
     blocking_for: str | None = None
@@ -640,6 +642,11 @@ def create_app() -> FastAPI:
                 d[flag] = int(d[flag])
         if d["importance"] is not None:
             d["importance"] = max(1, min(5, d["importance"]))
+        for k in ("deadline", "soft_deadline"):
+            if d[k]:
+                d[k] = tags.parse_date(d[k])
+                if not d[k]:
+                    raise HTTPException(400, f"could not read {k.replace('_', ' ')} (use YYYY-MM-DD)")
         if not _someday(d["project_id"]):
             d["title"], tagged = tags.parse_tags(d["title"])   # "#p1 #due:fri #blocking:Sam" typed in the line
             d.update(tagged)
@@ -663,11 +670,12 @@ def create_app() -> FastAPI:
             fields["estimate_minutes"] = None
         if fields.get("importance") is not None:
             fields["importance"] = max(1, min(5, int(fields["importance"])))
-        if fields.get("deadline"):   # "fri", "tomorrow", "nov3" are read the same way as in a title tag or the agent API
-            parsed = tags.parse_date(fields["deadline"])
-            if not parsed:
-                raise HTTPException(400, f"could not read deadline '{fields['deadline']}' (use YYYY-MM-DD)")
-            fields["deadline"] = parsed
+        for k in ("deadline", "soft_deadline"):   # "fri", "tomorrow", "nov3" are read the same way as in a title tag or the agent API
+            if fields.get(k):
+                parsed = tags.parse_date(fields[k])
+                if not parsed:
+                    raise HTTPException(400, f"could not read {k.replace('_', ' ')} '{fields[k]}' (use YYYY-MM-DD)")
+                fields[k] = parsed
         if fields.get("title") is not None and not fields["title"].strip():
             raise HTTPException(400, "title required")
         if fields.get("title") and not _someday(db.task(tid)["project_id"]):
@@ -814,7 +822,7 @@ def create_app() -> FastAPI:
         if a.text and a.text.strip():
             _, tagged = tags.parse_tags("x " + a.text.strip())
             fields.update(tagged)
-        allowed = {"deadline", "blocking", "blocking_for", "importance", "chunkable", "work_kind", "reading", "writing"}
+        allowed = {"deadline", "soft_deadline", "blocking", "blocking_for", "importance", "chunkable", "work_kind", "reading", "writing"}
         for k, v in (a.fields or {}).items():
             if k in allowed:
                 fields[k] = v
@@ -917,7 +925,7 @@ def create_app() -> FastAPI:
             if pid is None:                                   # Claude named a top level that does not exist: never a new tree
                 pid, where = db.ensure_project_path(["Inbox"]), f"in Inbox ({where}; file it by hand)"
             title, tagged = tags.parse_tags(t["title"])       # explicit tags in the note win over Claude's reading
-            tid = db.create_task(pid, title, **{"description": t["description"], "deadline": t["deadline"],
+            tid = db.create_task(pid, title, **{"description": t["description"], "deadline": t["deadline"], "soft_deadline": t.get("soft_deadline"),
                                  "blocking": int(t["blocking"]), "blocking_for": t["blocking_for"],
                                  "importance": None if t["importance"] is None else max(1, min(5, int(t["importance"]))),
                                  "estimate_minutes": t["estimate_minutes"], "chunkable": int(t["chunkable"]), "source": "quick_add", **tagged})

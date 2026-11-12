@@ -29,6 +29,8 @@ def _tags(t: dict) -> str:
         tags.append(f"#p{6 - int(t['importance'])}")
     if t.get("deadline"):
         tags.append(f"#due:{str(t['deadline'])[:10]}")
+    if t.get("soft_deadline"):
+        tags.append(f"#soft:{str(t['soft_deadline'])[:10]}")
     if t.get("blocking"):
         tags.append("#blocking" + (f":{t['blocking_for']}" if t.get("blocking_for") else ""))
     if t.get("chunkable") == 0:

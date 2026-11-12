@@ -55,8 +55,9 @@ on the lines: you navigate with the arrow keys and type.
   and notes, and a line that starts with one to six hashes (`## Big step`) is shown as a heading of that size.
   The raw text shows only while you edit it. Lines wrap while you type, so a long line stays fully visible.
 - Tags typed in a line set its fields and disappear from the title: `#p1` to `#p5` for priority (`#p1`
-  highest), `#today`, `#tomorrow` or `#due:fri` / `#due:nov3` / `#due:2026-11-03` for the deadline,
-  `#blocking` or `#blocking:Sam`, `#onesitting`, and `#focus` or `#task` for the kind of work. `#nodue`, `#p0`,
+  highest), `#today`, `#tomorrow` or `#due:fri` / `#due:nov3` / `#due:2026-11-03` for the hard deadline,
+  `#soft:fri` / `#aim:nov3` / `#ideally:2026-11-03` for the soft one, `#blocking` or `#blocking:Sam`,
+  `#onesitting`, and `#focus` or `#task` for the kind of work. `#nodue`, `#nosoft`, `#p0`,
   `#notblocking` and `#nokind` clear those again. They
   work in pasted outlines and the quick-add bar too; any other `#tag` stays in the text.
 - Shift+Up / Shift+Down (or Shift+click) select several lines; Cmd+C copies them, with everything under
@@ -71,9 +72,15 @@ on the lines: you navigate with the arrow keys and type.
   line goes into the text at the cursor, the rest become lines below it.
 - Drag the handle to reorder; rows move live under the pointer, and dragging to the right over a row nests
   under it.
-- A task's title line carries its deadline, a "blocking" tag and importance dots when set (there is no
+- A task's title line carries its deadlines, a "blocking" tag and importance dots when set (there is no
   priority by default); its notes box has a "dates & priority…" link for the rest. Time estimates are never
   typed: the app forecasts one when a task is created and learns from tracked time.
+- **Two kinds of deadline.** A *hard* deadline ("due Fri") cannot move: someone else's date, a meeting, a filing.
+  A *soft* deadline ("aim Fri") is your own ideal or preference. A task may have either or both (aim for Wednesday,
+  must be in by Friday). The planner treats them differently: a hard deadline is met with margin even at the cost
+  of other work, a soft one is aimed for but yields to hard deadlines, blocking work and higher importance. In the
+  priority score a hard date counts in full plus a step, a soft date for about half; with both, the more pressing
+  one counts. Quick add asks Claude to tell them apart ("by Friday" is hard, "ideally this week" is soft).
 - Every task is also judged to be a quick **task** (done in minutes, fits a gap) or **focused work** (needs a
   stretch of concentration), shown as a small tag on the line. Claude makes the call when the task is created
   (quick add, the outline, the agent) and works through older tasks in the background; `#focus` / `#task` in the
@@ -155,7 +162,7 @@ in …" lines of the notice at the bottom are links:
 click one and the Projects page opens zoomed into that project, with the new task selected and its notes open.
 
 **The schedule** is internal. It is built at the start of the work day (and on demand) from the free windows
-between meetings, the prioritised open tasks (blocking > deadline > importance > age, with estimates
+between meetings, the prioritised open tasks (blocking > hard deadline > soft deadline > importance > age, with estimates
 multiplied by your measured actual/estimate ratio), the checklist, the exercise sheet and the rules doc. Claude
 does the packing when configured; a deterministic packer is the fallback and the validator (anything outside
 the free windows is clamped or dropped).
@@ -311,9 +318,9 @@ Mac may call the agent API (the server only listens on 127.0.0.1). The agent nam
 | `GET /api/agent/tasks?q=&project_id=` / `GET /api/agent/tasks/{id}` | find open tasks; one task with its path, tracked minutes and notes |
 | `POST /api/agent/tasks/{id}/move` | `{project_id | project_path | parent_id, create_project, after_id, why}`: move a task, sub-tasks included, to another project or under another task (its project is used). Into Someday / maybe it drops its deadline, priority and blocking tag. Recorded as the agent's note on the task ("moved here from Home: …") |
 | `POST /api/agent/projects/{id}/move` | `{parent_id | parent_path | top_level: true, why}`: move a project with everything in it under another project or to the top level; never under itself, never into Someday / maybe. Recorded as the agent's note on the project |
-| `PATCH /api/agent/tasks/{id}` | `{importance 1-5, deadline ("2026-11-20", "fri", "" clears), blocking, blocking_for, chunkable, work_kind ("task" / "focus" / "" back to Claude), reading, writing, why}`: the agent's priority and urgency for a task. Applied to the fields every plan is built from and recorded as the agent's note on the task (the `why` first) |
+| `PATCH /api/agent/tasks/{id}` | `{importance 1-5, deadline ("2026-11-20", "fri", "" clears: the hard one), soft_deadline (ideally by, same forms), blocking, blocking_for, chunkable, work_kind ("task" / "focus" / "" back to Claude), reading, writing, why}`: the agent's priority and urgency for a task. Applied to the fields every plan is built from and recorded as the agent's note on the task (the `why` first) |
 | `POST /api/agent/projects` | `{name, parent_id | parent_path, notes}`; the parent must exist |
-| `POST /api/agent/tasks` | `{title, project_id | project_path | parent_id, description, deadline, blocking, blocking_for, importance, chunkable, note}`; hashtags in the title work (`#p2 #due:fri`); `note` is attached as the agent's note straight away; with no project given Claude files it like the quick-add bar (Inbox without Claude); `create_project: true` creates a missing path |
+| `POST /api/agent/tasks` | `{title, project_id | project_path | parent_id, description, deadline (hard), soft_deadline (ideally by), blocking, blocking_for, importance, chunkable, note}`; hashtags in the title work (`#p2 #due:fri`); `note` is attached as the agent's note straight away; with no project given Claude files it like the quick-add bar (Inbox without Claude); `create_project: true` creates a missing path |
 | `POST /api/agent/quick_add` | `{text}`: Claude turns free text into tasks in the right projects |
 | `POST /api/agent/notes` | `{task_id | project_id, body}`: add context to any item; `GET /api/agent/notes?task_id=` lists, `DELETE /api/agent/notes/{id}` takes one back |
 | `GET /api/agent/schedule?date=` | what the agent needs to set a day: the current plan with statuses (and `agent_plan`, the schedule the agent last set for it), free windows between meetings, prioritised candidate tasks with calibrated estimates and the agent's notes, routines, the day's exercise, your rules document, the day's instructions and the `standing_guidance`, the day's `planning_log`, and `since_your_last_visit`: every planning event (any day) since this agent, by name, last called this |
@@ -350,7 +357,7 @@ curl -s "$A/schedule/log?date=$(date +%F)" "${H[@]}" | jq '.[] | {at_local, even
 | `tracker/scheduler.py` | free windows, priorities, the deterministic packer, drift detection, schedules, instructions and guidance set from outside, the planning log entries |
 | `tracker/llm.py` | the one Claude call site (`structured()`), every prompt and JSON schema; LLM-inbox wiring |
 | `tracker/config.py` | `config.toml` + defaults, Keychain / env secrets, the log file, `save()` for the Settings page |
-| `tracker/tags.py` | `#p2 #due:fri #blocking:Sam …` parsing |
+| `tracker/tags.py` | `#p2 #due:fri #soft:wed #blocking:Sam …` parsing |
 | `tracker/estimates.py` | actual-vs-estimate calibration from tracked time |
 | `tracker/exercise.py` | the exercise rules engine (cadence, gaps, never-back-to-back, fill-ins) and Claude's review |
 | `tracker/calendar_feed.py` | iCal feeds: recurring events expanded, busy windows |

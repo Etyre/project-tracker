@@ -33,16 +33,23 @@ def priority_score(t: dict, today: dt.date) -> float:
     s = float(t["importance"] if t.get("importance") is not None else 3) * 10   # unset = neutral
     if t["blocking"]:
         s += 25
-    if t.get("deadline"):
-        try:
-            d = dt.date.fromisoformat(t["deadline"][:10])
-            days = (d - today).days
-            s += 40 if days < 0 else 30 if days == 0 else 20 if days == 1 else 12 if days <= 3 else 6 if days <= 7 else 2
-        except ValueError:
-            pass
+    s += max(_deadline_urgency(t.get("deadline"), today, hard=True), _deadline_urgency(t.get("soft_deadline"), today, hard=False))
     age_days = (dt.datetime.now().timestamp() - t["created_at"]) / 86400
     s += min(10.0, age_days / 7)
     return s
+
+
+def _deadline_urgency(date: str | None, today: dt.date, hard: bool) -> float:
+    """How much a date adds to a task's score. A hard deadline cannot move: full weight and a step up. A soft one
+    is the user's ideal, so it counts for less. A task with both gets the larger of the two."""
+    if not date:
+        return 0.0
+    try:
+        days = (dt.date.fromisoformat(date[:10]) - today).days
+    except ValueError:
+        return 0.0
+    urgency = 40 if days < 0 else 30 if days == 0 else 20 if days == 1 else 12 if days <= 3 else 6 if days <= 7 else 2
+    return urgency + 10 if hard else urgency * 0.6
 
 
 def free_windows(day: dt.date, events: list[dict], start_min: int, end_min: int) -> list[tuple[int, int]]:
@@ -249,7 +256,7 @@ def build(day: dt.date | None = None, from_now: bool = False, until: str | None 
             "meetings": [{"title": e["title"], "start": e["start"].strftime("%H:%M"), "end": e["end"].strftime("%H:%M")}
                          for e in events if not e["all_day"]],
             "all_day_events": [e["title"] for e in events if e["all_day"]],
-            "tasks": [{k: t[k] for k in ("id", "title", "path", "deadline", "blocking", "blocking_for", "importance",
+            "tasks": [{k: t[k] for k in ("id", "title", "path", "deadline", "soft_deadline", "blocking", "blocking_for", "importance",
                                          "chunkable", "expected_minutes", "score")} | {"work_kind": t.get("work_kind")}
                       | {"description": (t["description"] or "")[:300], "age_days": int((now.timestamp() - t["created_at"]) / 86400)}
                       | ({"agent_notes": [n[:300] for n in t["agent_notes"][-5:]]} if t.get("agent_notes") else {})
@@ -306,7 +313,7 @@ def build(day: dt.date | None = None, from_now: bool = False, until: str | None 
                        "instructions": instructions or None, "guidance": standing or None,
                        "exercise": {"kind": exercise, "minutes": ex_minutes, "done": exercise_done},
                        "routines": [r["title"] for r in routines],
-                       "candidates": [{k: t.get(k) for k in ("id", "title", "score", "expected_minutes", "work_kind", "deadline", "blocking", "importance")} for t in tasks[:25]],
+                       "candidates": [{k: t.get(k) for k in ("id", "title", "score", "expected_minutes", "work_kind", "deadline", "soft_deadline", "blocking", "importance")} for t in tasks[:25]],
                        "assistant_schedule": baseline and {"set_by": baseline.get("source"), "blocks": baseline["blocks"]},
                        "items": _log_items(items)}, actor=actor)
     return db.plan(date)

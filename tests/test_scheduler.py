@@ -954,3 +954,28 @@ def test_stale_exercise_decision_is_redecided():
     assert exercise._from_rules({"title": "yoga", "reason": "Claude overrode the rules", "overrode": "squats"}, rules)
     assert exercise._from_rules({"title": "run"}, exercise.parse_rules(""))   # no rules yet: anything stands
     assert tags.parse_tags("Write up #deadline:tomorrow", today=dt.date(2026, 11, 4)) == ("Write up", {"deadline": "2026-11-05"})
+
+
+def test_hard_and_soft_deadlines():
+    from tracker import tags
+    wed = dt.date(2026, 10, 28)
+    title, f = tags.parse_tags("Grant report #soft:fri #due:nov3", today=wed)
+    assert title == "Grant report" and f == {"soft_deadline": "2026-10-30", "deadline": "2026-11-03"}   # both at once
+    assert tags.parse_tags("x #aim:fri", today=wed)[1] == {"soft_deadline": "2026-10-30"}
+    assert tags.parse_tags("x #ideally:nov3", today=wed)[1] == {"soft_deadline": "2026-11-03"}
+    assert tags.parse_tags("x #hard:fri", today=wed)[1] == {"deadline": "2026-10-30"}
+    assert tags.parse_tags("x #nosoft #nodue", today=wed)[1] == {"soft_deadline": None, "deadline": None}
+    today = dt.date.today()
+    base = {"importance": 3, "blocking": 0, "created_at": dt.datetime.now().timestamp()}
+    hard = scheduler.priority_score({**base, "deadline": today.isoformat()}, today)
+    soft = scheduler.priority_score({**base, "soft_deadline": today.isoformat()}, today)
+    none = scheduler.priority_score(base, today)
+    both = scheduler.priority_score({**base, "deadline": (today + dt.timedelta(days=10)).isoformat(), "soft_deadline": today.isoformat()}, today)
+    assert hard > soft > none                      # a hard deadline today outranks a soft one today
+    assert abs(both - soft) < 0.01                 # with both, the more pressing date counts (age ticks between calls)
+    pid = db.create_project("Deadlines")
+    tid = db.create_task(pid, "Both", deadline="2026-12-01", soft_deadline="2026-11-20", estimate_minutes=30)
+    t = db.task(tid)
+    assert t["deadline"] == "2026-12-01" and t["soft_deadline"] == "2026-11-20"
+    from tracker import snapshot
+    assert "#due:2026-12-01" in snapshot._tags(t) and "#soft:2026-11-20" in snapshot._tags(t)

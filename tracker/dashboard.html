@@ -271,19 +271,21 @@ const fmtDay = ts => ts ? new Date(ts * 1000).toLocaleDateString([], {dateStyle:
 const hms = s => {const h = Math.floor(s / 3600), m = Math.floor(s % 60 / 1) && Math.floor((s % 3600) / 60), sec = s % 60; return (h ? h + ':' : '') + String(Math.floor((s % 3600) / 60)).padStart(2, '0') + ':' + String(sec).padStart(2, '0');};
 let toastT; const toast = (m, ms = 3500) => {const t = $('#toast'); t.innerHTML = m; t.style.display = 'block'; clearTimeout(toastT); toastT = setTimeout(() => t.style.display = 'none', ms);};
 const todayISO = () => {const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);};   // local date, not UTC
-function deadlineChip(d) {
+// Two kinds of date: the hard deadline ("due fri": it cannot move) and the soft one ("aim fri": ideally by then).
+function deadlineChip(d, soft) {
   if (!d) return '';
   const days = Math.round((new Date(d.slice(0, 10)) - new Date(todayISO())) / 86400000);
-  const cls = days < 0 ? 'bad' : days <= 1 ? 'warn' : '';
-  const label = days < 0 ? `overdue ${-days}d` : days === 0 ? 'due today' : days === 1 ? 'due tomorrow' : `due ${d.slice(0, 10)}`;
+  const cls = soft ? (days < 0 ? 'warn' : '') : days < 0 ? 'bad' : days <= 1 ? 'warn' : '';
+  const word = soft ? 'aim' : 'due';
+  const label = days < 0 ? `${soft ? 'aimed' : 'overdue'} ${-days}d${soft ? ' ago' : ''}` : days === 0 ? `${word} today` : days === 1 ? `${word} tomorrow` : `${word} ${d.slice(0, 10)}`;
   // hover shows the actual date behind a relative label ("due tomorrow" -> "Due Friday, Nov 6, 2026")
   const full = new Date(d.slice(0, 10) + 'T00:00').toLocaleDateString([], {weekday: 'long', month: 'short', day: 'numeric', year: 'numeric'});
-  return `<span class="chip ${cls}" title="Due ${full}">${label}</span>`;
+  return `<span class="chip ${cls}" title="${soft ? 'Soft deadline, ideally by' : 'Hard deadline: cannot move.'} ${full}">${label}</span>`;
 }
 const impDots = n => n ? `<span class="dots" title="importance ${n}/5">${'●'.repeat(n)}${'○'.repeat(5 - n)}</span>` : '';
 const readingChip = t => (t.reading === 1 ? '<span class="chip kind" title="Mainly reading: the daily reading card offers it">reading</span>' : '') + (t.writing === 1 ? '<span class="chip kind" title="Mainly writing">writing</span>' : '');
 const kindChip = t => t.work_kind === 'focus' ? '<span class="chip kind focus" title="Focused work: wants a long uninterrupted block">focused work</span>' : t.work_kind === 'task' ? '<span class="chip kind" title="A quick task: fits a gap">task</span>' : '';
-const chips = t => `${deadlineChip(t.deadline)}${t.blocking ? `<span class="chip bad">blocking${t.blocking_for ? ': ' + esc(t.blocking_for) : ''}</span>` : ''}${impDots(t.importance)}${kindChip(t)}${readingChip(t)}${t.source === 'agent' ? '<span class="chip agent" title="Added by your assistant agent">agent</span>' : ''}`;
+const chips = t => `${deadlineChip(t.deadline)}${deadlineChip(t.soft_deadline, true)}${t.blocking ? `<span class="chip bad">blocking${t.blocking_for ? ': ' + esc(t.blocking_for) : ''}</span>` : ''}${impDots(t.importance)}${kindChip(t)}${readingChip(t)}${t.source === 'agent' ? '<span class="chip agent" title="Added by your assistant agent">agent</span>' : ''}`;
 // Context added by the assistant agent: kept apart from your own notes and always signed, so what came from it is plain
 const fmtWhen = ts => new Date(ts * 1000).toLocaleString(undefined, {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'});
 const addedNotesHTML = notes => (notes || []).length ? `<div class="added">${notes.map(n => `<div class="note"><div>${linkify(n.body)}</div><div class="who">${esc(n.author)} · ${fmtWhen(n.created_at)}</div></div>`).join('')}</div>` : '';
@@ -872,9 +874,9 @@ async function taskToProject(id) {
 // Someday / maybe: a flat list of items outside the schedule, held by a hidden root project
 async function taskToSomeday(id) {   // a task becomes a loose Someday / maybe item (sub-tasks come along); its deadline and priority go, undo brings all of it back
   const row = document.querySelector(`.task[data-tid="${id}"]`); const slot = row ? slotOf(row) : null; const t = findTask(id);
-  const was = t ? {deadline: t.deadline || null, importance: t.importance ?? null, blocking: !!t.blocking, blocking_for: t.blocking_for || ''} : {};
+  const was = t ? {deadline: t.deadline || null, soft_deadline: t.soft_deadline || null, importance: t.importance ?? null, blocking: !!t.blocking, blocking_for: t.blocking_for || ''} : {};
   try {const root = (await api('/someday_root')).id;
-    await api(`/tasks/${id}`, 'PATCH', {project_id: root, parent_id: null, deadline: null, importance: null, blocking: false, blocking_for: ''});
+    await api(`/tasks/${id}`, 'PATCH', {project_id: root, parent_id: null, deadline: null, soft_deadline: null, importance: null, blocking: false, blocking_for: ''});
     pushUndo('someday', () => api(`/tasks/${id}`, 'PATCH', {...(slot || {}), ...was}));
     toast('Moved to Someday / maybe'); renderProjects();} catch (e) {toast(esc(e.message));}
 }
@@ -1166,7 +1168,7 @@ async function deleteLine(L) {   // throws (with a readable message) when the li
   if (L.kind === 'task') {
     const old = findTask(L.id), slot = slotOf(L.row);
     await api(`/tasks/${L.id}`, 'DELETE');
-    if (old) pushUndo(`delete "${old.title}"`, () => api('/tasks', 'POST', {...slot, title: old.title, description: old.description || '', deadline: old.deadline, blocking: !!old.blocking, blocking_for: old.blocking_for || '', importance: old.importance, chunkable: !!old.chunkable, work_kind: old.work_kind || null, reading: old.reading == null ? null : old.reading === 1, writing: old.writing == null ? null : old.writing === 1}));
+    if (old) pushUndo(`delete "${old.title}"`, () => api('/tasks', 'POST', {...slot, title: old.title, description: old.description || '', deadline: old.deadline, soft_deadline: old.soft_deadline || null, blocking: !!old.blocking, blocking_for: old.blocking_for || '', importance: old.importance, chunkable: !!old.chunkable, work_kind: old.work_kind || null, reading: old.reading == null ? null : old.reading === 1, writing: old.writing == null ? null : old.writing === 1}));
   } else {
     const p = findProject(L.id);
     await api(`/projects/${L.id}/delete_empty`, 'POST');
@@ -1332,7 +1334,8 @@ function openBulkModal() {
   const el = document.createElement('div'); el.className = 'modal'; const keep = '<option value="">leave as is</option>';
   el.innerHTML = `<div class="card"><h3 style="margin-top:0">Edit ${ids.length} task${ids.length === 1 ? '' : 's'}</h3>
     <form class="form" onsubmit="return false">
-      <label>Deadline</label><div class="row" style="flex-wrap:nowrap"><input name="deadline" type="date" style="flex:1"> <label class="muted" style="font-weight:400;white-space:nowrap"><input name="nodeadline" type="checkbox" style="width:auto"> clear</label></div>
+      <label>Hard deadline</label><div class="row" style="flex-wrap:nowrap"><input name="deadline" type="date" style="flex:1" title="Cannot move"> <label class="muted" style="font-weight:400;white-space:nowrap"><input name="nodeadline" type="checkbox" style="width:auto"> clear</label></div>
+      <label>Soft deadline</label><div class="row" style="flex-wrap:nowrap"><input name="soft_deadline" type="date" style="flex:1" title="Ideally by: a preference"> <label class="muted" style="font-weight:400;white-space:nowrap"><input name="nosoft" type="checkbox" style="width:auto"> clear</label></div>
       <label>Importance</label><select name="importance">${keep}<option value="none">none in particular</option>${[5, 4, 3, 2, 1].map(n => `<option value="${n}">${n}${n === 5 ? ' (critical)' : n === 1 ? ' (trivial)' : ''}</option>`).join('')}</select>
       <label>Blocking</label><div class="row"><select name="blocking">${keep}<option value="1">blocking</option><option value="0">not blocking</option></select> <input name="blocking_for" placeholder="who is waiting?" data-draft="bulk:blocking_for"></div>
       <label>Shape</label><select name="chunkable">${keep}<option value="1">can be split across sittings</option><option value="0">one sitting</option></select>
@@ -1347,6 +1350,7 @@ function openBulkModal() {
   el.querySelector('form').onsubmit = async () => {
     const f = new FormData(el.querySelector('form')), fields = {};
     if (f.get('nodeadline') === 'on') fields.deadline = null; else if (f.get('deadline')) fields.deadline = f.get('deadline');
+    if (f.get('nosoft') === 'on') fields.soft_deadline = null; else if (f.get('soft_deadline')) fields.soft_deadline = f.get('soft_deadline');
     if (f.get('importance')) fields.importance = f.get('importance') === 'none' ? null : +f.get('importance');
     if (f.get('blocking')) {fields.blocking = f.get('blocking') === '1'; if (!fields.blocking) fields.blocking_for = '';}
     if (f.get('blocking_for')) {fields.blocking_for = f.get('blocking_for'); fields.blocking = true;}
@@ -1587,7 +1591,8 @@ function openTaskModal(t) {
     <form class="form" onsubmit="return false">
       <label>Title</label><input name="title" value="${esc(t.title)}" required autofocus data-draft="edit:${t.id}:title">
       <label>Project</label><select name="project_id">${opts}</select>
-      <label>Deadline</label><input name="deadline" type="date" value="${esc((t.deadline || '').slice(0, 10))}">
+      <label>Hard deadline</label><div><input name="deadline" type="date" value="${esc((t.deadline || '').slice(0, 10))}"> <span class="muted">cannot move</span></div>
+      <label>Soft deadline</label><div><input name="soft_deadline" type="date" value="${esc((t.soft_deadline || '').slice(0, 10))}"> <span class="muted">ideally by: a preference</span></div>
       <label>Blocking</label><div class="row"><input name="blocking" type="checkbox" ${t.blocking ? 'checked' : ''} style="width:auto"> <input name="blocking_for" placeholder="who is waiting?" value="${esc(t.blocking_for || '')}" data-draft="edit:${t.id}:blocking_for"></div>
       <label>Importance</label><select name="importance"><option value="" ${t.importance ? '' : 'selected'}>none in particular</option>${[1, 2, 3, 4, 5].map(n => `<option value="${n}" ${n === t.importance ? 'selected' : ''}>${n}${n === 5 ? ' (critical)' : n === 1 ? ' (trivial)' : ''}</option>`).join('')}</select>
       <label>Shape</label><div><input name="chunkable" type="checkbox" ${t.chunkable ? 'checked' : ''} style="width:auto"> <span class="muted">can be split across sittings</span></div>
@@ -1605,11 +1610,11 @@ function openTaskModal(t) {
   el.querySelector('form').onsubmit = async () => {
     const f = new FormData(el.querySelector('form'));
     const body = {title: f.get('title'), project_id: +f.get('project_id'), description: f.get('description'),
-      deadline: f.get('deadline') || null, blocking: f.get('blocking') === 'on', blocking_for: f.get('blocking_for'),
+      deadline: f.get('deadline') || null, soft_deadline: f.get('soft_deadline') || null, blocking: f.get('blocking') === 'on', blocking_for: f.get('blocking_for'),
       importance: f.get('importance') ? +f.get('importance') : null, chunkable: f.get('chunkable') === 'on', work_kind: f.get('work_kind') || '', reading: f.get('reading') === 'on', writing: f.get('writing') === 'on'};
     try {
       const r = await api(`/tasks/${t.id}`, 'PATCH', body);
-      const before = Object.fromEntries(Object.keys(body).map(k => [k, k === 'description' || k === 'blocking_for' || k === 'work_kind' ? (t[k] || '') : k === 'blocking' || k === 'chunkable' ? !!t[k] : k === 'reading' || k === 'writing' ? t[k] === 1 : k === 'deadline' ? (t.deadline || null) : t[k]]));
+      const before = Object.fromEntries(Object.keys(body).map(k => [k, k === 'description' || k === 'blocking_for' || k === 'work_kind' ? (t[k] || '') : k === 'blocking' || k === 'chunkable' ? !!t[k] : k === 'reading' || k === 'writing' ? t[k] === 1 : k === 'deadline' || k === 'soft_deadline' ? (t[k] || null) : t[k]]));
       pushUndo('edit', () => api(`/tasks/${t.id}`, 'PATCH', before));
       Draft.clearPrefix(`edit:${t.id}:`);
       if (r.linear_error) toast('Saved; Linear: ' + esc(r.linear_error), 6000);

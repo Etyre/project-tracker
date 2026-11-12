@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     parent_id INTEGER REFERENCES tasks(id),          -- sub-task of another task, if any
     title TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
-    deadline TEXT,                                   -- ISO date (YYYY-MM-DD) or datetime
+    deadline TEXT,                                   -- the hard deadline (YYYY-MM-DD): cannot move
+    soft_deadline TEXT,                              -- the soft one: ideally by this date, a preference
     blocking INTEGER NOT NULL DEFAULT 0,             -- 1 = someone is waiting on this
     blocking_for TEXT NOT NULL DEFAULT '',
     importance INTEGER,                              -- 1 (low) .. 5 (critical); NULL = no particular priority
@@ -164,6 +165,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.commit()
     if "writing" not in cols:
         conn.execute("ALTER TABLE tasks ADD COLUMN writing INTEGER")
+        conn.commit()
+    if "soft_deadline" not in cols:
+        conn.execute("ALTER TABLE tasks ADD COLUMN soft_deadline TEXT")
         conn.commit()
         cols = {r["name"]: r for r in conn.execute("PRAGMA table_info(tasks)")}
     if cols["importance"]["notnull"]:
@@ -476,7 +480,7 @@ def ensure_project_path(path: list[str]) -> int:
 
 
 # ---------------------------------------------------------------- tasks
-TASK_FIELDS = {"title", "description", "deadline", "blocking", "blocking_for", "importance",
+TASK_FIELDS = {"title", "description", "deadline", "soft_deadline", "blocking", "blocking_for", "importance",
                "estimate_minutes", "chunkable", "work_kind", "reading", "writing", "project_id", "parent_id", "position", "completed_at", "archived_at",
                "linear_id", "linear_identifier", "linear_url", "linear_state", "linear_team_id",
                "linear_updated_at", "source"}
@@ -632,7 +636,7 @@ def uncomplete_task(tid: int) -> None:
     update_task(tid, completed_at=None, archived_at=None, position=pos, parent_id=parent_id)
 
 
-SUBTREE_FIELDS = ("description", "deadline", "blocking", "blocking_for", "importance", "estimate_minutes", "chunkable", "work_kind", "reading", "writing", "completed_at")
+SUBTREE_FIELDS = ("description", "deadline", "soft_deadline", "blocking", "blocking_for", "importance", "estimate_minutes", "chunkable", "work_kind", "reading", "writing", "completed_at")
 
 
 def delete_task_tree(tid: int) -> list[dict]:
@@ -939,7 +943,7 @@ def plan(date: str) -> dict | None:
 
 
 def plan_items(date: str) -> list[dict]:
-    return rows("SELECT pi.*, t.description AS task_description, t.deadline, t.blocking, t.blocking_for, "
+    return rows("SELECT pi.*, t.description AS task_description, t.deadline, t.soft_deadline, t.blocking, t.blocking_for, "
                 "t.importance, t.estimate_minutes, t.chunkable, t.project_id, t.linear_url, t.linear_identifier, "
                 "t.completed_at AS task_completed_at "
                 "FROM plan_items pi LEFT JOIN tasks t ON t.id=pi.task_id WHERE pi.date=? ORDER BY pi.position", (date,))

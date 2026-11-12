@@ -352,3 +352,27 @@ def test_the_agent_moves_tasks_and_projects_between_projects():
     events = [e for e in db.plan_log(TODAY.isoformat()) if e["event"] in ("task", "project") and "moved" in e["summary"]]
     assert events and events[-1]["actor"] == "agent:Ada"
     assert client.post(f"/api/agent/tasks/{tid}/move", json={"project_id": home}, headers=H).status_code == 200   # out of Someday again (shared test DB)
+
+
+def test_the_agent_sets_hard_and_soft_deadlines():
+    pid = db.create_project("Dates")
+    r = client.post("/api/agent/tasks", json={"title": "Board pack", "project_id": pid, "deadline": "2026-12-04", "soft_deadline": "2026-12-01"}, headers=H)
+    assert r.status_code == 200, r.text
+    tid = r.json()["id"]
+    assert r.json()["deadline"] == "2026-12-04" and r.json()["soft_deadline"] == "2026-12-01"
+    r = client.patch(f"/api/agent/tasks/{tid}", json={"soft_deadline": "2026-11-28", "why": "Sam wants a draft early."}, headers=H)
+    assert r.status_code == 200 and r.json()["soft_deadline"] == "2026-11-28" and r.json()["deadline"] == "2026-12-04"
+    assert "soft deadline 2026-11-28" in db.notes_for("task", tid)[-1]["body"]
+    assert client.patch(f"/api/agent/tasks/{tid}", json={"soft_deadline": ""}, headers=H).json()["soft_deadline"] is None
+    assert client.patch(f"/api/agent/tasks/{tid}", json={"soft_deadline": "whenever"}, headers=H).status_code == 400
+    assert client.post("/api/agent/tasks", json={"title": "x", "project_id": pid, "soft_deadline": "someday"}, headers=H).status_code == 400
+    c = next(c for c in scheduler.candidates(TODAY) if c["id"] == tid)
+    assert c["deadline"] == "2026-12-04" and "soft_deadline" in c
+    ctx = client.get("/api/agent/schedule", headers=H).json()
+    assert "soft_deadline" in next(c for c in ctx["candidates"] if c["id"] == tid)
+    # the app's own routes read words for both dates too, and moving into Someday clears both
+    r = client.patch(f"/api/tasks/{tid}", json={"soft_deadline": "tomorrow"})
+    assert r.status_code == 200 and r.json()["soft_deadline"] == (TODAY + dt.timedelta(days=1)).isoformat()
+    r = client.post(f"/api/agent/tasks/{tid}/move", json={"project_id": db.someday_root()}, headers=H)
+    assert r.json()["deadline"] is None and r.json()["soft_deadline"] is None
+    client.post(f"/api/agent/tasks/{tid}/move", json={"project_id": pid}, headers=H)

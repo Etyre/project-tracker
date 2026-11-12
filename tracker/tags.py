@@ -1,14 +1,15 @@
 """Inline hashtags typed into a task title, Workflowy / Roam style.
 
     #p1 … #p5             priority, #p1 highest (importance 5 … 1)
-    #today  #tomorrow     deadline
-    #due:fri  #due:nov3  #due:2026-11-03  #due:3nov  #due:11-03   (#deadline:… is the same)
+    #today  #tomorrow     the hard deadline: it cannot move
+    #due:fri  #due:nov3  #due:2026-11-03  #due:3nov  #due:11-03   (#deadline:… and #hard:… are the same)
+    #soft:fri  #aim:nov3  #ideally:2026-11-03   the soft deadline: ideally by then, a preference (a task may have both)
     #blocking  #blocking:Sam
     #onesitting           cannot be split across sittings (#splittable undoes it)
     #focus  #task         focused work (needs a stretch of concentration) or a quick task (#nokind: let Claude judge again)
     #reading              mainly reading something: the daily reading card offers it (#notreading undoes it)
     #writing              mainly writing (#notwriting undoes it)
-    #p0  #nodue  #notblocking   clear the priority / deadline / blocking flag (handy on a multi-selection)
+    #p0  #nodue  #nosoft  #notblocking   clear the priority / hard deadline / soft deadline / blocking flag (handy on a multi-selection)
 
 Known tags are removed from the title and become fields; anything else starting with # stays as text.
 A line that *starts* with hashes and a space is a Markdown heading, not a tag, and is left alone.
@@ -72,21 +73,24 @@ def parse_tags(title: str, today: dt.date | None = None) -> tuple[str, dict]:
             fields["importance"] = PRIORITY[name]
         elif name == "p0" and not arg:              # clear the priority
             fields["importance"] = None
-        elif name in ("nodue", "undue") and not arg:   # clear the deadline
+        elif name in ("nodue", "undue", "nohard") and not arg:   # clear the hard deadline
             fields["deadline"] = None
+        elif name in ("nosoft", "noaim") and not arg:            # clear the soft deadline
+            fields["soft_deadline"] = None
         elif name in ("notblocking", "unblock") and not arg:
             fields["blocking"] = 0
             fields["blocking_for"] = ""
         elif name in ("today", "tomorrow") and not arg:
             fields["deadline"] = parse_date(name, today)
-        elif name in ("due", "deadline") and arg:
+        elif name in ("due", "deadline", "hard", "soft", "aim", "ideally") and arg:
+            field = "soft_deadline" if name in ("soft", "aim", "ideally") else "deadline"
             if arg.lower() in ("none", "never", "-"):
-                fields["deadline"] = None
+                fields[field] = None
                 return ""
             d = parse_date(arg, today)
             if d is None:
                 return m.group(0)
-            fields["deadline"] = d
+            fields[field] = d
         elif name in ("blocking", "blocks"):
             fields["blocking"] = 1
             if arg:
