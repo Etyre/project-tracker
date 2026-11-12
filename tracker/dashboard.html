@@ -1565,11 +1565,23 @@ function wireDnD() {
       const isTask = 'dragTask' in h.dataset;
       const el = h.closest(isTask ? '.task' : '.proj');
       drag = {type: isTask ? 'task' : 'project', id: +(h.dataset.dragTask || h.dataset.dragProject), el, sub: isTask ? subListOf(el) : null, x0: e.clientX, dropped: false};
-      if (isTask) drag.slot = slotOf(el);
+      if (isTask) {
+        // Dragging one of several selected lines moves them all: every selected task, in document order, each with
+        // what is under it. A selected line already under another selected line rides along with its parent.
+        let rows = [el];
+        if (sel.rows.includes(el)) {
+          const picked = sel.rows.filter(r => !isHead(r) && !r.dataset.done && !r.classList.contains('editing'));
+          rows = picked.filter(r => !picked.some(o => o !== r && subListOf(o)?.contains(r)));
+          if (!rows.includes(el)) rows = [el];
+          rows.sort((a, b) => a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1);
+        }
+        drag.group = rows.map(r => ({el: r, sub: subListOf(r), id: +r.dataset.tid, slot: slotOf(r)}));
+        drag.slot = slotOf(el);
+      }
       else {const c = el.parentElement; drag.slot = {parent_id: c.dataset.childlist ? +c.dataset.childlist : (focusProject && c.id === 'tree' ? focusProject : null), ids: [...c.querySelectorAll(':scope > .proj')].map(p => +p.dataset.pid)};}
       e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(drag.id));
       try {e.dataTransfer.setDragImage(el, 24, 14);} catch {}
-      setTimeout(() => {el.classList.add('dragging'); drag?.sub?.classList.add('dragging');}, 0);
+      setTimeout(() => {(drag?.group || [{el, sub: drag?.sub}]).forEach(g => {g.el.classList.add('dragging'); g.sub?.classList.add('dragging');});}, 0);
     });
     h.addEventListener('dragend', () => {if (drag && !drag.dropped) renderProjects(); drag = null;});
   });
@@ -1579,13 +1591,23 @@ function wireDnD() {
   });
   treeEl.addEventListener('drop', async e => {
     e.preventDefault(); if (!drag) return; drag.dropped = true;
+    const keys = drag.group && drag.group.length > 1 ? drag.group.map(g => 't' + g.id) : null;
     try {await persistDrag();} catch (err) {toast(esc(err.message));}
-    drag = null; renderProjects();
+    drag = null; await renderProjects();
+    if (keys && !multi) reselect(keys);   // the moved lines stay selected (multi mode reselects on its own)
   });
 }
-const moveWithSub = (place) => {place(drag.el); if (drag.sub) drag.el.after(drag.sub);};
+// the dragged lines land one after another: the first where `place` puts it, each with its sub-list, the rest behind
+const moveWithSub = (place) => {
+  let last = null;
+  for (const g of drag.group) {
+    if (last) last.after(g.el); else place(g.el);
+    if (g.sub) g.el.after(g.sub);
+    last = g.sub || g.el;
+  }
+};
 function taskDragOver(e) {
-  const inDragged = n => drag.el.contains(n) || (drag.sub && drag.sub.contains(n));
+  const inDragged = n => drag.group.some(g => g.el.contains(n) || (g.sub && g.sub.contains(n)));
   const row = e.target.closest?.('.task:not(.editing)');
   if (row && !inDragged(row)) {
     if (row.dataset.done) return;
@@ -1623,7 +1645,8 @@ async function persistDrag() {
     const ids = [...list.querySelectorAll(':scope > .task:not([data-done]):not(.editing)')].map(r => +r.dataset.tid);
     await api('/tasks/reorder', 'POST', {project_id: +list.dataset.tasklist, parent_id: list.dataset.parent ? +list.dataset.parent : null, ids});
     if (list.dataset.parent) unfold(+list.dataset.parent);
-    pushUndo('move', moveBack(d.id, d.slot));
+    // back in the old order, first line first: a line's old "after" may be another moved line, put back just before it
+    pushUndo(d.group.length > 1 ? `move ${d.group.length} tasks` : 'move', () => d.group.reduce((p, g) => p.then(moveBack(g.id, g.slot)), Promise.resolve()));
   } else {
     const container = d.el.parentElement;
     const parent_id = container.dataset.childlist ? +container.dataset.childlist : (focusProject && container.id === 'tree' ? focusProject : null);
