@@ -293,7 +293,9 @@ function deadlineChip(d, soft) {
 const impDots = n => n ? `<span class="dots" title="importance ${n}/5">${'●'.repeat(n)}${'○'.repeat(5 - n)}</span>` : '';
 const readingChip = t => (t.reading === 1 ? '<span class="chip kind" title="Mainly reading: the daily reading card offers it">reading</span>' : '') + (t.writing === 1 ? '<span class="chip kind" title="Mainly writing">writing</span>' : '');
 const kindChip = t => t.work_kind === 'focus' ? '<span class="chip kind focus" title="Focused work: wants a long uninterrupted block">focused work</span>' : t.work_kind === 'task' ? '<span class="chip kind" title="A quick task: fits a gap">task</span>' : '';
-const chips = t => `${deadlineChip(t.deadline)}${deadlineChip(t.soft_deadline, true)}${t.blocking ? `<span class="chip bad">blocking${t.blocking_for ? ': ' + esc(t.blocking_for) : ''}</span>` : ''}${impDots(t.importance)}${kindChip(t)}${readingChip(t)}${t.source === 'agent' ? '<span class="chip agent" title="Added by your assistant agent">agent</span>' : ''}`;
+// A closed line shows only what bears on urgency: deadlines, blocking, importance. The descriptive tags (kind of
+// work, reading / writing, agent-added) show once the item is open.
+const chips = (t, open) => `${deadlineChip(t.deadline)}${deadlineChip(t.soft_deadline, true)}${t.blocking ? `<span class="chip bad">blocking${t.blocking_for ? ': ' + esc(t.blocking_for) : ''}</span>` : ''}${impDots(t.importance)}${open ? kindChip(t) + readingChip(t) + (t.source === 'agent' ? '<span class="chip agent" title="Added by your assistant agent">agent</span>' : '') : ''}`;
 // Context added by the assistant agent: kept apart from your own notes and always signed, so what came from it is plain
 const fmtWhen = ts => new Date(ts * 1000).toLocaleString(undefined, {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'});
 const addedNotesHTML = notes => (notes || []).length ? `<div class="added">${notes.map(n => `<div class="note"><div>${linkify(n.body)}</div><div class="who">${esc(n.author)} · ${fmtWhen(n.created_at)}</div></div>`).join('')}</div>` : '';
@@ -714,7 +716,7 @@ function taskHTML(t) {
     ${view === 'someday' ? '<span class="bullet">•</span>' : `<input type="checkbox" ${done ? 'checked' : ''} title="${done ? 'Restore' : 'Complete'}" onchange="${done ? `uncomplete(${t.id})` : `completeTask(${t.id}, this)`}">`}
     <div class="body" onmousedown="if (event.shiftKey) event.preventDefault()" onclick="if (event.shiftKey) {event.stopPropagation(); extendSelTo(this.closest('.task'));} else if (!event.target.closest('a') && !selecting()) {clearSel(); ${done ? "this.closest('.task').focus()" : `editTaskTitle(${t.id}, null, 1e9)`};}" ondblclick="if (!event.target.closest('a, input, textarea, .notes')) {event.preventDefault(); toggleTask(${t.id});}">
 <span class="title ${t.linear_id ? 'lin' : ''} ${mdLine(t.title).level ? 'md-h' + mdLine(t.title).level : ''}" onclick="event.stopPropagation(); if (!selecting()) editTaskTitle(${t.id}, null, caretFromClick(event, this))" title="Click to edit, double-click for notes" ondblclick="event.stopPropagation()">${mdLine(t.title).html}</span>
-      <span class="chips" style="margin-left:6px">${done ? `<span class="chip">completed ${fmtDay(t.completed_at)}</span>` : view === 'someday' ? '' : chips(t)}</span>
+      <span class="chips" style="margin-left:6px">${done ? `<span class="chip">completed ${fmtDay(t.completed_at)}</span>` : view === 'someday' ? '' : chips(t, open)}</span>
       ${open ? taskNotesHTML(t) : ''}
     </div>
   </div>
@@ -767,7 +769,7 @@ function editTaskNotes(tid, el) {
 // the box stays open and whatever the user clicked next keeps its focus.
 function refreshFields(tid) {
   const t = findTask(tid), row = document.querySelector(`.task[data-tid="${tid}"]`); if (!t || !row) return;
-  const c = row.querySelector(':scope > .body > .chips'); if (c && !t.completed_at && view !== 'someday') c.innerHTML = chips(t);
+  const c = row.querySelector(':scope > .body > .chips'); if (c && !t.completed_at && view !== 'someday') c.innerHTML = chips(t, expanded.has(tid));
   const tags = row.querySelector(':scope > .body > .notes .fields .tags'); if (tags) {tags.value = tags.defaultValue = tagText(t);}
   row.querySelectorAll(':scope > .body > .notes .fields input[data-field]').forEach(i => {i.value = (t[i.dataset.field] || '').slice(0, 10);});
 }

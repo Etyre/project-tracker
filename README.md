@@ -77,8 +77,9 @@ on the lines: you navigate with the arrow keys and type.
   line goes into the text at the cursor, the rest become lines below it.
 - Drag the handle to reorder; rows move live under the pointer, and dragging to the right over a row nests
   under it.
-- A task's title line carries its deadlines, a "blocking" tag and importance dots when set (there is no
-  priority by default). The opened task (double-click, or Notes in the menu) shows its notes, then its **tag
+- A task's title line carries only what bears on urgency: its deadlines, a "blocking" tag and importance dots
+  when set (there is no priority by default). The descriptive tags (focused work or quick task, reading,
+  writing, added by the agent) appear on the line only while the task is open. The opened task (double-click, or Notes in the menu) shows its notes, then its **tag
   line** and its two deadlines, all editable in place. The tag line is the task's fields written as tags
   (`#p2 #due:2026-11-14 #blocking:Sam #onesitting #focus #reading`): edit it and press Enter, and the task has
   exactly those tags, so a tag you delete clears that field (Escape puts the line back; words that are not
