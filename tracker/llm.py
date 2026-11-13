@@ -202,9 +202,13 @@ Field guidance:
   4 high, 5 critical. Words like "urgent", "important", "ASAP" and the presence of a blocked person move it up.
 - estimate_minutes: your honest guess; null if you really cannot tell.
 - chunkable: false only for things that must happen in one sitting (a call, a deploy, a review that must be coherent).
-- work_kind: "focus" for work that needs a stretch of real concentration (writing, analysis, design, coding, careful
+- work_kind: "focus" for work that needs a stretch of real concentration (writing, analysis, design, careful
   reading, preparing something substantial); "task" for anything done in minutes or between other things (a message,
-  a call, an errand, admin, a quick check, buying something). When unsure, "task" for short things, "focus" for long.
+  a call, an errand, admin, a quick check, buying something). From the user: coding done through an agent (Claude
+  Code and the like: building or fixing an app by directing an agent) is almost always a "task", not focus; writing
+  is almost always "focus"; reading is "focus" when the material is hard to parse (a paper, a dense argument, a
+  technical document) and a "task" when it is easy (a thread, a newsletter, a short update). When unsure, "task"
+  for short things, "focus" for long.
 - reading: true when the task is mainly reading something (a paper, a report, a doc, a book, a thread) rather than
   writing, deciding or doing; the user's daily reading slot offers these.
 - writing: true when the task is mainly writing (a draft, a memo, a post, a doc, a long reply); false for a quick
@@ -275,9 +279,12 @@ SCHEDULE_SCHEMA = {
 
 
 WORK_KIND_GUIDE = """work_kind is "focus" for work that needs a stretch of real concentration (writing, analysis, design,
-coding, careful reading, preparing something substantial) and "task" for anything done in minutes or between other
-things (a message, a call, an errand, admin, a quick check, buying something). When unsure: "task" for short things,
-"focus" for long ones. reading is true when the task is mainly reading something (a paper, a report, a doc, a book,
+careful reading, preparing something substantial) and "task" for anything done in minutes or between other
+things (a message, a call, an errand, admin, a quick check, buying something). From the user: coding done through an
+agent (Claude Code and the like: building or fixing an app by directing an agent) is almost always a "task", not
+focus; writing is almost always "focus"; reading is "focus" when the material is hard to parse (a paper, a dense
+argument, a technical document) and a "task" when it is easy (a thread, a newsletter, a short update). When unsure:
+"task" for short things, "focus" for long ones. reading is true when the task is mainly reading something (a paper, a report, a doc, a book,
 a thread) rather than writing, deciding or doing. writing is true when the task is mainly writing (a draft, a memo, a
 post, a doc, a long reply), not for a quick message."""
 ESTIMATE_SCHEMA = {

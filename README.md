@@ -97,7 +97,9 @@ on the lines: you navigate with the arrow keys and type.
   stretch of concentration), shown as a small tag on the line. Claude makes the call when the task is created
   (quick add, the outline, the agent) and works through older tasks in the background; `#focus` / `#task` in the
   title, the edit dialog or the dates-and-priority dialog set it by hand, `#nokind` hands it back to Claude. The
-  day plan uses it: focused work gets long uninterrupted blocks, tasks fill the gaps. Claude also marks tasks that
+  day plan uses it: focused work gets long uninterrupted blocks, tasks fill the gaps. The prompt carries Eli's
+  own rules of thumb: agent coding (directing Claude Code) is almost always a task, writing is almost always
+  focused work, and reading is focused work only when the material is hard to parse. Claude also marks tasks that
   are mainly **reading** (`#reading` / `#notreading` by hand), which the daily reading card draws on, and mainly
   **writing** (`#writing` / `#notwriting`); a timer on such a task carries the "reading" or "writing" Toggl tag
   (`[reading] tag`, `[writing] tag`) whatever project it is filed under.
