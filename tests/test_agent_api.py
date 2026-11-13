@@ -132,8 +132,10 @@ def test_agent_sets_the_schedule_and_the_app_replans_it_from_that_baseline():
     db.set_item_status(first["id"], "done")
     r = client.put("/api/agent/schedule", json={"items": items[:3], "work_start": "09:00", "work_end": "17:00"}, headers=H)
     assert next(i for i in r.json()["plan"]["items"] if i["title"] == "Alpha")["status"] == "done"   # re-sending keeps progress
-    f = client.get("/api/feed").json()
-    assert f["plan"]["source"] == "agent:Ada" and f["plan"]["agent_plan"] == "agent:Ada"
+    from tracker import feed                                             # the feed's stack follows the agent's order
+    st = feed.cards()
+    keys = [c["key"] for c in st["stack"] + st["waiting"] if c["kind"] == "task"]
+    assert keys[:2] == [f"task:{a}", f"task:{b}"]
     assert client.put("/api/agent/schedule", json={"items": [{"kind": "task", "task_id": 999999, "start": "10:00", "end": "10:30"}]}, headers=H).status_code == 400
     assert client.put("/api/agent/schedule", json={"items": [{"kind": "task", "task_id": a, "start": "10:00", "end": "09:30"}]}, headers=H).status_code == 400
     assert client.put("/api/agent/schedule", json={"items": [{"kind": "task", "start": "10:00", "end": "10:30"}]}, headers=H).status_code == 400
@@ -156,7 +158,6 @@ def test_agent_sets_the_schedule_and_the_app_replans_it_from_that_baseline():
     pending = [i for i in p["items"] if i["status"] == "pending" and i["kind"] == "task"]
     assert pending and pending[0]["task_id"] == b                        # the greedy fallback keeps the agent's order too
     assert not any(i["task_id"] == a and i["status"] == "pending" for i in p["items"])
-    assert client.get("/api/feed").json()["plan"]["agent_plan"] == "agent:Ada"
 
 
 def test_the_days_exercise_is_set_once_and_the_agent_cannot_change_it(monkeypatch):

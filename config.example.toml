@@ -9,9 +9,6 @@ work_start = "10:30"
 work_end = "15:30"
 default_estimate_minutes = 30
 min_block_minutes = 10
-replan_drift_minutes = 20
-overrun_minutes = 30
-replan_min_interval_minutes = 10
 meeting_alert_minutes = 45
 meeting_alert_all_day = false   # true: show the next meeting however far off it is today
 

@@ -439,10 +439,86 @@ def test_feed_uncomplete_reopens_task_and_block():
     date = db.today()
     db.save_plan(date, "09:00", "17:00", "run", "", [dict(kind="task", task_id=tid, title="Undo me", start="09:00", end="09:30", minutes=30, note="")], {})
     item = db.rows("SELECT id FROM plan_items WHERE task_id=?", (tid,))[0]["id"]
-    assert c.post("/api/feed/complete", json={"item_id": item}).status_code == 200
-    assert db.task(tid)["completed_at"] and db.plan_item(item)["status"] == "done"
-    assert c.post("/api/feed/uncomplete", json={"item_id": item}).status_code == 200
+    assert c.post("/api/feed/complete", json={"card": f"task:{tid}"}).status_code == 200
+    assert db.task(tid)["completed_at"] and db.plan_item(item)["status"] == "done"          # the plan page follows the feed
+    assert c.post("/api/feed/uncomplete", json={"card": f"task:{tid}"}).status_code == 200
     assert db.task(tid)["completed_at"] is None and db.plan_item(item)["status"] == "pending"
+    assert c.post("/api/feed/complete", json={"card": "task:999999"}).status_code == 404
+    assert c.post("/api/feed/complete", json={"card": "nap:1"}).status_code == 400
+
+
+def test_the_feed_is_a_stack_filtered_by_the_gap_before_the_next_meeting(monkeypatch):
+    """No schedule: the top card is the best open task (or recurring card) that fits the time until the next
+    meeting; a longer task fits only when it can be split; Next moves the card to the bottom for the day."""
+    from fastapi.testclient import TestClient
+    from tracker import feed, web, sheets, estimates, calendar_feed
+    monkeypatch.setattr(estimates, "calibration", lambda: {"overall": 1.0, "by_root_project": {}, "samples": 0})
+    monkeypatch.setattr(sheets, "routines_for_today", lambda: [{"title": "Anki review", "minutes": 20}])
+    monkeypatch.setattr(sheets, "card_items", lambda: [{"title": "Anki review", "minutes": 20}])
+    monkeypatch.setattr(sheets, "writable", lambda: False)
+    monkeypatch.setattr(web, "_suggest_flag", lambda title: None)
+    for t in db.open_tasks():
+        db.complete_task(t["id"])                                     # only this test's tasks in the stack
+    pid = db.create_project("Stack")
+    quick = db.create_task(pid, "Quick reply", estimate_minutes=10, importance=2)
+    long_fixed = db.create_task(pid, "Long one-sitting review", estimate_minutes=60, importance=5, chunkable=0)
+    long_split = db.create_task(pid, "Long draft, can be split", estimate_minutes=90, importance=4, chunkable=1)
+    mid = db.create_task(pid, "Half-hour call prep", estimate_minutes=30, importance=3, chunkable=0)
+    deep = db.create_task(pid, "Deep draft", estimate_minutes=120, importance=1, work_kind="focus")      # splittable, but focused work
+    now = dt.datetime.now()
+    mk = lambda start_min, length, title: {"title": title, "all_day": False, "start": now.replace(hour=0, minute=0, second=0, microsecond=0) + dt.timedelta(minutes=start_min),
+                                           "end": now.replace(hour=0, minute=0, second=0, microsecond=0) + dt.timedelta(minutes=start_min + length)}
+    now_min = now.hour * 60 + now.minute
+    # the module itself, with an explicit clock: a meeting in 15 minutes
+    at = dt.datetime.combine(dt.date.today(), dt.time(10, 0))
+    events = [mk(10 * 60 + 15, 30, "Standup"), mk(14 * 60, 60, "Review")]
+    st = feed.cards(at, events)
+    assert st["gap"] == {"minutes": 15, "until": "Standup", "at": "10:15", "kind": "meeting", "meeting_now": None}
+    assert [c["key"] for c in st["stack"]] == ["routine:Anki review", f"task:{long_split}", f"task:{quick}"]      # fits: 20 split, 90 split, 10
+    assert [c["key"] for c in st["waiting"]] == [f"task:{long_fixed}", f"task:{mid}", f"task:{deep}"]              # 60 in one sitting, 30, focus: no
+    assert feed.fits(next(c for c in st["waiting"] if c["key"] == f"task:{deep}"), 45)                             # focused work: a 45-min stretch will do
+    # in the meeting: the gap runs to the next one; after the last meeting, to the end of the work day
+    st = feed.cards(dt.datetime.combine(dt.date.today(), dt.time(10, 20)), events)
+    assert st["gap"]["meeting_now"]["title"] == "Standup" and st["gap"]["until"] == "Review" and st["gap"]["minutes"] == 220
+    assert [c["key"] for c in st["stack"]][:3] == ["routine:Anki review", f"task:{long_fixed}", f"task:{long_split}"]   # by priority
+    we = scheduler.parse_hm(config.load()["general"]["work_end"])
+    late = dt.datetime.combine(dt.date.today(), dt.time(0, 0)) + dt.timedelta(minutes=we - 20)
+    st = feed.cards(late, events)
+    assert st["gap"]["kind"] == "end of day" and st["gap"]["minutes"] == 20
+    assert feed.cards(dt.datetime.combine(dt.date.today(), dt.time(23, 30)), events)["gap"]["minutes"] is None   # evening: nothing bounds it
+    # the API, with the real clock: a meeting 15 minutes from now
+    monkeypatch.setattr(calendar_feed, "events_for", lambda day: [mk(now_min + 15, 30, "Standup")])
+    c = TestClient(web.create_app())
+    f = c.get("/api/feed").json()
+    assert f["gap"]["minutes"] in (14, 15) and f["gap"]["until"] == "Standup" and f["current"]["key"] == "routine:Anki review"
+    assert [w["title"] for w in f["waiting"]] == ["Long one-sitting review", "Half-hour call prep", "Deep draft"]
+    assert f["meetings"][0]["title"] == "Standup" and f["stack_size"] == 3
+    # Next: the card goes to the bottom for the day, and the next best card is on top
+    assert c.post("/api/feed/skip", json={"card": "routine:Anki review"}).status_code == 200
+    f = c.get("/api/feed").json()
+    assert f["current"]["key"] == f"task:{long_split}" and f["current"]["task"]["id"] == long_split and f["current"]["path"] == ["Stack"]
+    assert [x["key"] for x in f["up_next"]] == [f"task:{quick}", "routine:Anki review"]
+    assert c.post("/api/feed/skip", json={"card": f"task:{long_split}"}).status_code == 200
+    assert c.get("/api/feed").json()["current"]["key"] == f"task:{quick}"
+    assert c.post("/api/feed/unskip", json={"card": "routine:Anki review"}).status_code == 200
+    assert c.get("/api/feed").json()["current"]["key"] == "routine:Anki review"
+    # a started card stays on top while its timer runs, whatever the order
+    assert c.post("/api/feed/start", json={"card": f"task:{quick}"}).status_code == 200
+    f = c.get("/api/feed").json()
+    assert f["current"]["key"] == f"task:{quick}" and f["current"]["status"] == "active" and db.running_entry()["task_id"] == quick
+    assert c.post("/api/feed/complete", json={"card": f"task:{quick}"}).status_code == 200
+    assert db.running_entry() is None and db.task(quick)["completed_at"]
+    f = c.get("/api/feed").json()
+    assert f["current"]["key"] == "routine:Anki review" and f["progress"]["done"] >= 1
+    # the agent's schedule for the day puts its tasks first, in its order
+    db.set_setting(f"feed_skipped:{db.today()}", "[]")
+    db.save_plan(db.today(), "09:00", "17:00", "run", "", [], {"source": "agent:Ada", "agent_plan": {"source": "agent:Ada", "items": [{"kind": "task", "task_id": mid}, {"kind": "task", "task_id": long_split}]}})
+    st = feed.cards(dt.datetime.combine(dt.date.today(), dt.time(16, 0)), events)
+    assert [c["key"] for c in st["stack"]][:4] == ["routine:Anki review", f"task:{mid}", f"task:{long_split}", f"task:{long_fixed}"]
+    db.execute("DELETE FROM plans WHERE date=?", (db.today(),)); db.execute("DELETE FROM plan_items WHERE date=?", (db.today(),))
+    db.set_setting(f"feed_skipped:{db.today()}", "[]")
+    for t in (long_fixed, long_split, mid, deep):
+        db.delete_task(t)
 
 
 def test_exercise_sessions_parse_and_merge(monkeypatch):
@@ -573,12 +649,11 @@ def test_exercise_button_offers_extra_session_once_done(monkeypatch):
     from tracker import web, exercise
     c = TestClient(web.create_app())
     monkeypatch.setattr(exercise, "decide", lambda date=None, force=False: {"kind": "strength", "title": "squats", "minutes": 40, "reason": "", "date": db.today()})
-    date = db.today()
-    db.save_plan(date, "09:00", "17:00", "run", "", [dict(kind="exercise", task_id=None, title="squats", start="13:00", end="13:40", minutes=40, note="")], {})
     f = c.get("/api/feed").json()
     assert f["exercise"] == "squats" and f["exercise_done"] is False and f["exercise_extra"] == "zone 2 cardio" and f["exercise_extra_done"] is False
-    item = db.rows("SELECT id FROM plan_items WHERE date=? AND kind='exercise'", (date,))[0]["id"]
-    assert c.post("/api/feed/complete", json={"item_id": item}).status_code == 200
+    r = c.post("/api/exercise/start").json()                                  # the day's session, from the button under the deck
+    assert r["kind"] == "squats" and db.running_entry()["label"] == "going to do squats"
+    web._stop_timer()
     assert c.get("/api/feed").json()["exercise_done"] is True
     r = c.post("/api/exercise/start", json={"title": "zone 2 cardio"}).json()
     assert r["kind"] == "zone 2 cardio" and db.running_entry()["label"] == "going to do zone 2 cardio"
@@ -632,11 +707,10 @@ def test_feed_start_answers_and_runs_the_timer():
     pid = db.create_project("Feed start")
     tid = db.create_task(pid, "Start me", estimate_minutes=30)
     date = db.today()
-    db.save_plan(date, "09:00", "17:00", "run", "", [dict(kind="task", task_id=tid, title="Start me", start="09:00", end="09:30", minutes=30, note="")], {})
-    item = db.rows("SELECT id FROM plan_items WHERE task_id=?", (tid,))[0]["id"]
-    r = c.post("/api/feed/start", json={"item_id": item})
+    r = c.post("/api/feed/start", json={"card": f"task:{tid}"})
     assert r.status_code == 200 and r.json()["ok"] and r.json()["entry_id"]
-    assert db.running_entry()["task_id"] == tid and db.plan_item(item)["status"] == "active"
+    assert db.running_entry()["task_id"] == tid
+    assert c.get("/api/feed").json()["current"]["key"] == f"task:{tid}"          # the started card is on top
     web._stop_timer()
 
 
@@ -646,17 +720,18 @@ def test_done_on_a_card_stops_its_timer(monkeypatch):
     from fastapi.testclient import TestClient
     from tracker import web, sheets
     monkeypatch.setattr(sheets, "writable", lambda: False)
+    monkeypatch.setattr(sheets, "card_items", lambda: [{"title": "Anki review", "minutes": 20}, {"title": "Personal email", "minutes": 20}])
     c = TestClient(web.create_app())
     date = db.today()
-    db.save_plan(date, "09:00", "17:00", "run", "", [dict(kind="routine", task_id=None, title="Anki review", start="09:00", end="09:20", minutes=20, note=""),
-                                                    dict(kind="routine", task_id=None, title="Personal email", start="09:20", end="09:40", minutes=20, note="")], {})
-    anki, mail = [r["id"] for r in db.rows("SELECT id FROM plan_items WHERE date=? AND kind='routine' ORDER BY position", (date,))]
     web._start_timer("routine", "Anki review")
-    assert c.post("/api/feed/complete", json={"item_id": mail}).status_code == 200 and db.running_entry()   # other card: timer stays
-    assert c.post("/api/feed/complete", json={"item_id": anki}).status_code == 200 and db.running_entry() is None
-    db.set_item_status(anki, "pending")
+    assert c.post("/api/feed/complete", json={"card": "routine:Personal email"}).status_code == 200 and db.running_entry()   # other card: timer stays
+    assert c.post("/api/feed/complete", json={"card": "routine:Anki review"}).status_code == 200 and db.running_entry() is None
+    assert {"Anki review", "Personal email"} <= db.checklist_done_today(date)
+    assert c.post("/api/feed/uncomplete", json={"card": "routine:Anki review"}).status_code == 200
     web._start_timer("routine", "anki review")
-    assert c.post("/api/feed/finish_block", json={"item_id": anki}).status_code == 200 and db.running_entry() is None
+    assert c.post("/api/feed/skip", json={"card": "routine:Anki review"}).status_code == 200 and db.running_entry() is None   # Next stops its timer
+    db.execute("DELETE FROM checklist_log WHERE date=?", (date,))
+    db.set_setting(f"feed_skipped:{date}", "[]")
 
 
 def test_toggl_quota_backoff(monkeypatch):
@@ -693,10 +768,6 @@ def test_toggl_history_trues_up_local_entries():
     import time as _t
     now = _t.time()
     iso = lambda t: dt.datetime.fromtimestamp(t, dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00")
-    date = db.today()
-    db.save_plan(date, "09:00", "17:00", "run", "", [dict(kind="routine", task_id=None, title="Reconcile me", start="09:00", end="09:20", minutes=20, note="")], {})
-    item = db.rows("SELECT id FROM plan_items WHERE title='Reconcile me'")[0]["id"]
-    db.set_item_status(item, "active")
     a = db.start_entry("routine", "Reconcile me", None, 501)             # running here, stopped in Toggl an hour ago
     db.execute("UPDATE time_entries SET started_at=? WHERE id=?", (now - 7200, a))
     b = db.start_entry("task", "Drifted", None, 502)                      # stopped here 30 min late
@@ -713,7 +784,6 @@ def test_toggl_history_trues_up_local_entries():
         {"id": 999, "start": iso(now), "stop": None, "duration": -1}])
     assert n == 2
     assert abs(db.row("SELECT stopped_at FROM time_entries WHERE id=?", (a,))["stopped_at"] - (now - 3600)) < 2
-    assert db.plan_item(item)["status"] == "pending"
     assert abs(db.row("SELECT stopped_at FROM time_entries WHERE id=?", (b,))["stopped_at"] - (now - 3600)) < 2
     assert db.row("SELECT stopped_at FROM time_entries WHERE id=?", (c,))["stopped_at"] is None
     assert abs(db.row("SELECT stopped_at FROM time_entries WHERE id=?", (d,))["stopped_at"] - (now - 400)) < 2
@@ -799,10 +869,11 @@ def test_reading_card_offers_highest_priority_reading_task(monkeypatch):
     assert [t["id"] for t in db.reading_tasks()] == [low, high]
     assert "Reading books or papers" in [x["title"] for x in sheets.card_items()]          # a card of its own, without listing it
     date = db.today()
-    db.save_plan(date, "09:00", "17:00", "run", "", [dict(kind="routine", task_id=None, title="Reading books or papers", start="09:00", end="09:30", minutes=30, note="")], {})
-    item = db.rows("SELECT id FROM plan_items WHERE date=? AND title='Reading books or papers'", (date,))[0]["id"]
+    monkeypatch.setattr(sheets, "routines_for_today", lambda: [{"title": "Reading books or papers", "minutes": 30}])
+    monkeypatch.setattr(sheets, "card_items", lambda: [{"title": "Reading books or papers", "minutes": 30}])
+    item = "routine:Reading books or papers"
     f = c.get("/api/feed").json()
-    assert f["current"]["id"] == item and f["current"]["suggest"]["task"]["id"] == high and f["current"]["suggest"]["fallback"] == "Read a book"
+    assert f["current"]["key"] == item and f["current"]["suggest"]["task"]["id"] == high and f["current"]["suggest"]["fallback"] == "Read a book"
     assert f["current"]["suggest"]["verb"] == "Read"
     started = []
     monkeypatch.setattr(web.toggl, "enabled", lambda: True)
@@ -810,16 +881,15 @@ def test_reading_card_offers_highest_priority_reading_task(monkeypatch):
     monkeypatch.setattr(web.toggl, "current", lambda: None)
     monkeypatch.setattr(web.toggl, "stop", lambda eid=None: None)
     monkeypatch.setattr(web.toggl, "find_project", lambda name: None)
-    assert c.post("/api/feed/start", json={"item_id": item}).status_code == 200
+    assert c.post("/api/feed/start", json={"card": item}).status_code == 200
     assert db.running_entry()["task_id"] == high                                             # time goes to the reading task
+    assert c.get("/api/feed").json()["current"]["key"] == item and c.get("/api/feed").json()["current"]["status"] == "active"
     assert started[-1] == ("Reading the policy memo", ["reading"])                            # ...tagged reading, named as a gerund
     assert c.post(f"/api/tasks/{high}/complete", json={}).status_code == 200 and db.running_entry() is None
-    db.set_item_status(item, "pending")
     assert c.get("/api/feed").json()["current"]["suggest"]["task"]["id"] == low                # the next one
     db.complete_task(low)
-    db.set_item_status(item, "pending")
     assert c.get("/api/feed").json()["current"]["suggest"]["task"] is None                    # nothing queued: read a book
-    assert c.post("/api/feed/start", json={"item_id": item, "label": "The Making of the Atomic Bomb"}).status_code == 200
+    assert c.post("/api/feed/start", json={"card": item, "label": "The Making of the Atomic Bomb"}).status_code == 200
     e = db.running_entry()
     assert (e["kind"], e["label"], e["task_id"]) == ("reading", "The Making of the Atomic Bomb", None)
     assert started[-1] == ("The Making of the Atomic Bomb", ["reading"])
@@ -828,20 +898,23 @@ def test_reading_card_offers_highest_priority_reading_task(monkeypatch):
     monkeypatch.setattr(toggl, "history_match", lambda label: {"project_id": 9, "project": "History", "tags": []} if "Atomic" in label else None)
     assert web._toggl_project_for_timer("reading", "The Making of the Atomic Bomb", None)["project"] == "History"
     assert web._toggl_project_for_timer("reading", "Something new", None) is None              # Claude judges it, per title
-    assert c.post("/api/feed/complete", json={"item_id": item}).status_code == 200 and db.running_entry() is None
+    assert c.post("/api/feed/complete", json={"card": item}).status_code == 200 and db.running_entry() is None
+    db.execute("DELETE FROM checklist_log WHERE date=? AND item=?", (date, "Reading books or papers"))
     # the writing card: the same shape, from the writing tasks
-    assert "Writing - 40 minutes" in [x["title"] for x in sheets.card_items()] and "Writing - 40 minutes" not in web._routine_labels()
+    monkeypatch.setattr(sheets, "card_items", lambda: [{"title": "Writing - 40 minutes", "minutes": 40}])
+    assert "Writing - 40 minutes" not in web._routine_labels()                                # filed by what is written, never fixed
     memo = db.create_task(pid, "Write the strategy memo", writing=1, importance=5, deadline=db.today(), blocking=1)   # outranks any other writing task
-    db.save_plan(date, "09:00", "17:00", "run", "", [dict(kind="routine", task_id=None, title="Writing - 40 minutes", start="10:00", end="10:40", minutes=40, note="")], {})
-    witem = db.rows("SELECT id FROM plan_items WHERE date=? AND title='Writing - 40 minutes'", (date,))[0]["id"]
+    monkeypatch.setattr(sheets, "routines_for_today", lambda: [{"title": "Writing - 40 minutes", "minutes": 40}])
+    monkeypatch.setattr(sheets, "card_items", lambda: [{"title": "Writing - 40 minutes", "minutes": 40}])
+    witem = "routine:Writing - 40 minutes"
     f = c.get("/api/feed").json()
-    assert f["current"]["id"] == witem and f["current"]["suggest"]["task"]["id"] == memo and f["current"]["suggest"]["verb"] == "Write"
-    assert c.post("/api/feed/start", json={"item_id": witem}).status_code == 200
+    assert f["current"]["key"] == witem and f["current"]["suggest"]["task"]["id"] == memo and f["current"]["suggest"]["verb"] == "Write"
+    assert c.post("/api/feed/start", json={"card": witem}).status_code == 200
     assert db.running_entry()["task_id"] == memo and started[-1] == ("Writing the strategy memo", ["writing"])
-    db.complete_task(memo); web._stop_timer(); db.set_item_status(witem, "pending")
+    db.complete_task(memo); web._stop_timer()
     f = c.get("/api/feed").json()
     assert f["current"]["suggest"]["task"] is None and f["current"]["suggest"]["fallback"] == "Free writing"
-    assert c.post("/api/feed/start", json={"item_id": witem, "label": "Morning pages"}).status_code == 200
+    assert c.post("/api/feed/start", json={"card": witem, "label": "Morning pages"}).status_code == 200
     assert (db.running_entry()["kind"], started[-1]) == ("writing", ("Morning pages", ["writing"]))
     web._stop_timer()
 
@@ -986,12 +1059,11 @@ def test_routine_cards_from_checklist(monkeypatch):
     assert [r["title"] for r in sheets.routines_for_today()] == ["Anki Review", "Nope: x"]
     # completing the routine's card logs the tick; undo clears it
     date = db.today()
-    db.save_plan(date, "09:00", "17:00", "run", "", [dict(kind="routine", task_id=None, title="Anki Review", start="09:00", end="09:20", minutes=20, note="")], {})
-    item = db.rows("SELECT id FROM plan_items WHERE kind='routine' AND date=?", (date,))[0]["id"]
     c = TestClient(web.create_app())
-    assert c.post("/api/feed/complete", json={"item_id": item}).status_code == 200
+    assert c.get("/api/feed").json()["current"]["key"] == "routine:Anki Review"            # recurring cards come first
+    assert c.post("/api/feed/complete", json={"card": "routine:Anki Review"}).status_code == 200
     assert "Anki Review" in db.checklist_done_today(date) and [r["title"] for r in sheets.routines_for_today()] == ["Nope: x"]
-    assert c.post("/api/feed/uncomplete", json={"item_id": item}).status_code == 200
+    assert c.post("/api/feed/uncomplete", json={"card": "routine:Anki Review"}).status_code == 200
     assert "Anki Review" not in db.checklist_done_today(date)
 
 

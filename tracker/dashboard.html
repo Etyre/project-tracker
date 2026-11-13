@@ -420,31 +420,22 @@ async function renderFeed() {
   timerState = f.timer; drawTimer();
   const m = $('#main');
   const page = (inner, actions, extra) => `<div class="page"><div class="main">${inner}${actions || ''}${extra || ''}</div>${altButtons(f)}</div>`;
-  if (!f.plan) {
-    m.innerHTML = `<div class="feed">${page(`<div class="head"><div class="big">No plan yet</div></div>`,
-      `<div class="actions"><button class="btn primary" onclick="rebuild(${f.outside_hours ? 'true' : 'false'})">${f.outside_hours === 'after' ? 'Work late' : 'Build the plan'}</button></div>`)}</div>`;
-    return;
-  }
   const c = f.current;
+  const g = f.gap || {};
+  const gapText = g.minutes == null ? '' : `${g.minutes} min until ${esc(g.until)}`;
   let card;
   if (!c) {
-    const late = f.outside_hours === 'after';
-    const head = late ? 'The work day is over' : f.outside_hours === 'before' ? `The day starts at ${f.work_window[0]}` : 'All done';
-    card = page(`<div class="head"><div class="big">${head}</div></div>`,
-      `<div class="actions"><button class="btn" onclick="rebuild(true)">${late ? 'Work late' : f.outside_hours === 'before' ? 'Start early' : 'Re-plan'}</button></div>`);
+    // nothing fits the gap, or nothing is left: the stack is empty for now
+    const head = f.waiting_count ? 'Nothing short enough' : f.progress && f.progress.total ? 'All done' : 'Nothing to do';
+    const why = f.waiting_count ? `${gapText}. ${f.waiting_count} card${f.waiting_count === 1 ? '' : 's'} waiting for a longer gap: ${f.waiting.map(w => mdLine(w.title).html + ` <span class="muted">(${w.minutes} min)</span>`).join(', ')}` : '';
+    card = page(`<div class="head"><div class="kind">&nbsp;</div><div class="big">${head}</div>${why ? `<div class="meta" style="margin-top:14px">${why}</div>` : ''}</div>`, '');
   } else {
     const isActive = c.status === 'active';
     const t = c.task;
     const project = c.kind === 'task' && c.path ? c.path.join(' / ') : c.kind === 'routine' ? 'Recurring' : '';
     const treeLink = t ? `<a class="treelink" onclick="openInTree(${t.id}, ${t.project_id})" title="Show this task in its project, with its notes open">open in tree</a>` : '';
-    const blockTitle = t && t.title.trim() !== c.title.trim() ? `<div class="muted" style="margin-top:4px">block: ${mdLine(c.title).html}</div>` : '';   // the planner (or the agent) named the block differently
-    let body = `<div class="head"><div class="kind">${esc(project) || '&nbsp;'}</div><div class="big">${c.kind === 'checklist' ? 'Daily checklist' : mdLine(t ? t.title : c.title).html}${t && t.work_kind ? ' ' + kindChip(t) : ''}</div>${blockTitle}${treeLink}`;
-    if (c.kind === 'checklist') {
-      const cl = c.checklist;
-      // a checkbox for rows the sheet lets us tick; computed rows (formulas) show their state; headings stay text
-      body += cl.items.length ? `<div class="clist">${cl.items.map(i => i.checkable !== false ? `<label><input type="checkbox" ${i.done ? 'checked' : ''} onchange="checkItem(this, ${JSON.stringify(i.item).replace(/"/g, '&quot;')})"> <span>${esc(i.item)}</span></label>`
-        : i.computed ? `<label class="muted" title="computed in the sheet"><span>${i.done ? '☑' : '☐'}</span> <span>${esc(i.item)}</span></label>` : `<div class="muted" style="margin-top:4px">${esc(i.item)}</div>`).join('')}</div>` : `<div class="meta">No checklist sheet configured.</div>`;
-    }
+    const length = c.minutes ? `<div class="muted" style="margin-top:6px">${c.minutes} min${c.chunkable && g.minutes != null && c.minutes > g.minutes ? `, can be split: ${g.minutes} min now` : ''}</div>` : '';
+    let body = `<div class="head"><div class="kind">${esc(project) || '&nbsp;'}</div><div class="big">${mdLine(t ? t.title : c.title).html}${t && t.work_kind ? ' ' + kindChip(t) : ''}</div>${length}${treeLink}`;
     if (c.suggest) {           // the daily reading / writing card: what to read or write, from the projects, else the fallback
       const st = c.suggest.task, sg = c.suggest;
       body += st ? `<div class="meta" style="margin-top:12px">${esc(sg.verb)}: <b>${mdLine(st.title).html}</b> <span class="muted">${esc((sg.path || []).join(' / '))}</span> ${chips(st)}<br>
@@ -453,25 +444,22 @@ async function renderFeed() {
           <input id="suggestWhat" data-draft="feed:suggest:${esc(sg.flag)}" placeholder="what are you ${esc(sg.flag)}? (names the timer; filed by its title)" style="margin-top:8px;width:100%;max-width:420px;padding:6px 9px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit" onkeydown="event.stopPropagation()"></div>`;
     }
     body += '</div>';                       // the agent's notes stay on the Projects page: the card is the task alone
+    const k = JSON.stringify(c.key).replace(/"/g, '&quot;');
     const actions = `<div class="actions">
-        ${isActive ? `<button class="btn" onclick="stopTimer()">Stop</button>` : `<button class="btn primary" onclick="startItem(${c.id})">Start</button>`}
-        <label class="btn" style="display:flex;gap:6px;align-items:center"><input type="checkbox" onchange="completeItem(${c.id}, this)"> ${c.kind === 'task' ? 'Complete' : 'Done'}</label>
+        ${isActive ? `<button class="btn" onclick="stopTimer()">Stop</button>` : `<button class="btn primary" onclick="startItem(${k})">Start</button>`}
+        <label class="btn" style="display:flex;gap:6px;align-items:center"><input type="checkbox" onchange="completeItem(${k}, this)"> ${c.kind === 'task' ? 'Complete' : 'Done'}</label>
+        <button class="btn" onclick="skipItem(${k})" title="Not now: the card goes to the bottom of today's stack">Next</button>
       </div>`;
     card = page(body, actions);
   }
   const meeting = f.meeting_now ? `<div class="meeting">In a meeting until ${f.meeting_now.end}: ${esc(f.meeting_now.title)}</div>` : '';
   feedMeetings = {list: f.meetings || [], alert: f.meeting_alert_all_day ? 0 : (f.meeting_alert_minutes || 45)};   // 0: any meeting still to come today
-  const agentName = s => esc(String(s || '').replace(/^agent:/, ''));
-  const byAgent = String(f.plan.source || '').startsWith('agent:') ? `<div class="foot"><span>schedule set by ${agentName(f.plan.source)}</span></div>`
-    : f.plan.agent_plan ? `<div class="foot"><span>re-planned from the schedule ${agentName(f.plan.agent_plan)} set</span></div>` : '';
-  const note = f.replanning.active ? `<div class="foot"><span>re-planning…</span></div>` : f.plan.off_track ? `<div class="foot"><span>off track, re-plan pending</span></div>` : byAgent;
+  const n = f.stack_size || 0;
+  const foot = `<div class="foot"><span>${n} card${n === 1 ? '' : 's'} in the stack${gapText ? ' · ' + gapText : ''}${f.waiting_count ? ` · ${f.waiting_count} waiting for a longer gap` : ''}</span></div>`;
   const nudge = f.focus_monitor && f.focus_monitor.due ? `<div class="nudge">Review your focus monitor <button class="btn small" onclick="focusMonitorDone()">Done</button></div>` : '';
-  m.innerHTML = `<div class="feed"><div class="upcoming">${upcomingText()}</div>${nudge}${meeting}<div class="stack">${card}</div>${note}</div>`;
+  m.innerHTML = `<div class="feed"><div class="upcoming">${upcomingText()}</div>${nudge}${meeting}<div class="stack">${card}</div>${foot}</div>`;
   Draft.bindAll(m);
-  if (f.replanning.active) setTimeout(() => {if (view === 'feed') renderFeed().catch(() => {});}, 5000);
 }
-// "Daily regather in 12 minutes": the next meeting starting within the alert window, in whole minutes, re-checked
-// twice a minute so the number moves without ever showing seconds
 let feedMeetings = {list: [], alert: 45};   // alert 0 = the next meeting whenever it is today
 function upcomingText() {
   const now = new Date(), nowMin = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
@@ -499,23 +487,22 @@ async function rebuild(fromNow) {
   try {await api('/plan/rebuild', 'POST', {from_now: fromNow}); toast('Plan ready'); render();}
   catch (e) {toast('Plan failed: ' + esc(e.message), 8000);}
 }
-async function startItem(id) {
+async function startItem(card) {
   const what = document.getElementById('suggestWhat');            // the reading / writing card with nothing queued: what is being read or written
-  try {const r = await api('/feed/start', 'POST', {item_id: id, label: what ? what.value.trim() || null : null}); if (what) Draft.clear(what.dataset.draft); if (r.toggl_error) toast('Toggl: ' + esc(r.toggl_error), 6000);}
+  try {const r = await api('/feed/start', 'POST', {card, label: what ? what.value.trim() || null : null}); if (what) Draft.clear(what.dataset.draft); if (r.toggl_error) toast('Toggl: ' + esc(r.toggl_error), 6000);}
   catch (e) {toast('Could not start: ' + esc(e.message), 6000);}
   await refreshStatus(); renderFeed();
 }
-async function completeItem(id, el) {
+async function completeItem(card, el) {
   const page = el?.closest('.page');
-  const req = api('/feed/complete', 'POST', {item_id: id});           // save while the card animates away
+  const req = api('/feed/complete', 'POST', {card});                  // save while the card animates away
   if (page) {await new Promise(r => {page.addEventListener('animationend', r, {once: true}); setTimeout(r, 1200); page.classList.add('done');});}
-  try {const r = await req; if (r.linear_error) toast('Linear: ' + esc(r.linear_error), 6000); if (r.sheet && !r.sheet.ok) toast('Done here; sheet: ' + esc(r.sheet.error), 6000); pushUndo('complete', () => api('/feed/uncomplete', 'POST', {item_id: id}));}
+  try {const r = await req; if (r.linear_error) toast('Linear: ' + esc(r.linear_error), 6000); if (r.sheet && !r.sheet.ok) toast('Done here; sheet: ' + esc(r.sheet.error), 6000); pushUndo('complete', () => api('/feed/uncomplete', 'POST', {card}));}
   catch (e) {toast(esc(e.message), 6000); page?.classList.remove('done');}
   await refreshStatus();
   renderFeed().catch(e => {toast('Feed: ' + esc(e.message), 6000); page?.classList.remove('done');});
 }
-async function finishBlock(id) {await api('/feed/finish_block', 'POST', {item_id: id}); pushUndo('done for now', () => api('/feed/reset_item', 'POST', {item_id: id})); await refreshStatus(); renderFeed();}
-async function skipItem(id) {await api('/feed/skip', 'POST', {item_id: id}); pushUndo('skip', () => api('/feed/reset_item', 'POST', {item_id: id})); await refreshStatus(); renderFeed();}
+async function skipItem(card) {await api('/feed/skip', 'POST', {card}); pushUndo('next', () => api('/feed/unskip', 'POST', {card})); await refreshStatus(); renderFeed();}
 async function startExercise(title) {const r = await api('/exercise/start', 'POST', title ? {title} : undefined); if (r.toggl_error) toast('Toggl: ' + esc(r.toggl_error), 6000); else toast(`Timer started: ${esc(r.kind)}`); await refreshStatus(); renderFeed();}
 async function finishSuggested(tid) {try {const r = await api(`/tasks/${tid}/complete`, 'POST'); pushUndo('finish', () => api(`/tasks/${tid}/uncomplete`, 'POST')); if (r.linear_error) toast('Linear: ' + esc(r.linear_error), 6000); else toast('Task completed');} catch (e) {toast(esc(e.message), 5000);} await refreshStatus(); renderFeed();}
 async function focusMonitorDone() {try {const r = await api('/focus_monitor/done', 'POST'); toast(`Noted. Next prompt in about ${r.next_in_minutes} minutes` + (r.sheet && !r.sheet.ok ? '; sheet: ' + esc(r.sheet.error) : ''), 4000);} catch (e) {toast(esc(e.message), 5000);} renderFeed();}
@@ -1720,7 +1707,7 @@ async function renderPlan() {
     ${p.raw?.instructions ? `<p class="muted">Instructions for the day from your assistant agent: ${esc(p.raw.instructions)}</p>` : ''}
     ${p.raw?.exercise_note ? `<p class="muted">${esc(p.raw.exercise_note)}</p>` : ''}
     <ul class="timeline" style="list-style:none;padding:0;margin:0">${p.items.map(i => `<li class="${i.status}"><span>${i.start}–${i.end}</span><span class="k">${i.kind}</span><span>${mdLine(i.title).html}${i.note ? ` <span class="muted">— ${esc(i.note)}</span>` : ''}</span>
-      <span>${i.kind === 'meeting' ? '' : i.status === 'pending' ? `<button class="btn small ghost" onclick="skipItem(${i.id}).then(renderPlan)">skip</button>` : `<button class="btn small ghost" onclick="api('/feed/reset_item','POST',{item_id:${i.id}}).then(renderPlan)">reset</button>`}</span></li>`).join('')}</ul></div>`;
+      <span></span></li>`).join('')}</ul></div>`;
 }
 
 // ------------------------------------------------------------------ settings

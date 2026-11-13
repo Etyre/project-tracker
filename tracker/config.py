@@ -50,9 +50,6 @@ DEFAULTS: dict[str, Any] = {
         "work_end": "18:00",
         "default_estimate_minutes": 30,
         "min_block_minutes": 15,
-        "replan_drift_minutes": 20,          # re-plan when the next block is this late (or early)
-        "overrun_minutes": 30,               # ... or the active block has run this far past its end
-        "replan_min_interval_minutes": 10,   # never auto re-plan more often than this
         "meeting_alert_minutes": 45,         # the feed shows "N minutes until X" this long before a meeting
         "meeting_alert_all_day": False,      # ... or for the next meeting whenever it is today
     },

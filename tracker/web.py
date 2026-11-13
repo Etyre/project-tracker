@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from . import tags, calendar_feed, config, db, estimates, exercise, journal, linear, llm, scheduler, sheets, toggl, snapshot
 from . import agent_api
+from . import feed as feed_mod
 
 log = logging.getLogger("web")
 HTML_PATH = config.ROOT / "tracker" / "dashboard.html"
@@ -114,8 +115,8 @@ class QuickAdd(BaseModel):
     text: str
 
 
-class ItemRef(BaseModel):
-    item_id: int
+class CardRef(BaseModel):
+    card: str                   # "task:<id>" or "routine:<title>" (feed.key)
     label: str | None = None    # the reading / writing card with nothing queued: what is being read or written (names the timer)
 
 
@@ -431,16 +432,23 @@ def _item_label(it: dict) -> str:
 
 
 def _timer_is_for(it: dict, e: dict | None) -> bool:
-    """Whether the running timer belongs to this feed card: the same task, the same routine by name, the day's
-    exercise or journal session, or simply the card that was started."""
+    """Whether the running timer belongs to this feed card: the same task, the same routine by name (for the daily
+    reading or writing card, also the task it offers or a timer of that kind), the day's exercise or journal session."""
     if not e:
         return False
-    if it["status"] == "active":
+    if it.get("status") == "active":
         return True
     if it["kind"] == "task":
         return bool(it["task_id"]) and e["task_id"] == it["task_id"]
     if it["kind"] in ("exercise", "journal"):
         return e["kind"] == it["kind"]
+    flag = _suggest_flag(it["title"]) if it["kind"] == "routine" else None
+    if flag:
+        if e["kind"] == flag:
+            return True
+        pick = _suggest_pick(flag)
+        if pick and e["task_id"] == pick["task"]["id"]:
+            return True
     return toggl.routine_key(e["label"]) == toggl.routine_key(_item_label(it))      # routine, checklist
 
 
@@ -994,150 +1002,132 @@ def create_app() -> FastAPI:
 
     @app.get("/api/feed")
     def feed():
+        """The stack for now: the top card, what follows, what is waiting for a longer gap, and the gap itself."""
         date = db.today()
-        p = db.plan(date)
         now = dt.datetime.now()
         now_min = now.hour * 60 + now.minute
-        out: dict[str, Any] = {"date": date, "now": now.strftime("%H:%M"), "plan": None, "current": None,
-                               "timer": _timer_state(), "exercise": _current_exercise(date),
-                               "replanning": dict(scheduler.replanning), "focus_monitor": _focus_monitor_state(),
-                               "status": {"toggl": toggl.enabled(), "sheets_writable": sheets.writable()}}
         cfg = config.load()["general"]
-        ws, we = scheduler.parse_hm(cfg["work_start"]), scheduler.parse_hm(p["work_end"] if p else cfg["work_end"])
+        ws, we = scheduler.parse_hm(cfg["work_start"]), scheduler.parse_hm(cfg["work_end"])
+        out: dict[str, Any] = {"date": date, "now": now.strftime("%H:%M"), "current": None,
+                               "timer": _timer_state(), "exercise": _current_exercise(date), "focus_monitor": _focus_monitor_state(),
+                               "status": {"toggl": toggl.enabled(), "sheets_writable": sheets.writable()}}
         out["outside_hours"] = None if ws <= now_min < we else ("before" if now_min < ws else "after")
         out["work_window"] = [scheduler.hm(ws), scheduler.hm(we)]
-        if not p:
-            return out
-        if scheduler.maybe_replan():          # schedule drifted: rebuild the rest of the day in the background
-            out["replanning"] = dict(scheduler.replanning)
-        items = p["items"]
-        active = next((i for i in items if i["status"] == "active"), None)
-        pending = [i for i in items if i["status"] == "pending" and i["kind"] != "meeting"]
-        for i in list(pending):                       # a block whose task was deleted since the plan was built
-            if i["kind"] == "task" and i["task_id"] and not db.task(i["task_id"]):
-                db.set_item_status(i["id"], "skipped")
-                pending.remove(i)
-        current = active or (pending[0] if pending else None)
-        meeting_now = next((i for i in items if i["kind"] == "meeting" and scheduler.parse_hm(i["start"]) <= now_min < scheduler.parse_hm(i["end"])), None)
-        if current and current["kind"] == "task" and current["task_id"]:
-            current = {**current, "task": {**_tick_task_fields(db.task(current["task_id"])), "notes_added": db.notes_for("task", current["task_id"])},
-                       "path": db.project_path(current["project_id"])}
-        if current and current["kind"] == "checklist":
-            current = {**current, "checklist": _checklist_state(date)}
-        flag = _suggest_flag(current["title"]) if current and current["kind"] == "routine" else None
-        if flag:
-            current = {**current, "suggest": {**(_suggest_pick(flag) or {"task": None, "path": None}), "flag": flag, "verb": SUGGEST_VERB[flag],
-                                              "fallback": config.load()[flag].get("fallback") or ("Read a book" if flag == "reading" else "Free writing")}}
-        if current:
-            current["behind_minutes"] = max(0, now_min - scheduler.parse_hm(current["start"]))
-        done = sum(1 for i in items if i["status"] == "done" and i["kind"] != "meeting")
-        total = sum(1 for i in items if i["kind"] != "meeting")
+        st = feed_mod.cards(now)
+        g = st["gap"]
+        e = db.running_entry()
+
+        def decorate(c: dict, full: bool) -> dict:
+            c = dict(c)
+            c["status"] = "active" if _timer_is_for(c, e) else "pending"
+            t = c.pop("task", None)
+            if c["kind"] == "task" and t is not None:
+                c["path"] = db.project_path(t["project_id"])
+                if full:
+                    c["task"] = {**_tick_task_fields(db.task(t["id"]) or t), "notes_added": db.notes_for("task", t["id"])}
+            flag = _suggest_flag(c["title"]) if c["kind"] == "routine" else None
+            if flag and full:
+                c["suggest"] = {**(_suggest_pick(flag) or {"task": None, "path": None}), "flag": flag, "verb": SUGGEST_VERB[flag],
+                                "fallback": config.load()[flag].get("fallback") or ("Read a book" if flag == "reading" else "Free writing")}
+            return c
+
+        stack = list(st["stack"])
+        active = next((c for c in stack + st["waiting"] if _timer_is_for(c, e)), None)   # the card being worked on stays on top
+        if active:
+            stack = [active] + [c for c in stack if c["key"] != active["key"]]
+        current = decorate(stack[0], True) if stack else None
+        midnight = dt.datetime.combine(now.date(), dt.time()).timestamp()
+        done_tasks = db.row("SELECT count(*) AS n FROM tasks WHERE completed_at >= ?", (midnight,))["n"]
+        done = int(done_tasks) + len(db.checklist_done_today(date))
         out.update({
-            "plan": {"built_at": p["built_at"], "rationale": p["rationale"], "source": p["raw"].get("source"),
-                     "agent_plan": (p["raw"].get("agent_plan") or {}).get("source"), "instructions": p["raw"].get("instructions"),
-                     "work_start": p["work_start"], "work_end": p["work_end"], "off_track": scheduler.off_track()},
-            "current": current, "meeting_now": meeting_now,
-            "meetings": [{"title": i["title"], "start": i["start"], "end": i["end"]} for i in items if i["kind"] == "meeting"],
+            "current": current,
+            "up_next": [decorate(c, False) for c in stack[1:6]],
+            "stack_size": len(stack),
+            "waiting": [{"key": c["key"], "title": c["title"], "minutes": c["minutes"]} for c in st["waiting"][:6]],
+            "waiting_count": len(st["waiting"]),
+            "gap": {k: g[k] for k in ("minutes", "until", "at", "kind")},
+            "meeting_now": g["meeting_now"],
+            "meetings": [{"title": m["title"], "start": m["start"].strftime("%H:%M"), "end": m["end"].strftime("%H:%M")} for m in feed_mod.meetings_today(now.date())],
             "meeting_alert_minutes": cfg["meeting_alert_minutes"], "meeting_alert_all_day": cfg["meeting_alert_all_day"],
-            "up_next": [i for i in pending if not current or i["id"] != current["id"]][:5],
-            "progress": {"done": done, "total": total},
-            "exercise_item": next((i for i in items if i["kind"] == "exercise"), None),
+            "progress": {"done": done, "total": done + len(stack) + len(st["waiting"])},
         })
-        ex_item = out["exercise_item"]
         extra = (config.load()["exercise"].get("after_done") or "").strip()
-        out["exercise_done"] = bool(ex_item and ex_item["status"] == "done") or _exercise_logged_today(out["exercise"])
+        out["exercise_done"] = _exercise_logged_today(out["exercise"])
         out["exercise_extra"] = extra or None                           # offered once the day's session is done
         out["exercise_extra_done"] = bool(extra) and _exercise_logged_today(extra)
         return out
 
+    def _card(k: str) -> dict:
+        try:
+            c = feed_mod.find(k)
+        except ValueError as ex:
+            raise HTTPException(400, str(ex))
+        if not c:
+            raise HTTPException(404, "no such card")
+        return c
+
     @app.post("/api/feed/start")
-    def feed_start(r: ItemRef):
-        it = db.plan_item(r.item_id)
-        if not it:
-            raise HTTPException(404)
-        flag = _suggest_flag(it["title"]) if it["kind"] == "routine" else None
+    def feed_start(r: CardRef):
+        c = _card(r.card)
+        flag = _suggest_flag(c["title"]) if c["kind"] == "routine" else None
         pick = _suggest_pick(flag) if flag else None
         if pick:                                      # the reading / writing card: the timer is the task's, so its time is tracked
             res = _start_timer("task", pick["task"]["title"], pick["task"]["id"])
         elif flag:                                    # nothing queued: a book, a paper, a piece, named by the user, filed by its title
             ftag = [t for t in [(config.load()[flag].get("tag") or "").strip()] if t]     # tagged reading / writing whatever its project
             res = _start_timer(flag, (r.label or "").strip() or flag.capitalize(), None, ftag, context=f"{flag} a book, paper or piece of writing")
+        elif c["kind"] == "task":
+            res = _start_timer("task", c["title"], c["task_id"])
         else:
-            res = _start_timer(it["kind"] if it["kind"] in ("task", "exercise", "routine", "journal") else "task",
-                               _item_label(it), it["task_id"], [it["kind"]] if it["kind"] in ("exercise", "journal") else None,
-                               context={"exercise": "exercise session, travel included", "routine": "daily routine from the checklist", "journal": "journaling"}.get(it["kind"], ""))
-        db.set_item_status(it["id"], "active")
+            res = _start_timer("routine", c["title"], None, context="daily routine from the checklist")
         return {"ok": True, **res}
 
     @app.post("/api/feed/complete")
-    def feed_complete(r: ItemRef):
-        """Checkbox on the card: the block is done AND (for a task) the task itself is complete."""
-        it = db.plan_item(r.item_id)
-        if not it:
-            raise HTTPException(404)
-        if _timer_is_for(it, db.running_entry()):
+    def feed_complete(r: CardRef):
+        """Checkbox on the card: a routine is ticked (here and in the sheet); a task is completed."""
+        c = _card(r.card)
+        date = db.today()
+        if _timer_is_for(c, db.running_entry()):
             _stop_timer()
-        db.set_item_status(it["id"], "done")
-        err = None
-        scheduler.maybe_replan()
-        if it["kind"] == "routine":            # a checklist row: tick it in the sheet
-            date = db.today()
-            if it["title"] not in db.checklist_done_today(date):
-                db.log_checklist(date, it["title"])
-            sheet = sheets.mark_done(it["title"]) if sheets.writable() else {"ok": False, "error": "write-back not configured"}
+        feed_mod.unskip(c["key"], date)
+        if c["kind"] == "routine":            # a checklist row: tick it in the sheet
+            if c["title"] not in db.checklist_done_today(date):
+                db.log_checklist(date, c["title"])
+            db.execute("UPDATE plan_items SET status='done' WHERE date=? AND kind='routine' AND status='pending' AND lower(title)=lower(?)", (date, c["title"]))
+            sheet = sheets.mark_done(c["title"]) if sheets.writable() else {"ok": False, "error": "write-back not configured"}
             return {"ok": True, "linear_error": None, "sheet": sheet}
-        if it["kind"] == "task" and it["task_id"]:
-            db.complete_task(it["task_id"])
-            err = linear.safe_push(it["task_id"])
-            for other in db.rows("SELECT id FROM plan_items WHERE task_id=? AND status='pending'", (it["task_id"],)):
-                db.set_item_status(other["id"], "done")
+        db.complete_task(c["task_id"])
+        err = linear.safe_push(c["task_id"])
+        db.execute("UPDATE plan_items SET status='done' WHERE task_id=? AND status='pending'", (c["task_id"],))   # the plan page follows
         return {"ok": True, "linear_error": err}
 
     @app.post("/api/feed/uncomplete")
-    def feed_uncomplete(r: ItemRef):
-        """Undo of the card's checkbox: the block (and any sibling blocks of the task) back to pending, the task reopened."""
-        it = db.plan_item(r.item_id)
-        if not it:
-            raise HTTPException(404)
-        db.set_item_status(it["id"], "pending")
-        err = None
-        if it["kind"] == "routine":
-            db.execute("DELETE FROM checklist_log WHERE date=? AND item=?", (db.today(), it["title"]))
+    def feed_uncomplete(r: CardRef):
+        """Undo of the card's checkbox: the routine unticked, or the task reopened."""
+        c = _card(r.card)
+        date = db.today()
+        if c["kind"] == "routine":
+            db.execute("DELETE FROM checklist_log WHERE date=? AND item=?", (date, c["title"]))
+            db.execute("UPDATE plan_items SET status='pending' WHERE date=? AND kind='routine' AND status='done' AND lower(title)=lower(?)", (date, c["title"]))
             if sheets.writable():
-                sheets.mark_done(it["title"], undo=True)
-        if it["kind"] == "task" and it["task_id"]:
-            db.uncomplete_task(it["task_id"])
-            err = linear.safe_push(it["task_id"])
-            for other in db.rows("SELECT id FROM plan_items WHERE task_id=? AND status='done' AND date=?", (it["task_id"], it["date"])):
-                db.set_item_status(other["id"], "pending")
+                sheets.mark_done(c["title"], undo=True)
+            return {"ok": True, "linear_error": None}
+        db.uncomplete_task(c["task_id"])
+        err = linear.safe_push(c["task_id"])
+        db.execute("UPDATE plan_items SET status='pending' WHERE task_id=? AND status='done' AND date=?", (c["task_id"], date))
         return {"ok": True, "linear_error": err}
 
-    @app.post("/api/feed/finish_block")
-    def feed_finish_block(r: ItemRef):
-        """Block done, task stays open (partial progress)."""
-        it = db.plan_item(r.item_id)
-        if not it:
-            raise HTTPException(404)
-        if _timer_is_for(it, db.running_entry()):
-            _stop_timer()
-        db.set_item_status(it["id"], "done")
-        return {"ok": True}
-
     @app.post("/api/feed/skip")
-    def feed_skip(r: ItemRef):
-        it = db.plan_item(r.item_id)
-        if not it:
-            raise HTTPException(404)
-        if it["status"] == "active":
+    def feed_skip(r: CardRef):
+        """Next: the card goes to the bottom of today's stack (its timer, if running, stops)."""
+        c = _card(r.card)
+        if _timer_is_for(c, db.running_entry()):
             _stop_timer()
-        db.set_item_status(it["id"], "skipped")
-        scheduler.maybe_replan()
-        return {"ok": True}
+        return {"ok": True, "skipped": feed_mod.skip(c["key"], db.today())}
 
-    @app.post("/api/feed/reset_item")
-    def feed_reset(r: ItemRef):
-        db.set_item_status(r.item_id, "pending")
-        return {"ok": True}
+    @app.post("/api/feed/unskip")
+    def feed_unskip(r: CardRef):
+        return {"ok": True, "skipped": feed_mod.unskip(r.card, db.today())}
 
     @app.post("/api/focus_monitor/done")
     def focus_monitor_done():
@@ -1156,10 +1146,7 @@ def create_app() -> FastAPI:
             return {"ok": True, "kind": title, "item_id": None, **res}
         kind = _current_exercise(date)
         res = _start_timer("exercise", _exercise_label(kind), None, ["exercise"], context="exercise session, travel included")
-        it = db.row("SELECT id FROM plan_items WHERE date=? AND kind='exercise' AND status IN ('pending','active')", (date,))
-        if it:
-            db.set_item_status(it["id"], "active")
-        return {"ok": True, "kind": kind, "item_id": it["id"] if it else None, **res}
+        return {"ok": True, "kind": kind, **res}
 
     @app.post("/api/journal/start")
     def journal_start():
@@ -1248,21 +1235,14 @@ def _loop() -> None:
                     log.info("linear sync: %s", linear.pull())
                 except linear.LinearError as ex:
                     log.warning("linear sync failed: %s", ex)
-            # 3. Re-plan when the day has drifted from the schedule (rate-limited inside)
-            scheduler.maybe_replan()
-            # 4. Build today's plan automatically once the work day starts
+            # 3. The daily Markdown snapshot of the outline (once the configured hour has passed). Nothing plans the
+            #    day by itself any more: the feed is a stack, and the plan page is built only on request.
             now = dt.datetime.now()
-            ws = scheduler.parse_hm(cfg["general"]["work_start"])
-            if now.hour * 60 + now.minute >= ws - 15 and not db.plan(db.today()) and db.get_setting("auto_plan_date") != db.today():
-                db.set_setting("auto_plan_date", db.today())
-                log.info("auto-building today's plan")
-                scheduler.build(reason="start of the work day")
-            # 5. The daily Markdown snapshot of the outline (once the configured hour has passed)
             snapshot.maybe_snapshot(now)
-            # 6. Today's exercise: decided once, in the morning (from 06:00), and kept for the day
+            # 4. Today's exercise: decided once, in the morning (from 06:00), and kept for the day
             if now.hour >= 6 and not exercise.decided_today():
                 exercise.decide(db.today())
-            # 7. Fresh copies of the sheets and calendar before the internet goes off for the night
+            # 5. Fresh copies of the sheets and calendar before the internet goes off for the night
             pf = (cfg["sheets"].get("prefetch_time") or "").strip()
             if pf and now.hour * 60 + now.minute >= scheduler.parse_hm(pf) and db.get_setting("prefetch_date") != db.today():
                 db.set_setting("prefetch_date", db.today())
@@ -1270,14 +1250,14 @@ def _loop() -> None:
                 sheets.prefetch()
                 calendar_feed.prefetch()
                 exercise.history()           # refreshes the Toggl part of the exercise history too
-            # 8. The focus-monitor prompt: a macOS notification once per interval when it comes due
+            # 6. The focus-monitor prompt: a macOS notification once per interval when it comes due
             fm = _focus_monitor_state()
             if fm["due"] and config.load()["focus_monitor"].get("notify", True) and notify_hook is not None:
                 key = db.get_setting("focus_monitor_next")
                 if key != notified_for:
                     notified_for = key
                     notify_hook("Review your focus monitor", "Then press Done on the feed; the next prompt is 1-2 hours away.")
-            # 9. Tasks Claude has not yet judged quick-task-or-focused-work: a batch every few minutes
+            # 7. Tasks Claude has not yet judged quick-task-or-focused-work: a batch every few minutes
             if llm.enabled() and time.time() - last_classify > 300:
                 last_classify = time.time()
                 try:

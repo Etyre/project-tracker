@@ -1,11 +1,12 @@
 # Project Tracker
 
 A personal GTD system with a project hierarchy, a Claude-powered quick-add, and a **feed** that serves you one
-card at a time, chosen from an internal schedule that is rebuilt from your calendar, daily checklist, exercise
-sheet, open tasks and your own rules document, and re-planned whenever the day drifts off it. Built from
-2026-10-29 (the original brief is `Project Tracker spec.md`) because no todo app combined a Workflowy-style
-outline with a scheduler that decides *what now* from calendar, checklist, exercise and priorities, files time
-into Toggl and mirrors Linear, all on this Mac with the data in a local SQLite file.
+card at a time from a stack of your open tasks and daily routines, ordered by priority and filtered by how much
+time you have before your next meeting. Built from 2026-10-29 (the original brief is `Project Tracker spec.md`)
+because no todo app combined a Workflowy-style outline with a feed that decides *what now* from calendar,
+checklist, exercise and priorities, files time into Toggl and mirrors Linear, all on this Mac with the data in a
+local SQLite file. (Until 2026-11-13 the feed followed a day schedule the app built and re-planned; that was
+replaced by the stack, and the planner is now an on-demand plan page.)
 
 A standalone macOS app: a native window plus a menu bar item (current card, start/stop timer, complete,
 quick add). Under the hood a local Python server on 127.0.0.1:8791 renders the UI inside the window; data is
@@ -17,9 +18,9 @@ SQLite in `~/Library/Application Support/TaskTracker/`.
 WKWebView over it) plus a menu bar item. `dist/Project Tracker.app` is a tiny native launcher that runs this
 project's `.venv` Python with `-m tracker app` and restarts it if it crashes (logged to `launcher.log` in the data
 folder). The bundle references this project directory (its venv and `config.toml`), so rebuild after moving the
-project. A background loop in the server (every minute) reconciles Toggl, syncs Linear, builds the day plan at the
-start of the work day, re-plans on drift, prefetches the sheets at night, writes the daily snapshot and has Claude
-judge the kind of work of tasks nobody marked. `python -m tracker web` serves the same UI to a browser instead
+project. A background loop in the server (every minute) reconciles Toggl, syncs Linear, decides the day's exercise,
+prefetches the sheets at night, writes the daily snapshot and has Claude judge the kind of work of tasks nobody
+marked. Nothing in it plans the day: the feed is computed on each request. `python -m tracker web` serves the same UI to a browser instead
 (headless / development).
 
 **Projects** - one outline, modelled on Workflowy and Roam. Every project header and task is a line; projects
@@ -175,34 +176,45 @@ project of yours puts the task in Inbox, with the notice saying so, rather than 
 in …" lines of the notice at the bottom are links:
 click one and the Projects page opens zoomed into that project, with the new task selected and its notes open.
 
-**The schedule** is internal. It is built at the start of the work day (and on demand) from the free windows
-between meetings, the prioritised open tasks (blocking > hard deadline > soft deadline > importance > age, with estimates
-multiplied by your measured actual/estimate ratio), the checklist, the exercise sheet and the rules doc. Claude
-does the packing when configured; a deterministic packer is the fallback and the validator (anything outside
-the free windows is clamped or dropped).
+**The stack** (`tracker/feed.py`) is what the feed serves, computed afresh on every request, never stored. It is
+today's recurring cards first (the checklist rows with a card, the daily reading and writing), then every open
+task in a live project (a task with open sub-tasks is a container and stays out; Someday items stay out) ordered
+by priority score (blocking > hard deadline > soft deadline > importance > age). Each card has an expected length:
+the routine's minutes, or the task's estimate multiplied by your measured actual/estimate ratio. Then the **gap**
+is measured: the minutes until the next meeting on your calendar, or until the end of the work day when no meeting
+is left (during a meeting, until the one after it; in the evening nothing bounds it). A card is offered only if it
+fits the gap: its length is within it, or the task can be split (`chunkable`, the default; `#onesitting` turns it
+off) and at least `min_block_minutes` are left; focused work (`#focus`, or judged so by Claude) is split only into
+a stretch of 45 minutes or more, since it needs a run of concentration. With 15 minutes before a meeting the top
+card is the best task of 15 minutes or less, or the best quick task that can be done in pieces; the rest are
+"waiting for a longer gap" and come back when it opens. "Next" on a card moves it to the bottom of the stack for the rest of the day (undo brings it
+back); a card whose timer is running stays on top until it is stopped or done.
 
-**The agent's schedule replaces the app's.** A schedule your assistant agent sends through the agent API
-overwrites whatever plan the app had for that day and becomes the day's plan. From then on the app treats it like
-any plan: the feed follows it, and drift re-planning adjusts it as usual (late, early, overrun, calendar change).
-A re-plan does not start from a blank slate, though: the agent's schedule and its rationale go to the planner as
-the baseline to adjust (keep its choice of tasks and its order where they still fit, shift times to reality, drop
-only what no longer fits), and the deterministic fallback keeps the agent's order too. The plan page and the feed
-say when the plan is the agent's and when it was re-planned from the agent's schedule. The one thing that never
-changes once set is the **day's exercise**: the morning decision stands for the day, and an exercise block the
-agent sends only names the session when nothing is decided yet for that day (for a later day the choice waits in
-the plan until that morning); otherwise the block is retitled to the decided session and the reply says so.
+**The plan page** still builds a day schedule, but only when you ask (Build / Re-plan on the Plan page, or the
+agent's `POST /api/agent/schedule/rebuild`): the free windows between meetings, the same prioritised tasks, the
+checklist, the exercise sheet and the rules doc, packed by Claude when configured and by a deterministic packer
+otherwise. Nothing builds or re-plans it by itself any more, and the feed does not read it, with one exception
+below. Completing a card marks the matching block done, so the page stays roughly true when a plan exists.
 
-**The agent's priorities steer every plan.** `PATCH /api/agent/tasks/{id}` sets a task's importance, deadline,
+**The agent's schedule orders the stack.** A schedule your assistant agent sends through the agent API is stored
+as the day's plan and shown on the plan page, and the tasks it lists go to the top of the feed's stack in the
+agent's order (still subject to the gap: a block that does not fit before the next meeting waits). Its times are
+not followed: the feed has no schedule to keep. The one thing that is fixed once set is the **day's exercise**: the
+morning decision stands for the day, and an exercise block the agent sends only names the session when nothing is
+decided yet for that day (for a later day the choice waits in the plan until that morning); otherwise the block is
+retitled to the decided session and the reply says so.
+
+**The agent's priorities steer the stack.** `PATCH /api/agent/tasks/{id}` sets a task's importance, deadline,
 blocking (and for whom), kind of work, reading/writing and whether it may be split, with a `why`. The change is
-written as the agent's signed note on the task, and those are exactly the inputs every build and re-plan is made
-from, so the app's own planning follows the agent's priorities and urgency. Text about what to keep in mind goes
+written as the agent's signed note on the task, and those are exactly the inputs the stack's order and the gap
+test are made from, so the feed follows the agent's priorities and urgency. Text about what to keep in mind goes
 through `PUT /api/agent/schedule/instructions`: for one day, or with `standing: true` for every day until replaced.
-Both are appended to your rules document for the planner and shown on the plan page.
+Both are appended to your rules document for the plan page's planner and shown there.
 
 **The planning log** records every planning decision so the agent can see everything the app did on its own the
-next time it looks: each build and re-plan (who asked, why it re-planned, the free windows, the candidates
-considered with their priorities, the exercise and routines it had, the agent's schedule it adjusted and the blocks
-it produced), each exercise decision, each schedule the agent set, each instruction, guidance and priority change.
+next time it looks: each plan built on request (who asked, the free windows, the candidates considered with their
+priorities, the exercise and routines it had, the agent's schedule it adjusted and the blocks it produced), each
+exercise decision, each schedule the agent set, each instruction, guidance and priority change.
 `GET /api/agent/schedule` returns the day's log and everything logged since that agent (by name) last looked;
 `GET /api/agent/schedule/log` queries it by day or since a moment.
 
@@ -258,26 +270,22 @@ through workspace paths once an hour, fetches the entry history once an hour for
 whether you stopped the running timer in Toggl only every `[toggl] check_minutes` (5), and stops calling a bucket
 that reports itself used up (HTTP 402) until Toggl says it resets. "Test connections" shows the user-scoped calls
 left this hour. Every fetch of the history also trues up the app's own entries against Toggl's: a timer you stopped
-in Toggl is stopped here at that time (its card goes back to pending), and starts or stops that drifted by more than
+in Toggl is stopped here at that time, and starts or stops that drifted by more than
 a minute take Toggl's values, so tracked time and the estimates learned from it stay right.
 
-**The feed** shows one card; completing it flashes it green and slides it away, and the next card takes its place. Above the deck, from `meeting_alert_minutes` (45) before a meeting, or all day with `meeting_alert_all_day`, a line
-says "12 minutes until Daily regather", counting down in whole minutes (hours and minutes when it is over an hour away). The top card is the one the schedule says is next: Start (a Toggl timer tagged `task-tracker`, named
-after the task), a completion checkbox (completes the task, pushes to Linear), "Done for now" for a block of a
-task that continues later, Skip, and at the bottom the alternatives: today's exercise and Journal. A task card
-shows the task's own title (with the block's name underneath when the planner or the agent named it differently);
-the agent's notes are not on the card at all, only on the Projects page. A task card's
-"open in tree" link opens the Projects page zoomed into the task's own project, with the task selected and its notes
-open. Once the day's
-session is done the exercise button offers the extra session from Settings instead (`[exercise] after_done`, "zone 2
-cardio" by default), and reads "(done)" once that has been tracked too.
-The checklist card lists the sheet's items with checkboxes.
-
-**Drift** - every minute (and on every feed load) the schedule is compared with reality. If the next block is
-more than `replan_drift_minutes` late or early, the active block has overrun by `overrun_minutes`, the day
-finished early, or the calendar changed, the rest of the day is re-planned from now in the background; done,
-skipped and active blocks are kept; a schedule the agent set is the baseline the re-plan adjusts. Never more often
-than `replan_min_interval_minutes`.
+**The feed** shows one card, the top of the stack; completing it flashes it green and slides it away, and the next
+card takes its place. Above the deck, from `meeting_alert_minutes` (45) before a meeting, or all day with
+`meeting_alert_all_day`, a line says "12 minutes until Daily regather", counting down in whole minutes (hours and
+minutes when it is over an hour away). The card has Start (a Toggl timer tagged `task-tracker`, named after the
+task in the present participle), a completion checkbox (completes the task, pushes to Linear; ticks a routine in
+the sheet), and Next (not now: the card goes to the bottom of today's stack, its timer stops); at the bottom the
+alternatives: today's exercise and Journal. The card shows the task's expected length and, when it is longer than
+the gap but can be split, how long the gap is; a line under the deck says how many cards are in the stack, how
+long until the next meeting, and how many cards are waiting for a longer gap. When nothing fits the gap the deck
+says so and lists what is waiting. The agent's notes are not on the card at all, only on the Projects page. A task
+card's "open in tree" link opens the Projects page zoomed into the task's own project, with the task selected and
+its notes open. Once the day's session is done the exercise button offers the extra session from Settings instead
+(`[exercise] after_done`, "zone 2 cardio" by default), and reads "(done)" once that has been tracked too.
 
 **Estimates** - never user-entered. New tasks get a forecast from Claude (grounded in your recent actuals) and
 time tracked per task (from the app's timers; if you stop the timer in Toggl the app notices) is compared with
@@ -322,10 +330,10 @@ for the terminal). A "Journaling" Toggl timer starts.
 An executive-assistant agent gets its own door into the app, everything under `http://127.0.0.1:8791/api/agent`.
 Whatever comes through it is attributed to the agent: tasks and projects it adds carry an `agent` chip, context it
 attaches to any item is a separate signed note (never merged into your own text), a move or a priority it sets
-leaves such a note on the item saying what changed and why, a schedule it sets replaces the
-app's plan for the day and is shown as the agent's on the plan page, and the priorities and guidance it gives steer
-every plan the app builds (see *The agent's schedule replaces the app's* above). Everything the app plans by itself
-is written to the planning log for the agent to read back. Interactive documentation of
+leaves such a note on the item saying what changed and why, a schedule it sets is shown as the agent's on the plan
+page and puts its tasks at the top of the feed's stack in its order, and the priorities and guidance it gives steer
+the stack and any plan built on request (see *The agent's schedule orders the stack* above). Every plan the app
+builds is written to the planning log for the agent to read back. Interactive documentation of
 every call is at `/docs`; `GET /api/agent` returns the map.
 
 **Access.** Optional bearer token: paste one into Settings -> Assistant agent (or `AGENT_API_TOKEN`, or the menu bar
@@ -346,7 +354,7 @@ Mac may call the agent API (the server only listens on 127.0.0.1). The agent nam
 | `POST /api/agent/notes` | `{task_id | project_id, body}`: add context to any item; `GET /api/agent/notes?task_id=` lists, `DELETE /api/agent/notes/{id}` takes one back |
 | `GET /api/agent/schedule?date=` | what the agent needs to set a day: the current plan with statuses (and `agent_plan`, the schedule the agent last set for it), free windows between meetings, prioritised candidate tasks with calibrated estimates and the agent's notes, routines, the day's exercise, your rules document, the day's instructions and the `standing_guidance`, the day's `planning_log`, and `since_your_last_visit`: every planning event (any day) since this agent, by name, last called this |
 | `GET /api/agent/schedule/log?date=&since=&limit=` | the planning log, oldest first: `date` for one day, `since` (ISO local date-time or epoch seconds) for everything after a moment. Each entry: `at_local`, `event` (`built`, `replanned`, `agent_set`, `exercise`, `instructions`, `guidance`, `task`), `project`, `actor` (`app`, `user`, `agent:<name>`), a one-line `summary` and a `detail` object (for builds: reason, source, rationale, free windows, candidates considered with their priorities, exercise, routines, the agent's schedule it adjusted and every block produced) |
-| `PUT /api/agent/schedule` | `{items: [{kind, task_id, title, start, end, note}], date, work_start, work_end, rationale}`: set the day's schedule block by block (kinds `task`, `routine`, `exercise`, `journal`, `break`, `meeting`). It replaces the app's plan for the day. Blocks are clipped to the free windows (`validate_windows: false` to skip that) and what did not fit is returned in `dropped`; calendar meetings are added; done, skipped and active blocks keep their status when a schedule is re-sent. The app then re-plans it on drift as usual, from this schedule as the baseline. An `exercise` block names the day's session only while none is decided; otherwise it is retitled and `exercise_note` says so |
+| `PUT /api/agent/schedule` | `{items: [{kind, task_id, title, start, end, note}], date, work_start, work_end, rationale}`: set the day's schedule block by block (kinds `task`, `routine`, `exercise`, `journal`, `break`, `meeting`). It is stored as the day's plan (shown on the plan page) and its tasks go to the top of the feed's stack in its order; the feed keeps no times. Blocks are clipped to the free windows (`validate_windows: false` to skip that) and what did not fit is returned in `dropped`; calendar meetings are added; done, skipped and active blocks keep their status when a schedule is re-sent. The app then re-plans it on drift as usual, from this schedule as the baseline. An `exercise` block names the day's session only while none is decided; otherwise it is retitled and `exercise_note` says so |
 | `PUT /api/agent/schedule/instructions` | `{text, date, standing, rebuild}`: what the planner should keep in mind, in prose. For one day ("end by 13:00", "grant report first thing"), or with `standing: true` for every day until replaced ("Eli is recovering from a cold: nothing heavy before 11"). Appended to your rules for every build and shown on the plan page; `rebuild` (default) re-plans the day with it now. `DELETE ...?date=` drops the day's, `DELETE ...?standing=true` the standing guidance |
 | `POST /api/agent/schedule/rebuild` | `{date, from_now, until}`: let the app plan the day now |
 
@@ -375,7 +383,8 @@ curl -s "$A/schedule/log?date=$(date +%F)" "${H[@]}" | jq '.[] | {at_local, even
 | `tracker/agent_api.py` | the executive-assistant agent's API under `/api/agent` |
 | `tracker/dashboard.html` | the whole UI, one file: outline, feed, stats, snapshots, settings; drafts kept in `localStorage` |
 | `tracker/db.py` | SQLite schema and queries (projects, tasks, notes, plans, the planning log, timers, settings) |
-| `tracker/scheduler.py` | free windows, priorities, the deterministic packer, drift detection, schedules, instructions and guidance set from outside, the planning log entries |
+| `tracker/feed.py` | the feed's stack: the gap before the next meeting, which cards fit it, the order, Next (skipped for the day) |
+| `tracker/scheduler.py` | priorities and calibrated estimates (the stack uses these), free windows, the deterministic packer and the on-demand plan page's builder, schedules, instructions and guidance set from outside, the planning log entries |
 | `tracker/llm.py` | the one Claude call site (`structured()`), every prompt and JSON schema; LLM-inbox wiring |
 | `tracker/config.py` | `config.toml` + defaults, Keychain / env secrets, the log file, `save()` for the Settings page |
 | `tracker/tags.py` | `#p2 #due:fri #soft:wed #blocking:Sam …` parsing, the inverse (`render`: a task's fields as a tag line) and `replace_fields` (the edited tag line, what it drops cleared) behind `PUT /api/tasks/{id}/tags` |

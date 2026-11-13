@@ -226,7 +226,7 @@ class ProjectTrackerApp(rumps.App):
         if f["timer"]["running"]:
             self._post("/api/timer/stop")
         elif f.get("current"):
-            self._post("/api/feed/start", {"item_id": f["current"]["id"]})
+            self._post("/api/feed/start", {"card": f["current"]["key"]})
 
     def complete_current(self, _):
         try:
@@ -235,7 +235,7 @@ class ProjectTrackerApp(rumps.App):
             rumps.alert(APP_NAME, str(e))
             return
         if f.get("current"):
-            self._post("/api/feed/complete", {"item_id": f["current"]["id"]})
+            self._post("/api/feed/complete", {"card": f["current"]["key"]})
 
     def sync_linear(self, _):
         self._post("/api/linear/sync")
