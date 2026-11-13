@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     work_kind TEXT,                                  -- 'task' (quick, fits a gap) | 'focus' (focused work: needs a stretch of concentration); NULL = not judged yet
     reading INTEGER,                                 -- 1 = the task is mainly reading something (the daily reading card offers it); NULL = not judged yet
     writing INTEGER,                                 -- 1 = the task is mainly writing; NULL = not judged yet
+    toggl_title TEXT,                                -- the title as a gerund ("Responding to Sam"): the Toggl entry's description; NULL = not phrased yet
     position INTEGER NOT NULL DEFAULT 0,
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL,
@@ -168,6 +169,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.commit()
     if "soft_deadline" not in cols:
         conn.execute("ALTER TABLE tasks ADD COLUMN soft_deadline TEXT")
+        conn.commit()
+    if "toggl_title" not in cols:
+        conn.execute("ALTER TABLE tasks ADD COLUMN toggl_title TEXT")
         conn.commit()
         cols = {r["name"]: r for r in conn.execute("PRAGMA table_info(tasks)")}
     if cols["importance"]["notnull"]:
@@ -481,7 +485,7 @@ def ensure_project_path(path: list[str]) -> int:
 
 # ---------------------------------------------------------------- tasks
 TASK_FIELDS = {"title", "description", "deadline", "soft_deadline", "blocking", "blocking_for", "importance",
-               "estimate_minutes", "chunkable", "work_kind", "reading", "writing", "project_id", "parent_id", "position", "completed_at", "archived_at",
+               "estimate_minutes", "chunkable", "work_kind", "reading", "writing", "toggl_title", "project_id", "parent_id", "position", "completed_at", "archived_at",
                "linear_id", "linear_identifier", "linear_url", "linear_state", "linear_team_id",
                "linear_updated_at", "source"}
 
@@ -563,9 +567,10 @@ WORK_KINDS = ("task", "focus")
 
 
 def tasks_without_work_kind(limit: int = 40) -> list[dict]:
-    """Open tasks in live projects that Claude has not yet judged (quick task or focused work; reading; writing)."""
+    """Open tasks in live projects that Claude has not yet judged (quick task or focused work; reading; writing; the
+    gerund title for Toggl)."""
     return rows("""SELECT t.* FROM tasks t JOIN projects p ON p.id=t.project_id
-                   WHERE t.completed_at IS NULL AND (t.work_kind IS NULL OR t.reading IS NULL OR t.writing IS NULL) AND p.archived_at IS NULL AND p.someday_at IS NULL
+                   WHERE t.completed_at IS NULL AND (t.work_kind IS NULL OR t.reading IS NULL OR t.writing IS NULL OR t.toggl_title IS NULL) AND p.archived_at IS NULL AND p.someday_at IS NULL
                    ORDER BY t.id LIMIT ?""", (limit,))
 
 

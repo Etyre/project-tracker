@@ -225,6 +225,13 @@ forced-choice question, "send to Eli and stop" or "it was a remark about the tas
 answers in the normal format and what it had said is kept in `LLMInbox/unconfirmed.jsonl`. Send, an unclear answer or
 any error in the question sends the original message as above. An `@ELI:` line is never questioned.
 
+**Toggl entries are gerunds** - a task's timer is called "Responding to JDPressman" in Toggl, not "Respond to
+JDPressman". Claude phrases the title that way in the same call that forecasts the estimate when the task is created
+(`toggl_title` on the task; the backlog pass fills it for older tasks, and a title edit has it re-phrased), and a
+rule-based fallback in `tracker/toggl.py` (`gerund`) covers a task Claude has not reached yet or Claude being off.
+The card in the app keeps the task's own title; only the Toggl description changes. Recurring cards, exercise and
+journaling keep their own names ("going to do squats", "Journaling").
+
 **Toggl filing** - every timer the app starts goes to the right Toggl project, and nearly always without a model:
 
 - *Recurring cards* (the checklist rows with their own card, the exercise sessions named in your exercise rules,

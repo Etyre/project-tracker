@@ -151,7 +151,7 @@ def _forecast_estimate_later(tid: int) -> None:
     """Estimates and the kind of work are learned, not typed: forecast them in the background for a task created
     without them (either one the user set is kept)."""
     t = db.task(tid)
-    if not t or (t["estimate_minutes"] and t["work_kind"] and t["reading"] is not None and t["writing"] is not None) or not llm.enabled():
+    if not t or (t["estimate_minutes"] and t["work_kind"] and t["reading"] is not None and t["writing"] is not None and t["toggl_title"]) or not llm.enabled():
         return
 
     def run() -> None:
@@ -170,6 +170,8 @@ def _forecast_estimate_later(tid: int) -> None:
                 fields["reading"] = res["reading"]
             if cur["writing"] is None and res.get("writing") is not None:
                 fields["writing"] = res["writing"]
+            if not cur["toggl_title"]:
+                fields["toggl_title"] = res.get("toggl_title") or toggl.gerund(cur["title"])
             if fields:
                 db.update_task(tid, **fields)
         except Exception as e:  # noqa: BLE001 - a missing forecast must never break task creation
@@ -197,9 +199,20 @@ def _classify_backlog() -> int:
             fields["reading"] = judged["reading"]
         if cur["writing"] is None:
             fields["writing"] = judged.get("writing", 0)
+        if not cur["toggl_title"]:      # an empty answer gets the rule-based phrasing, so the task leaves the queue
+            fields["toggl_title"] = judged.get("toggl_title") or toggl.gerund(cur["title"])
         if fields:
             db.update_task(tid, **fields)
     return len(kinds)
+
+
+def _toggl_description(kind: str, label: str, task_id: int | None) -> str:
+    """What the Toggl entry is called. A task's timer is named in the present participle ("Responding to Sam"): the
+    phrasing Claude gave the task when it was created, else the rule-based one. Every other timer keeps its label."""
+    if kind != "task" or not task_id:
+        return label
+    t = db.task(task_id)
+    return (t["toggl_title"] if t and t.get("toggl_title") else None) or toggl.gerund(label)
 
 
 def _task_flag_tags(task_id: int | None) -> list[str]:
@@ -310,21 +323,22 @@ def _toggl_project_for_timer(kind: str, label: str, task_id: int | None) -> dict
 def _start_timer(kind: str, label: str, task_id: int | None = None, extra_tags: list[str] | None = None, context: str = "") -> dict:
     _stop_timer()
     toggl_id, err, chosen = None, None, None
+    desc = _toggl_description(kind, label, task_id)         # the entry's name in Toggl; the card keeps the task's title
     if toggl.enabled():
         try:
-            chosen = _toggl_project_for_timer(kind, label, task_id)
+            chosen = _toggl_project_for_timer(kind, desc, task_id)
         except Exception:                                   # a Toggl hiccup never stops a timer
             log.exception("choosing the Toggl project for '%s'", label)
         try:
             tags = list(dict.fromkeys([*(extra_tags or []), *_task_flag_tags(task_id), *((chosen or {}).get("tags") or [])]))
-            toggl_id = toggl.start(label, tags, project_id=chosen["project_id"] if chosen else None)["id"]
+            toggl_id = toggl.start(desc, tags, project_id=chosen["project_id"] if chosen else None)["id"]
         except toggl.TogglError as ex:
             err = str(ex)
     eid = db.start_entry(kind, label, task_id, toggl_id)
     if toggl_id and chosen:
         log.info("toggl entry %s started under %s (%s)", toggl_id, chosen["project"], chosen["source"])
     elif toggl_id and config.load()["toggl"].get("auto_project", True):
-        threading.Thread(target=_file_timer, args=(toggl_id, kind, label, task_id, context, extra_tags or []), daemon=True, name="toggl-file").start()
+        threading.Thread(target=_file_timer, args=(toggl_id, kind, desc, task_id, context, extra_tags or []), daemon=True, name="toggl-file").start()
     return {"entry_id": eid, "toggl_id": toggl_id, "toggl_error": err, "toggl_project": chosen["project"] if chosen else None}
 
 
@@ -704,6 +718,8 @@ def create_app() -> FastAPI:
                 db.move_task(tid, d["project_id"], parent_id, d["after_id"])
             except ValueError as e:
                 raise HTTPException(400, str(e))
+        if fields.get("title") and fields["title"].strip() != (cur["title"] or "").strip():
+            fields["toggl_title"] = None          # the Toggl phrasing follows the title: re-phrased by the background pass
         db.update_task(tid, **fields)
         err = linear.safe_push(tid) if fields else None
         return {**db.task(tid), "linear_error": err}

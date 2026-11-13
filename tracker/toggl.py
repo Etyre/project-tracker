@@ -158,6 +158,51 @@ def create_project(name: str, client: str | None = None) -> dict:
     return {"id": int(created["id"]), "name": name, "client_id": body.get("client_id"), "client": client or None, "active": True}
 
 
+# Toggl entries are gerunds: "Responding to Sam", not "Respond to Sam". Claude phrases every task's title that way
+# when the task is created (tasks.toggl_title); this is the fallback for a task it has not reached yet, or when Claude
+# is off: the first word of an imperative title into its -ing form by the usual spelling rules, the rest unchanged.
+# It only applies when the title starts with a verb in the imperative; a title that already starts with an -ing
+# word, or a noun phrase ("Taxes"), is left as it is.
+_ING = {"be": "being", "see": "seeing", "flee": "fleeing", "free": "freeing", "agree": "agreeing", "dye": "dyeing",
+        "lie": "lying", "tie": "tying", "die": "dying", "set up": "setting up", "setup": "setting up", "fix": "fixing",
+        "mix": "mixing", "box": "boxing", "draw": "drawing", "review": "reviewing", "follow": "following", "buy": "buying",
+        "pay": "paying", "play": "playing", "stay": "staying", "enjoy": "enjoying", "open": "opening", "order": "ordering",
+        "answer": "answering", "offer": "offering", "enter": "entering", "visit": "visiting", "edit": "editing",
+        "listen": "listening", "happen": "happening", "cancel": "cancelling", "label": "labelling", "travel": "travelling",
+        "ping": "pinging", "sing": "singing", "bring": "bringing", "ring": "ringing"}
+_VOWELS = "aeiou"
+
+
+def _ing(word: str) -> str:
+    w = word.lower()
+    if w in _ING:
+        return _ING[w]
+    if w.endswith("ie"):
+        return w[:-2] + "ying"
+    if w.endswith("e") and not w.endswith("ee") and not w.endswith("ye") and not w.endswith("oe"):
+        return w[:-1] + "ing"
+    # one syllable, consonant-vowel-consonant: double the last letter (run -> running), except w, x, y
+    if (len(w) >= 3 and w[-1] not in _VOWELS + "wxy" and w[-2] in _VOWELS and w[-3] not in _VOWELS
+            and sum(c in _VOWELS for c in w) == 1):
+        return w + w[-1] + "ing"
+    return w + "ing"
+
+
+def gerund(title: str) -> str:
+    """Rule-based gerund title for a Toggl entry: "Respond to Sam" -> "Responding to Sam"."""
+    t = " ".join((title or "").split())
+    if not t:
+        return t
+    first, _, rest = t.partition(" ")
+    if not first.isalpha():
+        return t
+    if first.lower().endswith("ing") and len(first) > 4:      # already a gerund ("Writing the memo")
+        return t
+    g = _ing(first)
+    g = g[0].upper() + g[1:] if first[0].isupper() else g
+    return g + (" " + rest if rest else "")
+
+
 def start(description: str, extra_tags: list[str] | None = None, project_id: int | None = None) -> dict:
     cfg = config.load()["toggl"]
     wid = workspace_id()

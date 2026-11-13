@@ -527,9 +527,45 @@ def test_toggl_routine_list_and_linked_projects(monkeypatch):
     assert started[-1] == ("Anki review", 2, ["routine", "learning", "spaced repetition"]) and res["toggl_project"] == "Personal"
     web._stop_timer()
     res = web._start_timer("task", "Leaf task", tid)
-    assert started[-1] == ("Leaf task", 2, []) and res["toggl_project"] == "Personal"
+    assert started[-1] == ("Leafing task", 2, []) and res["toggl_project"] == "Personal"   # rule-based gerund: Claude has not phrased it
+    db.update_task(tid, toggl_title="Working on the leaf task")
+    web._stop_timer()
+    web._start_timer("task", "Leaf task", tid)
+    assert started[-1][0] == "Working on the leaf task"                                    # Claude's phrasing wins
+    assert db.running_entry()["label"] == "Leaf task"                                       # the app's own card keeps the title
     web._stop_timer()
     toggl.forget_projects()
+
+
+def test_toggl_titles_are_gerunds():
+    from fastapi.testclient import TestClient
+    from tracker import toggl, web
+    g = toggl.gerund
+    assert g("Respond to JDPressman") == "Responding to JDPressman"
+    assert g("Write the memo") == "Writing the memo"
+    assert g("Run the numbers") == "Running the numbers"
+    assert g("Fix the login bug") == "Fixing the login bug"
+    assert g("Set up the printer") == "Setting up the printer"
+    assert g("Tie off the thread") == "Tying off the thread"
+    assert g("See Sam") == "Seeing Sam"
+    assert g("Review PR 12") == "Reviewing PR 12"
+    assert g("Writing the memo") == "Writing the memo"          # already a gerund
+    assert g("Ping Sam") == "Pinging Sam"                        # short -ing words are verbs, not gerunds
+    assert g("2026 taxes") == "2026 taxes"                       # not an imperative: left alone
+    assert g("  ") == ""
+    pid = db.create_project("Gerunds")
+    tid = db.create_task(pid, "Call the bank", toggl_title="Calling the bank")
+    assert db.task(tid)["toggl_title"] == "Calling the bank"
+    assert web._toggl_description("task", "Call the bank", tid) == "Calling the bank"
+    assert web._toggl_description("routine", "Anki review", None) == "Anki review"
+    c = TestClient(web.create_app())
+    assert c.patch(f"/api/tasks/{tid}", json={"importance": 3}).status_code == 200
+    assert db.task(tid)["toggl_title"] == "Calling the bank"      # other edits keep the phrasing
+    assert c.patch(f"/api/tasks/{tid}", json={"title": "Call the bank about the card"}).status_code == 200
+    assert db.task(tid)["toggl_title"] is None                    # a new title is re-phrased by the background pass
+    assert any(t["id"] == tid for t in db.tasks_without_work_kind(1000))
+    assert web._toggl_description("task", "Call the bank about the card", tid) == "Calling the bank about the card"
+    db.delete_task(tid)
 
 
 def test_exercise_button_offers_extra_session_once_done(monkeypatch):
@@ -776,7 +812,7 @@ def test_reading_card_offers_highest_priority_reading_task(monkeypatch):
     monkeypatch.setattr(web.toggl, "find_project", lambda name: None)
     assert c.post("/api/feed/start", json={"item_id": item}).status_code == 200
     assert db.running_entry()["task_id"] == high                                             # time goes to the reading task
-    assert started[-1] == ("Read the policy memo", ["reading"])                               # ...tagged reading
+    assert started[-1] == ("Reading the policy memo", ["reading"])                            # ...tagged reading, named as a gerund
     assert c.post(f"/api/tasks/{high}/complete", json={}).status_code == 200 and db.running_entry() is None
     db.set_item_status(item, "pending")
     assert c.get("/api/feed").json()["current"]["suggest"]["task"]["id"] == low                # the next one
@@ -801,7 +837,7 @@ def test_reading_card_offers_highest_priority_reading_task(monkeypatch):
     f = c.get("/api/feed").json()
     assert f["current"]["id"] == witem and f["current"]["suggest"]["task"]["id"] == memo and f["current"]["suggest"]["verb"] == "Write"
     assert c.post("/api/feed/start", json={"item_id": witem}).status_code == 200
-    assert db.running_entry()["task_id"] == memo and started[-1] == ("Write the strategy memo", ["writing"])
+    assert db.running_entry()["task_id"] == memo and started[-1] == ("Writing the strategy memo", ["writing"])
     db.complete_task(memo); web._stop_timer(); db.set_item_status(witem, "pending")
     f = c.get("/api/feed").json()
     assert f["current"]["suggest"]["task"] is None and f["current"]["suggest"]["fallback"] == "Free writing"

@@ -286,16 +286,19 @@ focus; writing is almost always "focus"; reading is "focus" when the material is
 argument, a technical document) and a "task" when it is easy (a thread, a newsletter, a short update). When unsure:
 "task" for short things, "focus" for long ones. reading is true when the task is mainly reading something (a paper, a report, a doc, a book,
 a thread) rather than writing, deciding or doing. writing is true when the task is mainly writing (a draft, a memo, a
-post, a doc, a long reply), not for a quick message."""
+post, a doc, a long reply), not for a quick message. toggl_title is the task's title rephrased as what the user is
+doing while the timer runs, in the present participle, for the Toggl time entry: "Respond to JDPressman" becomes
+"Responding to JDPressman", "Fix the login bug" becomes "Fixing the login bug", "Taxes" becomes "Doing taxes". Keep
+every name and detail, keep it as short as the title, no tags, no trailing period, no quotation marks."""
 ESTIMATE_SCHEMA = {
     "type": "object",
     "properties": {"estimate_minutes": {"type": "integer"}, "work_kind": {"type": "string", "enum": ["task", "focus"]},
-                   "reading": {"type": "boolean"}, "writing": {"type": "boolean"}},
-    "required": ["estimate_minutes", "work_kind", "reading", "writing"],
+                   "reading": {"type": "boolean"}, "writing": {"type": "boolean"}, "toggl_title": {"type": "string"}},
+    "required": ["estimate_minutes", "work_kind", "reading", "writing", "toggl_title"],
     "additionalProperties": False,
 }
 ESTIMATE_SYSTEM = """You forecast how many minutes of focused work a personal task will take, whether it is a quick
-task or focused work, and whether it is reading or writing. Tasks are short imperative phrases from a GTD list; the project path gives context. Recent completed
+task or focused work, whether it is reading or writing, and how its title reads as a Toggl entry. Tasks are short imperative phrases from a GTD list; the project path gives context. Recent completed
 tasks with the time they actually took are provided when available: calibrate to them. estimate_minutes is a single
 realistic number of minutes (round to 5), not a best case. """ + WORK_KIND_GUIDE
 
@@ -310,7 +313,8 @@ def forecast_estimate(title: str, path: str, description: str, examples: list[di
     return {"estimate_minutes": max(5, min(600, int(res["estimate_minutes"]))),
             "work_kind": res.get("work_kind") if res.get("work_kind") in ("task", "focus") else None,
             "reading": None if res.get("reading") is None else int(bool(res["reading"])),
-            "writing": None if res.get("writing") is None else int(bool(res["writing"]))}
+            "writing": None if res.get("writing") is None else int(bool(res["writing"])),
+            "toggl_title": (res.get("toggl_title") or "").strip() or None}
 
 
 WORK_KINDS_SCHEMA = {
@@ -318,21 +322,22 @@ WORK_KINDS_SCHEMA = {
     "properties": {"kinds": {"type": "array", "items": {
         "type": "object",
         "properties": {"id": {"type": "integer"}, "work_kind": {"type": "string", "enum": ["task", "focus"]}, "reading": {"type": "boolean"},
-                       "writing": {"type": "boolean"}},
-        "required": ["id", "work_kind", "reading", "writing"], "additionalProperties": False}}},
+                       "writing": {"type": "boolean"}, "toggl_title": {"type": "string"}},
+        "required": ["id", "work_kind", "reading", "writing", "toggl_title"], "additionalProperties": False}}},
     "required": ["kinds"],
     "additionalProperties": False,
 }
-WORK_KINDS_SYSTEM = """For each task in the user's list, judge whether it is a quick task or focused work, and whether it is
-mainly reading, and whether it is mainly writing; answer one entry per task id. """ + WORK_KIND_GUIDE
+WORK_KINDS_SYSTEM = """For each task in the user's list, judge whether it is a quick task or focused work, whether it is
+mainly reading, whether it is mainly writing, and how its title reads as a Toggl entry; answer one entry per task id. """ + WORK_KIND_GUIDE
 
 
 def classify_work_kinds(tasks: list[dict]) -> dict[int, dict]:
-    """{task id: {work_kind: "task" | "focus", reading: 0 | 1, writing: 0 | 1}} for tasks the user never marked (a
-    batch, so the backlog is judged in one call)."""
+    """{task id: {work_kind: "task" | "focus", reading: 0 | 1, writing: 0 | 1, toggl_title}} for tasks the user never
+    marked (a batch, so the backlog is judged in one call)."""
     lines = [f"- id {t['id']}: {t['title']} (in {t.get('path') or 'no project'})" + (f" - {t['description'][:200]}" if t.get("description") else "") for t in tasks]
     res = structured(WORK_KINDS_SYSTEM, "## Tasks\n" + "\n".join(lines), WORK_KINDS_SCHEMA, "low", max_tokens=4000)
-    return {int(k["id"]): {"work_kind": k["work_kind"], "reading": int(bool(k.get("reading"))), "writing": int(bool(k.get("writing")))}
+    return {int(k["id"]): {"work_kind": k["work_kind"], "reading": int(bool(k.get("reading"))), "writing": int(bool(k.get("writing"))),
+                           "toggl_title": (k.get("toggl_title") or "").strip() or None}
             for k in res.get("kinds") or [] if k.get("work_kind") in ("task", "focus")}
 
 
