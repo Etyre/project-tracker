@@ -55,9 +55,9 @@ on the lines: you navigate with the arrow keys and type.
   whole subtree back); a project with content is archived rather than deleted.
 - Text is Markdown everywhere: **bold**, *italic*, `code`, ~~strike~~ and [links](url) render in titles, names
   and notes, and a line that starts with one to six hashes (`## Big step`) is shown as a heading of that level:
-  `#` is large and heavy with a solid rule under it, `##` bold with a thin rule, `###` semibold in the accent
-  colour, `####` and `#####` plain semibold in smaller sizes, `######` small capitals in grey. A project's
-  name is never in the accent colour, whatever its level: blue there reads as a link.
+  `#` is large and heavy with a solid rule under it, `##` bold with a thin rule, `###`, `####` and `#####`
+  semibold in decreasing sizes, `######` small capitals in grey. No heading is in the accent colour: blue
+  reads as a link.
   The raw text shows only while you edit it. Lines wrap while you type, so a long line stays fully visible.
 - Tags typed in a line set its fields and disappear from the title: `#p1` to `#p5` for priority (`#p1`
   highest), `#today`, `#tomorrow` or `#due:fri` / `#due:nov3` / `#due:2026-11-03` for the hard deadline,
