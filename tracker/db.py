@@ -43,6 +43,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     work_kind TEXT,                                  -- 'task' (quick, fits a gap) | 'focus' (focused work: needs a stretch of concentration); NULL = not judged yet
     reading INTEGER,                                 -- 1 = the task is mainly reading something (the daily reading card offers it); NULL = not judged yet
     writing INTEGER,                                 -- 1 = the task is mainly writing; NULL = not judged yet
+    importance_by TEXT,                              -- who last set (or cleared) the priority: user | agent | claude | linear; NULL = before this was tracked
+    importance_at REAL,                              -- when they did
     toggl_title TEXT,                                -- the title as a gerund ("Responding to Sam"): the Toggl entry's description; NULL = not phrased yet
     position INTEGER NOT NULL DEFAULT 0,
     created_at REAL NOT NULL,
@@ -161,6 +163,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
         cols = {r["name"]: r for r in conn.execute("PRAGMA table_info(tasks)")}
     if "archived_at" not in cols:
         conn.execute("ALTER TABLE tasks ADD COLUMN archived_at REAL")
+        conn.commit()
+    if "importance_by" not in cols:
+        conn.execute("ALTER TABLE tasks ADD COLUMN importance_by TEXT")
+        conn.execute("ALTER TABLE tasks ADD COLUMN importance_at REAL")
         conn.commit()
     if "work_kind" not in cols:
         conn.execute("ALTER TABLE tasks ADD COLUMN work_kind TEXT")
@@ -489,7 +495,7 @@ def ensure_project_path(path: list[str]) -> int:
 
 
 # ---------------------------------------------------------------- tasks
-TASK_FIELDS = {"title", "description", "deadline", "soft_deadline", "blocking", "blocking_for", "importance",
+TASK_FIELDS = {"title", "description", "deadline", "soft_deadline", "blocking", "blocking_for", "importance", "importance_by",
                "estimate_minutes", "chunkable", "work_kind", "reading", "writing", "toggl_title", "project_id", "parent_id", "position", "completed_at", "archived_at",
                "linear_id", "linear_identifier", "linear_url", "linear_state", "linear_team_id",
                "linear_updated_at", "source"}
@@ -540,6 +546,12 @@ def create_task(project_id: int, title: str, after_id: int | None = None, **fiel
     f.setdefault("blocking", 0)
     f.setdefault("description", "")
     f.setdefault("source", "local")
+    now = time.time()
+    if f.get("importance") is not None:      # who gave it its priority: whoever made it, unless the caller says otherwise
+        f.setdefault("importance_by", {"agent": "agent", "linear": "linear"}.get(f["source"], "user"))
+        f["importance_at"] = now
+    else:
+        f.pop("importance_by", None)
     parent_id = f.get("parent_id")
     if parent_id:
         parent = task(parent_id)
@@ -548,7 +560,6 @@ def create_task(project_id: int, title: str, after_id: int | None = None, **fiel
         project_id = parent["project_id"]          # a sub-task always lives in its parent's project
     else:
         f["parent_id"] = None
-    now = time.time()
     with _write_lock:
         pos = _insert_position(project_id, f["parent_id"], after_id)
         cols = ["project_id", "title", "position", "created_at", "updated_at", *f.keys()]
@@ -558,6 +569,14 @@ def create_task(project_id: int, title: str, after_id: int | None = None, **fiel
 
 def update_task(tid: int, **fields) -> None:
     sets = {k: v for k, v in fields.items() if k in TASK_FIELDS}
+    by = sets.pop("importance_by", None)
+    if "importance" in sets:
+        # Who set the priority is recorded only when it really changes: a dialog that saves every field, or a sync
+        # that repeats the same value, must not take the credit from whoever set it. `importance_by` names a
+        # caller that is not the user (agent, claude, linear).
+        cur = task(tid)
+        if cur and cur["importance"] != sets["importance"]:
+            sets["importance_by"], sets["importance_at"] = by or "user", time.time()
     if not sets:
         return
     sets["updated_at"] = time.time()
@@ -674,7 +693,7 @@ def uncomplete_task(tid: int) -> None:
     update_task(tid, completed_at=None, archived_at=None, position=pos, parent_id=parent_id)
 
 
-SUBTREE_FIELDS = ("description", "deadline", "soft_deadline", "blocking", "blocking_for", "importance", "estimate_minutes", "chunkable", "work_kind", "reading", "writing", "completed_at")
+SUBTREE_FIELDS = ("description", "deadline", "soft_deadline", "blocking", "blocking_for", "importance", "importance_by", "estimate_minutes", "chunkable", "work_kind", "reading", "writing", "completed_at")
 
 
 def delete_task_tree(tid: int) -> list[dict]:

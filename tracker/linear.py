@@ -123,7 +123,7 @@ def pull() -> dict:
             title=iss["title"],
             description=iss.get("description") or "",
             deadline=iss.get("dueDate"),
-            importance=PRIORITY_TO_IMPORTANCE.get(iss.get("priority") or 0),
+            importance=PRIORITY_TO_IMPORTANCE.get(iss.get("priority") or 0), importance_by="linear",
             linear_identifier=iss["identifier"],
             linear_url=iss["url"],
             linear_state=iss["state"]["name"],

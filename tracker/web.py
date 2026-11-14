@@ -1002,6 +1002,7 @@ def create_app() -> FastAPI:
             tid = db.create_task(pid, title, **{"description": t["description"], "deadline": t["deadline"], "soft_deadline": t.get("soft_deadline"),
                                  "blocking": int(t["blocking"]), "blocking_for": t["blocking_for"],
                                  "importance": None if t["importance"] is None else max(1, min(5, int(t["importance"]))),
+                                 "importance_by": "user" if "importance" in tagged else "claude",     # a typed #p2 is yours; otherwise Claude read it from the note
                                  "estimate_minutes": t["estimate_minutes"], "chunkable": int(t["chunkable"]), "source": "quick_add", **tagged})
             created.append({**db.task(tid), "path": db.project_path(pid), "where": where})
         return {"created": created, "note": res.get("note", "")}

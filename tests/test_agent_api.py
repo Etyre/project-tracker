@@ -193,6 +193,25 @@ def test_the_days_exercise_is_set_once_and_the_agent_cannot_change_it(monkeypatc
     db.set_setting("exercise_decision", "")
 
 
+def test_who_set_a_priority_is_recorded():
+    pid = db.create_project("Who set it")
+    plain = db.create_task(pid, "No priority yet")
+    assert db.task(plain)["importance_by"] is None
+    mine = db.create_task(pid, "Typed with a tag", importance=3)
+    assert db.task(mine)["importance_by"] == "user" and db.task(mine)["importance_at"]
+    client.patch(f"/api/agent/tasks/{mine}", json={"importance": 5, "why": "Urgent now."}, headers=H)
+    assert db.task(mine)["importance_by"] == "agent"
+    assert client.get(f"/api/agent/tasks/{mine}", headers=H).json()["importance_by"] == "agent"     # the agent can see whose it is
+    client.patch(f"/api/tasks/{mine}", json={"importance": 5, "title": "Typed with a tag, renamed"})    # the dialog saving the same value
+    assert db.task(mine)["importance_by"] == "agent"
+    client.patch(f"/api/tasks/{mine}", json={"importance": 2})                                           # the user really changes it
+    assert db.task(mine)["importance_by"] == "user"
+    client.patch(f"/api/agent/tasks/{mine}", json={"importance": 2, "why": "Same value."}, headers=H)    # the agent repeating it takes no credit
+    assert db.task(mine)["importance_by"] == "user"
+    theirs = client.post("/api/agent/tasks", json={"title": "From the agent", "project_id": pid, "importance": 4}, headers=H).json()
+    assert db.task(theirs["id"])["importance_by"] == "agent"
+
+
 def test_the_agent_sets_priority_and_urgency_and_the_planner_sees_it():
     pid = db.create_project("Prio")
     tid = db.create_task(pid, "Grant report", estimate_minutes=60)

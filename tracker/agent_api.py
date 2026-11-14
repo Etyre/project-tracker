@@ -365,7 +365,7 @@ def set_priority(tid: int, p: TaskPriorityIn, agent: str = Depends(identity)):
     if not fields and not p.why.strip():
         raise HTTPException(400, "nothing to set")
     if fields:
-        db.update_task(tid, **fields)
+        db.update_task(tid, **fields, importance_by="agent")
     body = (p.why.strip() + (" " if p.why.strip() and said else "") + (f"(set {', '.join(said)})" if said else "")).strip()
     db.add_note("task", tid, body, agent)
     db.log_plan_event(db.today(), "task", f"{agent} set priority on '{t['title']}': {', '.join(said) or 'a note'}"
@@ -397,7 +397,7 @@ def move_task(tid: int, m: MoveTaskIn, agent: str = Depends(identity)):
         raise HTTPException(400, str(e))
     from . import web
     if web._someday(pid):
-        db.update_task(tid, deadline=None, soft_deadline=None, importance=None, blocking=0, blocking_for="")
+        db.update_task(tid, deadline=None, soft_deadline=None, importance=None, importance_by="agent", blocking=0, blocking_for="")
     after = " / ".join(db.display_name(n) for n in db.project_path(pid)) + (f" under '{parent['title']}'" if parent else "")
     body = f"moved here from {before}" + (f": {m.why.strip()}" if m.why.strip() else "")
     db.add_note("task", tid, body, agent)

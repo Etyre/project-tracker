@@ -82,6 +82,12 @@ on the lines: you navigate with the arrow keys and type.
   line goes into the text at the cursor, the rest become lines below it.
 - Drag the handle to reorder; rows move live under the pointer, and dragging to the right over a row nests
   under it.
+- Who last set a task's priority is recorded, though not shown: `tasks.importance_by` is `user` (the page: a
+  typed `#p2`, the tag line, the dialog), `agent` (the assistant agent, through `/api/agent`), `claude` (quick
+  add read it from the note) or `linear` (the mirrored issue's priority), with the time in `importance_at`.
+  It changes only when the priority itself changes, so saving a dialog or a sync repeating the same value takes
+  no credit; clearing a priority counts as setting it. Empty means it was set before 2026-11-14, when tracking
+  began. The agent sees both fields on every task it reads.
 - A task's title line carries only what bears on urgency: its deadlines, a "blocking" tag and importance dots
   when set (there is no priority by default). The descriptive tags (focused work or quick task, reading,
   writing, added by the agent) appear on the line only while the task is open. The opened task (double-click, or Notes in the menu) shows its notes, then its **tag
