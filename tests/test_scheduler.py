@@ -1067,6 +1067,13 @@ def test_routine_cards_from_checklist(monkeypatch):
     assert "Anki Review" not in db.checklist_done_today(date)
 
 
+def test_project_subtitle_is_stored_and_in_the_tree():
+    pid = db.create_project("With a subtitle")
+    assert next(p for p in db.project_tree() if p["id"] == pid)["subtitle"] == ""
+    db.update_project(pid, subtitle="What this is for")
+    assert next(p for p in db.project_tree() if p["id"] == pid)["subtitle"] == "What this is for"
+
+
 def test_archive_task_unfinished_takes_sub_items_and_restores():
     pid = db.create_project("Archive one")
     a = db.create_task(pid, "Parent to put away")

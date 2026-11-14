@@ -64,7 +64,8 @@ def render(now: dt.datetime | None = None, since: float | None = None) -> str:
 
     def project(p: dict, depth: int) -> None:
         name = re.sub(r"^#{1,6}\s+", "", p["name"].strip())
-        out.append("  " * depth + f"- **{name}**")
+        sub = " ".join((p.get("subtitle") or "").split())
+        out.append("  " * depth + f"- **{name}**" + (f" *{sub}*" if sub else ""))
         _notes(p.get("notes"), depth, out)
         for t in p["tasks"]:
             task(t, depth + 1)

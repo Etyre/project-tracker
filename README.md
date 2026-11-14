@@ -114,6 +114,10 @@ on the lines: you navigate with the arrow keys and type.
   "Someday / maybe" and it moves there with its sub-tasks, dropping its deadline and priority; right-click an
   item there for "Make active…" and pick the project it goes into. Nothing on that list is scheduled or filed
   into by quick add, and its items carry no deadlines, priorities or blocking tags (typed tags stay as text).
+- Every project can have a subtitle: one line under its name. Inside an opened project it always shows, and a
+  click on it (or on "Add a subtitle…") edits it in place; Enter or clicking away saves, an empty line removes
+  it. In the main list it shows under the project's name when Settings > Projects > "Subtitles in the list" is
+  on (`[general] show_subtitles`, on by default).
 - Inside an opened project its name and notes are edited in place and it can be archived, which takes its
   sub-projects and open tasks with it (restore brings them back). The Filters button (hidden by default)
   opens a small panel to show completed tasks and archived projects alongside the active ones.

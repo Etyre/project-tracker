@@ -88,6 +88,9 @@ textarea.inline{display:block;width:100%;padding:2px 4px;margin:0;border:0;borde
 .task>.caret{margin-top:4px}
 .pdetails{margin:4px 0 14px;padding:14px 18px;background:var(--card);border:1px solid var(--line);border-radius:4px}
 .pdetails h2{margin:0 0 4px;font-size:22px;cursor:text}
+.pdetails .psub{margin:0 0 6px;font-size:15px;color:var(--muted);cursor:text;min-height:20px}
+.proj>.psub{margin:-2px 0 2px 54px;font-size:13px;color:var(--muted);cursor:default}   /* in the list, under the name (past the handle and caret) */
+.proj.root>.psub{font-size:14px}
 .pdetails .tglink{cursor:pointer;color:var(--muted);text-decoration:underline dotted}.pdetails .tglink:hover{color:var(--ink)}
 .pdetails .notes{margin-top:10px;white-space:pre-wrap;font-size:14px;cursor:text;min-height:20px;line-height:1.45}
 .pdetails textarea{width:100%;min-height:120px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit;resize:vertical}
@@ -619,6 +622,7 @@ async function renderProjects() {
   if (pendingFocusProject) {const h = m.querySelector(`.proj[data-pid="${pendingFocusProject}"] > .phead`); pendingFocusProject = null; if (h) h.focus();}
   if (pendingProjectEdit) {const pe = pendingProjectEdit; pendingProjectEdit = null; typeof pe === 'object' ? editProjectName(pe.id, null, pe.caret) : editProjectName(pe);}
   if (pendingNotesEdit) {const id = pendingNotesEdit; pendingNotesEdit = null; const n = m.querySelector(`.task[data-tid="${id}"] .notes`); if (n) editTaskNotes(id, n);}
+  if (focus && Draft.get('psub:' + focus.id) !== null) {const sb = m.querySelector('.pdetails .psub'); if (sb) editSubtitle(focus.id, sb);}   // a subtitle left half-typed comes back open
   if (pendingProjectNotes) {pendingProjectNotes = false; const n = m.querySelector('.pdetails .notes'); if (n && focus) editNotes(focus.id, n);}
   if (keep) restoreEditor(keep);
   if (selKeep.length) reselect(selKeep);
@@ -643,6 +647,7 @@ function projectDetailsHTML(p) {
         ${countDone(p.tasks) ? `<button class="btn small ghost" onclick="archiveDone(${p.id})">archive ${countDone(p.tasks)} done</button>` : ''}
         <button class="btn small ghost" onclick="archiveProject(${p.id})">archive</button>`}</span>
     </div>
+    ${p.archived_at && !p.subtitle ? '' : `<div class="psub" ${p.archived_at ? '' : `onclick="if (!selecting()) editSubtitle(${p.id}, this)" title="Click to edit the subtitle"`}>${p.subtitle ? mdInline(p.subtitle) : '<span style="opacity:.6">Add a subtitle…</span>'}</div>`}
     <div class="muted" style="font-size:13px">${meta}${status.toggl && !p.archived_at ? ` · Toggl: <a class="tglink" title="The Toggl project this project's timers are filed under (sub-projects inherit it). Claude links it the first time a timer starts; click to change, empty to let Claude decide again." onclick="editTogglProject(${p.id}, this)">${togglLabel(p)}</a>` : ''}</div>
     <div class="notes" onclick="if (!selecting()) editNotes(${p.id}, this)">${p.notes ? linkify(p.notes) : '<span class="muted">Add notes, context, links…</span>'}</div>
     ${addedNotesHTML(p.notes_added)}
@@ -665,6 +670,25 @@ async function editTogglProject(pid, el) {
     renderProjects();};
   inp.onblur = () => finish(true); inp.onkeydown = e => {e.stopPropagation(); if (e.key === 'Enter') {e.preventDefault(); finish(true);} else if (e.key === 'Escape') finish(false);};
 }
+// the optional line under a project's name: edited in place inside the opened project; Enter or clicking away
+// saves (empty clears it), Escape puts the old text back
+function editSubtitle(pid, el) {
+  if (el.querySelector('.inline')) return;
+  const p = findProject(pid); const orig = p?.subtitle || '';
+  const inp = inlineField(orig, 'Subtitle'); inp.defaultValue = orig;
+  Draft.bind(inp, `psub:${pid}`); el.replaceChildren(inp); inp.fit(); inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length);
+  let done = false;
+  const finish = async save => {
+    if (done) return; done = true; const v = inp.value.replace(/\s+/g, ' ').trim();
+    if (save && v !== orig) {
+      try {await api(`/projects/${pid}`, 'PATCH', {subtitle: v}); if (p) p.subtitle = v; pushUndo('subtitle change', () => api(`/projects/${pid}`, 'PATCH', {subtitle: orig}));}
+      catch (e) {done = false; toast(esc(e.message), 5000); return;}   // not saved: the editor and its draft stay
+    }
+    Draft.clear(`psub:${pid}`); renderProjects();
+  };
+  inp.onblur = () => finish(true);
+  inp.onkeydown = e => {e.stopPropagation(); if (e.key === 'Enter') {e.preventDefault(); finish(true);} else if (e.key === 'Escape') {e.preventDefault(); finish(false);}};
+}
 function editNotes(pid, el) {
   if (el.querySelector('textarea')) return;
   const p = findProject(pid); const orig = p?.notes || ''; const ta = document.createElement('textarea'); ta.value = orig; ta.defaultValue = orig;
@@ -683,6 +707,7 @@ function projectHTML(p, root) {
       <h3 class="${mdLine(p.name).level ? 'md-h' + mdLine(p.name).level : ''}"><span class="name" onclick="event.stopPropagation(); if (!selecting()) this.closest('.phead').focus()" title="Double-click to open; the name is edited inside the opened project">${mdLine(p.name).html}</span> <span class="muted" style="font-weight:400;font-size:13px">${count}${archived ? ' · archived ' + fmtDay(p.archived_at) : ''}</span></h3>
       ${archived ? `<span class="tools"><button class="btn small ghost" onclick="restoreProject(${p.id})">restore</button></span>` : countDone(p.tasks) ? `<span class="tools"><button class="btn small ghost" onclick="event.stopPropagation(); archiveDone(${p.id})" title="Put the completed tasks away (Cmd+Z brings them back)">archive ${countDone(p.tasks)} done</button></span>` : ''}
     </div>
+    ${p.subtitle && status.show_subtitles ? `<div class="psub">${mdInline(p.subtitle)}</div>` : ''}
     ${collapsed ? '' : `<div class="tasks" data-tasklist="${p.id}" data-parent="">${p.tasks.map(taskHTML).join('')}</div>
     <div class="children" data-childlist="${p.id}">${p.children.map(c => projectHTML(c, false)).join('')}</div>`}
   </div>`;
@@ -1746,6 +1771,7 @@ async function renderSettings() {
   m.innerHTML = `<div class="settings">
     ${card('Claude', status.llm, key('anthropic', 'API key', 'sk-ant-…') + f('llm', 'enable', 'Use Claude', 'quick-add filing, estimates and the day plan; without it everything falls back to rules', 'bool') + f('llm', 'model', 'Model') + f('llm', 'effort', 'Plan effort', '', ['low', 'medium', 'high', 'max']) + f('llm', 'quick_add_effort', 'Quick-add effort', '', ['low', 'medium', 'high']))}
     ${card('Work day', undefined, f('general', 'work_start', 'Starts', '', 'time') + f('general', 'work_end', 'Ends', '', 'time') + f('general', 'default_estimate_minutes', 'Default estimate (min)', 'for a task that has no estimate yet', 'number') + f('general', 'min_block_minutes', 'Smallest block (min)', '', 'number') + f('general', 'replan_drift_minutes', 'Re-plan when late by (min)', 'the next block is this late or early', 'number') + f('general', 'overrun_minutes', 'Re-plan after overrun (min)', '', 'number') + f('general', 'replan_min_interval_minutes', 'Re-plan at most every (min)', '', 'number') + f('general', 'meeting_alert_minutes', 'Meeting reminder (min before)', 'the feed shows "N minutes until <meeting>" from this far out', 'number') + f('general', 'meeting_alert_all_day', 'All meetings today', 'show the next meeting however far off it is', 'bool'))}
+    ${card('Projects', undefined, f('general', 'show_subtitles', 'Subtitles in the list', 'show each project\'s subtitle under its name in the main view; inside an opened project it always shows', 'bool'))}
     ${card('Calendar', status.calendar, f('calendar', 'ics_urls', 'iCal feeds', 'one per line. Google Calendar → Settings → your calendar → "Secret address in iCal format"', 'lines') + f('calendar', 'ignore_titles', 'Ignore events titled', 'comma separated') + f('calendar', 'busy_only', 'Only busy events block time', '', 'bool'))}
     ${card('Toggl', status.toggl, key('toggl', 'API token', '32 hex characters', 'Toggl Track → Profile → API token') + f('toggl', 'tag', 'Tag on timers') + f('toggl', 'auto_project', 'File timers by project', 'recurring cards go to the Toggl project listed below; a task goes to the Toggl project its project is linked to. Claude decides each one the first time it comes up, creating a Toggl project when none fits, and the answer is kept here or in the opened project, where you can change it', 'bool') + f('toggl', 'routine_projects', 'Recurring cards', 'one per line, "Anki review: Personal | learning, review": the Toggl project for each recurring card (checklist rows with a card, exercise sessions, the daily reading, journaling), then its tags after a bar', 'lines') + `<label></label><div class="row" style="gap:8px"><button class="btn small" onclick="suggestRoutineProjects(this)">Fill in with Claude</button><span class="muted" id="routineout" style="font-size:12px"></span></div>` + f('toggl', 'project', 'Default project', 'used when nothing above decides') + f('toggl', 'check_minutes', 'Check running timer every (min)', 'asks Toggl whether you stopped the timer there; Toggl allows 30 such calls an hour on every plan below Enterprise', 'number'))}
     ${card('Linear', status.linear, key('linear', 'API key', 'lin_api_…', 'Linear → Settings → API → personal API key') + f('linear', 'enable', 'Mirror my issues', '', 'bool') + f('linear', 'sync_minutes', 'Sync every (min)', '', 'number') + f('linear', 'category_name', 'Under project') + f('linear', 'group_by', 'Sub-project per', '', ['project', 'team']))}

@@ -11,6 +11,7 @@ default_estimate_minutes = 30
 min_block_minutes = 10
 meeting_alert_minutes = 45
 meeting_alert_all_day = false   # true: show the next meeting however far off it is today
+show_subtitles = true           # project subtitles under the names in the main list (always shown inside a project)
 
 [snapshots]
 enable = true

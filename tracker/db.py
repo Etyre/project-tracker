@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS projects (
     id INTEGER PRIMARY KEY,
     parent_id INTEGER REFERENCES projects(id),
     name TEXT NOT NULL,
+    subtitle TEXT NOT NULL DEFAULT '',               -- optional one line under the name
     notes TEXT NOT NULL DEFAULT '',
     position INTEGER NOT NULL DEFAULT 0,
     created_at REAL NOT NULL,
@@ -147,6 +148,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if "someday_at" not in pcols:
         conn.execute("ALTER TABLE projects ADD COLUMN someday_at REAL")
         conn.commit()
+    if "subtitle" not in pcols:
+        conn.execute("ALTER TABLE projects ADD COLUMN subtitle TEXT NOT NULL DEFAULT ''")
+        conn.commit()
     if "toggl_project" not in pcols:
         conn.execute("ALTER TABLE projects ADD COLUMN toggl_project TEXT")
         conn.commit()
@@ -240,7 +244,7 @@ def create_project(name: str, parent_id: int | None = None, notes: str = "", lin
 
 
 def update_project(pid: int, **fields) -> None:
-    allowed = {"name", "notes", "parent_id", "archived_at", "linear_key", "source", "toggl_project"}
+    allowed = {"name", "subtitle", "notes", "parent_id", "archived_at", "linear_key", "source", "toggl_project"}
     sets = {k: v for k, v in fields.items() if k in allowed}
     if not sets:
         return

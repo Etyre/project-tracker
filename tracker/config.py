@@ -52,6 +52,7 @@ DEFAULTS: dict[str, Any] = {
         "min_block_minutes": 15,
         "meeting_alert_minutes": 45,         # the feed shows "N minutes until X" this long before a meeting
         "meeting_alert_all_day": False,      # ... or for the next meeting whenever it is today
+        "show_subtitles": True,              # project subtitles under the names in the main list (always shown inside a project)
     },
     "snapshots": {
         "enable": True,

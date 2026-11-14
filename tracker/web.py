@@ -31,6 +31,7 @@ class ProjectIn(BaseModel):
 
 class ProjectPatch(BaseModel):
     name: str | None = None
+    subtitle: str | None = None          # "" clears it
     notes: str | None = None
     parent_id: int | None = None
     toggl_project: str | None = None     # "" unlinks: the next timer asks Claude again
@@ -552,6 +553,7 @@ def create_app() -> FastAPI:
             "sheets": sheets.daily_checklist()["source"] if (cfg["sheets"].get("apps_script_url") or cfg["sheets"]["daily_checklist_csv"]) else "none",
             "sheets_writable": sheets.writable(),
             "work_start": cfg["general"]["work_start"], "work_end": cfg["general"]["work_end"],
+            "show_subtitles": cfg["general"]["show_subtitles"],
             "linear_last_sync": db.get_setting("linear_last_sync"),
             "timer": _timer_state(),
         }
@@ -579,6 +581,8 @@ def create_app() -> FastAPI:
         fields = {k: v for k, v in p.model_dump().items() if v is not None}
         if "toggl_project" in fields:
             fields["toggl_project"] = fields["toggl_project"].strip() or None
+        if "subtitle" in fields:
+            fields["subtitle"] = " ".join(fields["subtitle"].split())      # one line
         db.update_project(pid, **fields)
         return {"ok": True}
 

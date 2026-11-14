@@ -162,7 +162,7 @@ def _task_out(t: dict) -> dict:
 def _project_index(nodes: list[dict], path: list[str], out: list[dict]) -> None:
     for p in nodes:
         here = [*path, p["name"]]
-        out.append({"id": p["id"], "parent_id": p["parent_id"], "name": p["name"], "path": here, "notes": p["notes"],
+        out.append({"id": p["id"], "parent_id": p["parent_id"], "name": p["name"], "subtitle": p.get("subtitle") or "", "path": here, "notes": p["notes"],
                     "source": p.get("source", "local"), "open_tasks": len(p["tasks"]), "notes_added": p.get("notes_added", [])})
         _project_index(p["children"], here, out)
 
