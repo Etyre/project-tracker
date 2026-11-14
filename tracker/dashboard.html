@@ -765,14 +765,14 @@ function editTaskNotes(tid, el) {
   Draft.bind(ta, `notes:${tid}`);
   const added = el.querySelector('.added'); el.replaceChildren(ta); if (added) el.appendChild(added); ta.focus();
   let closeBox = false;   // Shift+Enter inside the box: save, close the box and go back to the line
-  ta.onblur = async () => {
+  ta.onblur = () => afterMouse(async () => {
     const description = ta.value;
     if (description !== orig) {await api(`/tasks/${tid}`, 'PATCH', {description}); if (t) t.description = description; pushUndo('notes change', () => api(`/tasks/${tid}`, 'PATCH', {description: orig}));}
     Draft.clear(`notes:${tid}`);
     if (closeBox) {expandOnly(tid); pendingFocus = tid; renderProjects(); return;}
     const t2 = findTask(tid) || {id: tid}; t2.description = description; el.outerHTML = taskNotesHTML(t2);
     const row = document.querySelector(`.task[data-tid="${tid}"]`); if (row) Draft.bindAll(row);
-  };
+  }, true);
   ta.onkeydown = e => {
     if (e.key === 'Escape') {ta.value = orig; ta.blur();}
     else if (e.key === 'Enter' && e.shiftKey) {e.preventDefault(); closeBox = true; ta.blur();}
@@ -866,7 +866,7 @@ function editProjectName(pid, append, caret, text) {
     else await outlineKey(e, head, save);
   };
   // clicking away keeps what was typed: save at once (a re-render then re-opens whatever got the click)
-  inp.onblur = () => setTimeout(async () => {if (!done && document.activeElement !== inp) {const changed = await save(); if (changed) renderProjects();}}, 0);
+  inp.onblur = () => afterMouse(async () => {if (!done && document.activeElement !== inp) {const changed = await save(); if (changed) renderProjects();}});
   wirePaste(inp, async rest => {await save(); const ids = await addOutline({project_id: pid, parent_id: null, after_id: 0}, rest); pendingEdit = ids[ids.length - 1]; renderProjects();});
   inp.focus();
   if (append) inp.setSelectionRange(inp.value.length, inp.value.length);
@@ -931,7 +931,7 @@ function openInlineProjectAdd(parent_id, after_pid, text, caret) {
     else if (e.key === 'Tab' && e.shiftKey) {e.preventDefault(); stepOut();}
   };
   // clicking away keeps what was typed
-  inp.onblur = () => setTimeout(() => {if (!done && !inp.disabled && document.activeElement !== inp) commit(null, false, true);}, 0);
+  inp.onblur = () => afterMouse(() => {if (!done && !inp.disabled && document.activeElement !== inp) commit(null, false, true);});
   inp.focus(); if (text) {const c = typeof caret === 'number' ? Math.min(caret, inp.value.length) : inp.value.length; inp.setSelectionRange(c, c);}
 }
 // Save (or drop, if empty) whatever new line is open before another editor takes over.
@@ -1038,7 +1038,7 @@ function openInlineAdd(a, text, caret) {
     else if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && caretAtEdge(inp, e.key === 'ArrowUp' ? -1 : 1)) {const n = neighbourRow(row, e.key === 'ArrowUp' ? -1 : 1); if (n) {e.preventDefault(); commit(false, false, n);}}
   };
   // clicking away keeps what was typed: the line is saved at once (and no next line opens); an emptied line just goes away
-  inp.onblur = () => setTimeout(() => {if (!done && !inp.disabled && document.activeElement !== inp && inlineAdd?.row === row) commit(false, false, null, null, true);}, 0);
+  inp.onblur = () => afterMouse(() => {if (!done && !inp.disabled && document.activeElement !== inp && inlineAdd?.row === row) commit(false, false, null, null, true);});
   inp.focus(); if (text) {const p = caret === 'start' ? 0 : typeof caret === 'number' ? Math.min(caret, inp.value.length) : inp.value.length; inp.setSelectionRange(p, p);}
 }
 // closing the line settles its draft: committed, carried over to another editor (which keeps its own), merged into the
@@ -1102,6 +1102,15 @@ const isHead = el => el.classList.contains('phead');
 const rowPid = el => +el.parentElement.dataset.pid;
 // A line editor: a textarea that wraps and grows with its text, so a long line stays fully visible while typing.
 // Enter never inserts a newline here (the key handlers decide what Enter does).
+// An editor that closes on blur changes the page's layout (a title being edited makes its row taller, a notes box
+// shrinks back to text). When the blur comes from a mouse press, doing that at once moves everything below it out
+// from under the pointer before the button comes up, and the click lands on the wrong thing. So a blur caused by
+// a press is acted on only after the button is released; any other blur as before.
+let mouseHeld = false; const afterMouseQ = [];
+const releaseMouse = () => {mouseHeld = false; const q = afterMouseQ.splice(0); if (q.length) setTimeout(() => q.forEach(f => f()), 0);};
+document.addEventListener('mousedown', e => {if (e.button === 0) mouseHeld = true;}, true);
+document.addEventListener('mouseup', releaseMouse, true); document.addEventListener('dragend', releaseMouse, true); window.addEventListener('blur', releaseMouse);
+function afterMouse(fn, now) {if (mouseHeld) afterMouseQ.push(fn); else if (now) fn(); else setTimeout(fn, 0);}
 function attachFit(ta) {
   const fit = () => {ta.style.height = '0'; ta.style.height = ta.scrollHeight + 'px';};
   ta.rows = 1; ta.fit = fit; ta.addEventListener('input', fit); ta.addEventListener('keydown', e => {if (e.key === 'Enter') e.preventDefault();});
@@ -1571,15 +1580,17 @@ function editTaskTitle(tid, append, caret, text) {
   wirePaste(inp, async rest => {const L = lineInfo(row); await save(); const ids = await addOutline({project_id: L.project_id, parent_id: L.parent_id, after_id: tid}, rest); pendingEdit = ids[ids.length - 1]; renderProjects();});
   // clicking away keeps what was typed: save at once (a re-render then re-opens whatever got the click).
   // A title emptied and then left this way deletes the line (unless notes, time or Linear are attached: then it reverts).
-  inp.onblur = () => setTimeout(async () => {
-    if (done || document.activeElement === inp || !row.isConnected) return;
+  inp.onblur = () => afterMouse(async () => {
+    if (done || document.activeElement === inp) return;
+    if (!row.isConnected) {if (inp.value.trim()) await save(); return;}   // the click re-rendered the list first: what was typed is still saved
     if (!inp.value.trim()) {
       try {await deleteLine(lineInfo(row)); Draft.clear(`title:${tid}`); end(); titleEdit = null; renderProjects();}
       catch (err) {end(); toast(esc(err.message), 5000);}
       return;
     }
-    const changed = await save(); if (changed) renderProjects();
-  }, 0);
+    const changed = await save();
+    if (changed && !document.activeElement?.matches?.('#tree input, #tree textarea')) renderProjects();   // not from under a field the click just went into
+  });
   inp.focus(); const c = append == null && caret != null ? Math.min(caret, inp.value.length) : inp.value.length; inp.setSelectionRange(c, c);
 }
 

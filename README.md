@@ -536,3 +536,9 @@ as above; `python -m tracker web --reload` in a browser is the quick way to see 
 - Quick add and the planner used to hold the model's answer only in memory; the task-kind backlog classifier runs
   every 5 minutes, so after a contact from the model it would have asked again and again. That is why a contact
   pauses Claude app-wide rather than only failing the one call.
+- An editor that closes on blur changes the layout: a title being edited makes its row about 24px taller, and a
+  notes box shrinks back to text. Doing that the moment the mouse is pressed elsewhere moved everything below
+  out from under the pointer before the button came up, so the click landed on the wrong thing (a click on an
+  opened task's tag line opened the notes editor or another line instead, which closed the box). Blurs caused
+  by a mouse press are now acted on after the button is released (`afterMouse` in `dashboard.html`). Chromium
+  with instant synthetic clicks does not show this; a click held for ~90 ms in WebKit does.
