@@ -51,8 +51,11 @@ on the lines: you navigate with the arrow keys and type.
   the line above, which undoes an accidental split; on an empty line it does nothing, so the line stays until you click elsewhere.
   Deleting is refused, with a message, for anything with sub-items, tracked time or a Linear link.
 - Right-click a line for a small menu: complete, notes, dates & priority, make project (or open / make task on
-  a project line) and Delete. From the menu a task is deleted together with its sub-items (Cmd+Z brings the
-  whole subtree back); a project with content is archived rather than deleted.
+  a project line), Archive and Delete. Archive puts the line away without deleting it: a task goes with its
+  sub-items, finished or not, and an unfinished one is not counted as completed, it just leaves the outline
+  and the schedule (Cmd+Z brings it back; the Archived tasks filter shows it in grey italic, where right-click
+  offers Restore). From the menu a task is deleted together with its sub-items (Cmd+Z brings the
+  whole subtree back); a project can always be archived, and deleted only when it is empty.
 - Text is Markdown everywhere: **bold**, *italic*, `code`, ~~strike~~ and [links](url) render in titles, names
   and notes, and a line that starts with one to six hashes (`## Big step`) is shown as a heading of that level:
   `#` is large and heavy with a solid rule under it, `##` bold with a thin rule, `###`, `####` and `#####`

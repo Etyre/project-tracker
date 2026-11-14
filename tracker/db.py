@@ -348,6 +348,7 @@ def project_tree(include_archived: bool = False, with_tasks: bool = True,
             tasks += open_tasks()
         if completed:
             tasks += completed_tasks(None, 5000)
+            tasks += rows("SELECT * FROM tasks WHERE completed_at IS NULL AND archived_at IS NOT NULL")   # put away unfinished
         elif done:
             tasks += completed_tasks(None, 5000, include_archived=False)
         tasks.sort(key=lambda t: (t["position"], t["id"]))     # ticking a line off never moves it
@@ -418,7 +419,7 @@ def _child_project(parent: int | None, name: str) -> dict | None:
     if len(hits) <= 1:
         return hits[0] if hits else None
     def weight(k):
-        tasks = row("SELECT count(*) AS c FROM tasks WHERE project_id=? AND completed_at IS NULL", (k["id"],))["c"]
+        tasks = row("SELECT count(*) AS c FROM tasks WHERE project_id=? AND completed_at IS NULL AND archived_at IS NULL", (k["id"],))["c"]
         return (tasks + len(project_descendants(k["id"])), k["name"].lower() == name.lower(), -k["id"])
     return max(hits, key=weight)
 
@@ -491,7 +492,7 @@ TASK_FIELDS = {"title", "description", "deadline", "soft_deadline", "blocking", 
 
 
 def _sibling_where(project_id: int, parent_id: int | None) -> tuple[str, tuple]:
-    return "project_id=? AND completed_at IS NULL AND parent_id IS ?", (project_id, parent_id)
+    return "project_id=? AND completed_at IS NULL AND archived_at IS NULL AND parent_id IS ?", (project_id, parent_id)
 
 
 def _insert_position(project_id: int, parent_id: int | None, after_id: int | None) -> int:
@@ -570,7 +571,7 @@ def tasks_without_work_kind(limit: int = 40) -> list[dict]:
     """Open tasks in live projects that Claude has not yet judged (quick task or focused work; reading; writing; the
     gerund title for Toggl)."""
     return rows("""SELECT t.* FROM tasks t JOIN projects p ON p.id=t.project_id
-                   WHERE t.completed_at IS NULL AND (t.work_kind IS NULL OR t.reading IS NULL OR t.writing IS NULL OR t.toggl_title IS NULL) AND p.archived_at IS NULL AND p.someday_at IS NULL
+                   WHERE t.completed_at IS NULL AND t.archived_at IS NULL AND (t.work_kind IS NULL OR t.reading IS NULL OR t.writing IS NULL OR t.toggl_title IS NULL) AND p.archived_at IS NULL AND p.someday_at IS NULL
                    ORDER BY t.id LIMIT ?""", (limit,))
 
 
@@ -578,7 +579,7 @@ def flagged_tasks(flag: str) -> list[dict]:
     """Open tasks in live projects that are mainly `flag` ("reading" | "writing"): what that daily card chooses from."""
     assert flag in ("reading", "writing")
     return rows(f"""SELECT t.* FROM tasks t JOIN projects p ON p.id=t.project_id
-                    WHERE t.completed_at IS NULL AND t.{flag}=1 AND p.archived_at IS NULL AND p.someday_at IS NULL ORDER BY t.id""")
+                    WHERE t.completed_at IS NULL AND t.archived_at IS NULL AND t.{flag}=1 AND p.archived_at IS NULL AND p.someday_at IS NULL ORDER BY t.id""")
 
 
 def reading_tasks() -> list[dict]:
@@ -590,8 +591,8 @@ def task_by_linear_id(lid: str) -> dict | None:
 
 
 def open_tasks(project_id: int | None = None, schedulable_only: bool = False) -> list[dict]:
-    """Open tasks. With `schedulable_only`, tasks inside archived projects are left out."""
-    q = "SELECT * FROM tasks WHERE completed_at IS NULL"
+    """Open tasks: not completed and not archived. With `schedulable_only`, tasks inside archived projects are left out."""
+    q = "SELECT * FROM tasks WHERE completed_at IS NULL AND archived_at IS NULL"
     args: tuple = ()
     if project_id is not None:
         q += " AND project_id=?"
@@ -623,6 +624,34 @@ def archive_completed(project_id: int) -> list[int]:
     ids = [r["id"] for r in rows("SELECT id FROM tasks WHERE project_id=? AND completed_at IS NOT NULL AND archived_at IS NULL", (project_id,))]
     if ids:
         execute(f"UPDATE tasks SET archived_at=? WHERE id IN ({','.join('?' * len(ids))})", (time.time(), *ids))
+    return ids
+
+
+def _task_subtree_ids(tid: int) -> list[int]:
+    ids, frontier = [tid], [tid]
+    while frontier:
+        frontier = [r["id"] for r in rows(f"SELECT id FROM tasks WHERE parent_id IN ({','.join('?' * len(frontier))})", tuple(frontier))]
+        ids += frontier
+    return ids
+
+
+def archive_task(tid: int) -> list[int]:
+    """Put one task away, finished or not, with everything under it. An unfinished task stays unfinished: it is
+    not counted as completed, it just leaves the outline and the schedule. Returns the ids archived, for undo."""
+    ids = [r["id"] for r in rows(f"SELECT id FROM tasks WHERE archived_at IS NULL AND id IN ({','.join('?' * len(_task_subtree_ids(tid)))})", tuple(_task_subtree_ids(tid)))]
+    if ids:
+        execute(f"UPDATE tasks SET archived_at=? WHERE id IN ({','.join('?' * len(ids))})", (time.time(), *ids))
+    return ids
+
+
+def restore_task(tid: int) -> list[int]:
+    """Bring an archived task back, with the sub-items that were archived in the same step. Returns their ids."""
+    t = task(tid)
+    if not t or t["archived_at"] is None:
+        return []
+    sub = _task_subtree_ids(tid)
+    ids = [r["id"] for r in rows(f"SELECT id FROM tasks WHERE archived_at=? AND id IN ({','.join('?' * len(sub))})", (t["archived_at"], *sub))]
+    unarchive_tasks(ids)
     return ids
 
 
@@ -674,7 +703,7 @@ def delete_task_tree(tid: int) -> list[dict]:
 
 
 def subtasks(tid: int, open_only: bool = True) -> list[dict]:
-    q = "SELECT * FROM tasks WHERE parent_id=?" + (" AND completed_at IS NULL" if open_only else "")
+    q = "SELECT * FROM tasks WHERE parent_id=?" + (" AND completed_at IS NULL AND archived_at IS NULL" if open_only else "")
     return rows(q + " ORDER BY position, id", (tid,))
 
 

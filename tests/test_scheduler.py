@@ -1067,6 +1067,21 @@ def test_routine_cards_from_checklist(monkeypatch):
     assert "Anki Review" not in db.checklist_done_today(date)
 
 
+def test_archive_task_unfinished_takes_sub_items_and_restores():
+    pid = db.create_project("Archive one")
+    a = db.create_task(pid, "Parent to put away")
+    b = db.create_task(pid, "Child of it", parent_id=a)
+    keep = db.create_task(pid, "Stays")
+    titles = lambda **kw: [t["title"] for t in next(p for p in db.project_tree(**kw) if p["id"] == pid)["tasks"]]
+    ids = db.archive_task(a)
+    assert sorted(ids) == [a, b] and db.task(a)["completed_at"] is None          # put away, not completed
+    assert titles() == ["Stays"] and titles(completed=True) == ["Parent to put away", "Stays"]
+    assert {a, b}.isdisjoint({t["id"] for t in db.open_tasks()})
+    assert "Parent to put away" not in {c["title"] for c in scheduler.candidates(dt.date.today())}
+    assert sorted(db.restore_task(a)) == [a, b]
+    assert titles() == ["Parent to put away", "Stays"] and keep in {t["id"] for t in db.open_tasks()}
+
+
 def test_completed_tasks_stay_until_archived():
     pid = db.create_project("Archive done")
     a = db.create_task(pid, "Open one")

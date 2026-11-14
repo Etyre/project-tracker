@@ -120,7 +120,8 @@ code{font-size:.9em;padding:1px 4px;border-radius:3px;background:var(--hover)}
 .task .tools{display:flex;gap:2px;opacity:.25}
 .task:hover .tools{opacity:1}
 .task.done .title{text-decoration:line-through;color:var(--muted)}
-.task.done .chip{background:var(--hover);color:var(--muted);opacity:.7}   /* completed-on date: quiet grey, no colour */
+.task.put .title{color:var(--muted);font-style:italic}   /* archived unfinished: grey italic like an archived project, not struck through */
+.task.done .chip,.task.put .chip{background:var(--hover);color:var(--muted);opacity:.7}   /* completed-on date: quiet grey, no colour */
 .proj.archived>.phead h3{color:var(--muted);font-style:italic}
 .filters{display:flex;gap:14px;align-items:center;font-size:14px}
 .filterwrap{position:relative}
@@ -695,15 +696,16 @@ async function archiveDone(pid) {
 const countSub = t => t.children.reduce((a, c) => a + 1 + countSub(c), 0);
 function taskHTML(t) {
   const open = expanded.has(t.id);
-  const done = !!t.completed_at;
+  const put = !!t.archived_at && !t.completed_at;   // put away unfinished: inert like a done line, but not ticked
+  const done = !!t.completed_at || put;
   const kids = t.children.length, folded = kids && collapsedTasks.has(t.id);
-  return `<div class="task ${done ? 'done' : ''}" tabindex="0" data-tid="${t.id}" data-project="${t.project_id}" data-parent="${t.parent_id ?? ''}" ${done ? 'data-done="1"' : ''}>
+  return `<div class="task ${put ? 'put' : done ? 'done' : ''}" tabindex="0" data-tid="${t.id}" data-project="${t.project_id}" data-parent="${t.parent_id ?? ''}" ${done ? 'data-done="1"' : ''} ${t.archived_at ? 'data-archived="1"' : ''}>
     <span class="handle" draggable="${done ? 'false' : 'true'}" ${done ? '' : `data-drag-task="${t.id}"`} style="${done ? 'visibility:hidden' : ''}">≡</span>
     <span class="caret" ${kids ? `onclick="event.stopPropagation(); toggleTaskFold(${t.id})" title="${folded ? 'Show' : 'Hide'} ${kids} sub-task${kids === 1 ? '' : 's'}"` : ''}>${kids ? (folded ? '▸' : '▾') : ''}</span>
-    ${view === 'someday' ? '<span class="bullet">•</span>' : `<input type="checkbox" ${done ? 'checked' : ''} title="${done ? 'Restore' : 'Complete'}" onchange="${done ? `uncomplete(${t.id})` : `completeTask(${t.id}, this)`}">`}
+    ${view === 'someday' ? '<span class="bullet">•</span>' : put ? '<span class="bullet">•</span>' : `<input type="checkbox" ${done ? 'checked' : ''} title="${done ? 'Restore' : 'Complete'}" onchange="${done ? `uncomplete(${t.id})` : `completeTask(${t.id}, this)`}">`}
     <div class="body" onmousedown="if (event.shiftKey) event.preventDefault()" onclick="if (event.shiftKey) {event.stopPropagation(); extendSelTo(this.closest('.task'));} else if (!event.target.closest('a') && !selecting()) {clearSel(); ${done ? "this.closest('.task').focus()" : `editTaskTitle(${t.id}, null, 1e9)`};}" ondblclick="if (!event.target.closest('a, input, textarea, .notes')) {event.preventDefault(); toggleTask(${t.id});}">
 <span class="title ${t.linear_id ? 'lin' : ''} ${mdLine(t.title).level ? 'md-h' + mdLine(t.title).level : ''}" onclick="event.stopPropagation(); if (!selecting()) editTaskTitle(${t.id}, null, caretFromClick(event, this))" title="Click to edit, double-click for notes" ondblclick="event.stopPropagation()">${mdLine(t.title).html}</span>
-      <span class="chips" style="margin-left:6px">${done ? `<span class="chip">completed ${fmtDay(t.completed_at)}</span>` : view === 'someday' ? '' : chips(t, open)}</span>
+      <span class="chips" style="margin-left:6px">${put ? `<span class="chip">archived ${fmtDay(t.archived_at)}</span>` : done ? `<span class="chip">completed ${fmtDay(t.completed_at)}</span>` : view === 'someday' ? '' : chips(t, open)}</span>
       ${open ? taskNotesHTML(t) : ''}
     </div>
   </div>
@@ -1169,7 +1171,7 @@ async function outdentProject(proj) {
 }
 function lineInfo(el) {
   if (isHead(el)) {const proj = el.parentElement; return {kind: 'project', id: +proj.dataset.pid, el, proj, parent_id: proj.dataset.parent ? +proj.dataset.parent : (focusProject || null)};}
-  return {kind: 'task', id: +el.dataset.tid, el, row: el, project_id: +el.dataset.project, parent_id: el.dataset.parent ? +el.dataset.parent : null, done: !!el.dataset.done, linear: !!el.querySelector('.title.lin')};
+  return {kind: 'task', id: +el.dataset.tid, el, row: el, project_id: +el.dataset.project, parent_id: el.dataset.parent ? +el.dataset.parent : null, done: !!el.dataset.done, archived: !!el.dataset.archived, put: el.classList.contains('put'), linear: !!el.querySelector('.title.lin')};
 }
 async function moveLine(L, dir) {
   if (L.kind === 'task') {
@@ -1221,7 +1223,19 @@ async function deleteLine(L) {   // throws (with a readable message) when the li
     if (p) pushUndo(`delete project "${p.name}"`, () => api('/projects', 'POST', {name: p.name, parent_id: p.parent_id}));
   }
 }
+async function archiveTask(L) {   // a task with everything under it, finished or not; Cmd+Z brings it back
+  const prev = neighbourRow(L.el, -1), kids = countDesc(findTask(L.id));
+  const r = await api(`/tasks/${L.id}/archive`, 'POST');
+  pushUndo('archive', () => api('/tasks/unarchive', 'POST', {ids: r.ids}));
+  toast(kids ? `Archived with ${r.ids.length - 1} sub-item${r.ids.length === 2 ? '' : 's'}` : 'Archived');
+  selectRowLater(prev); renderProjects();
+}
+async function restoreTask(L) {
+  const r = await api(`/tasks/${L.id}/restore`, 'POST');
+  pushUndo('restore', () => api(`/tasks/${L.id}/archive`, 'POST')); toast('Restored');
+}
 async function toggleComplete(L) {
+  if (L.put) return restoreTask(L);
   if (L.done) {await api(`/tasks/${L.id}/uncomplete`, 'POST'); pushUndo('restore', () => api(`/tasks/${L.id}/complete`, 'POST')); toast('Restored');}
   else {const r = await api(`/tasks/${L.id}/complete`, 'POST'); pushUndo('complete', () => api(`/tasks/${L.id}/uncomplete`, 'POST')); toast(r.linear_error ? 'Completed locally; Linear: ' + esc(r.linear_error) : 'Completed', 4000);}
 }
@@ -1410,8 +1424,8 @@ function openBulkModal() {
   };
   setTimeout(() => el.querySelector('[name=deadline]').focus(), 0);
 }
-// right-click on a line: a small menu (delete lives here, with undo; a task goes with its sub-items, a project
-// with content is archived instead). Inside a text editor the browser's own menu stays.
+// right-click on a line: a small menu. Every line can be archived (a task goes with its sub-items, finished or
+// not, and Cmd+Z brings it back); delete lives here too, but only an empty project can be deleted. Inside a text editor the browser's own menu stays.
 function closeCtx() {document.querySelector('.ctx')?.remove();}
 document.addEventListener('contextmenu', e => {
   const row = e.target.closest('#tree .task, #tree .phead');
@@ -1421,20 +1435,23 @@ document.addEventListener('contextmenu', e => {
   const add = (label, fn, cls) => items.push({label, fn, cls});
   if (L.kind === 'task') {
     const t = findTask(L.id), kids = countDesc(t);
-    if (view !== 'someday') add(L.done ? 'Reopen' : 'Complete', () => toggleComplete(L).then(renderProjects));
+    if (L.put) add('Restore', () => restoreTask(L).then(renderProjects));
+    else if (view !== 'someday') add(L.done ? 'Reopen' : 'Complete', () => toggleComplete(L).then(renderProjects));
     if (!L.done) add(expanded.has(L.id) ? 'Hide notes' : 'Notes', () => toggleTask(L.id));
-    if (view !== 'someday') add('Dates & priority…', () => editTask(L.id));
+    if (view !== 'someday' && !L.put) add('Dates & priority…', () => editTask(L.id));
     if (!L.done && !L.linear && view !== 'someday') add('Make project', () => taskToProject(L.id));
     if (!L.done && !L.linear && view !== 'someday') add('Someday / maybe', () => taskToSomeday(L.id));
     if (!L.done && view === 'someday' && somedayRoot && L.project_id === somedayRoot.id) add('Make active…', () => activateItem(L.id));
     items.push(null);
+    if (!L.archived) add(kids ? `Archive with ${kids} sub-item${kids === 1 ? '' : 's'}` : 'Archive', () => archiveTask(L));
     add(kids ? `Delete with ${kids} sub-item${kids === 1 ? '' : 's'}` : 'Delete', () => deleteTree(L), 'danger');
   } else {
     const p = findProject(L.id), empty = p && !p.tasks.length && !p.children.length;
     add('Open', () => openProject(L.id));
     if (L.proj.dataset.parent) add('Make task', () => projectToTask(L.id));
     items.push(null);
-    add(empty ? 'Delete' : 'Archive…', () => empty ? deleteTree(L) : archiveProject(L.id), 'danger');
+    add('Archive…', () => archiveProject(L.id));
+    if (empty) add('Delete', () => deleteTree(L), 'danger');
   }
   const m = document.createElement('div'); m.className = 'ctx';
   m.innerHTML = items.map(i => i ? `<button class="${i.cls || ''}">${esc(i.label)}</button>` : '<hr>').join('');

@@ -617,6 +617,24 @@ def create_app() -> FastAPI:
             raise HTTPException(404)
         return {"ids": db.archive_completed(pid)}
 
+    @app.post("/api/tasks/{tid}/archive")
+    def archive_task(tid: int):
+        """Archive in the right-click menu: the task and its sub-items are put away, finished or not (undo restores)."""
+        if not db.task(tid):
+            raise HTTPException(404)
+        ids = db.archive_task(tid)
+        e = db.running_entry()
+        if e and e["task_id"] in ids:
+            _stop_timer()
+        for i in ids:      # an archived task leaves today's plan too
+            for it in db.rows("SELECT id FROM plan_items WHERE task_id=? AND status IN ('pending','active')", (i,)):
+                db.set_item_status(it["id"], "skipped")
+        return {"ids": ids}
+
+    @app.post("/api/tasks/{tid}/restore")
+    def restore_task(tid: int):
+        return {"ids": db.restore_task(tid)}
+
     @app.post("/api/tasks/unarchive")
     def unarchive(body: dict[str, Any]):
         db.unarchive_tasks([int(x) for x in body.get("ids") or []])
