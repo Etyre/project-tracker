@@ -110,6 +110,8 @@ textarea.inline{display:block;width:100%;padding:2px 4px;margin:0;border:0;borde
 .md-h4{font-size:15px;font-weight:650}.md-h5{font-size:14px;font-weight:650}.md-h6{font-size:13px;font-weight:650;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
 /* heading hashes beat the default root / nested header sizes above */
 .proj>.phead h3.md-h1{font-size:29px}.proj>.phead h3.md-h2{font-size:20px}.proj>.phead h3.md-h3{font-size:17px}.proj>.phead h3.md-h4{font-size:15px}.proj>.phead h3.md-h5{font-size:14px}.proj>.phead h3.md-h6{font-size:13px}
+/* a project title is never in the accent colour: blue reads as a link. Low specificity so archived grey still wins. */
+.phead h3.md-h3,.pdetails h2.md-h3{color:inherit}
 .pdetails h2.md-h1{font-size:28px}.pdetails h2.md-h2{font-size:24px}.pdetails h2.md-h3{font-size:20px}.pdetails h2.md-h4,.pdetails h2.md-h5,.pdetails h2.md-h6{font-size:17px}
 code{font-size:.9em;padding:1px 4px;border-radius:3px;background:var(--hover)}
 .tag{color:var(--muted)}
