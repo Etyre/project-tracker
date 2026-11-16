@@ -1067,6 +1067,18 @@ def test_routine_cards_from_checklist(monkeypatch):
     assert "Anki Review" not in db.checklist_done_today(date)
 
 
+def test_new_task_goes_right_after_a_completed_one():
+    pid = db.create_project("Enter on a done line")
+    a = db.create_task(pid, "First")
+    b = db.create_task(pid, "Done in the middle")
+    c = db.create_task(pid, "Also done")
+    d = db.create_task(pid, "Last")
+    db.complete_task(b); db.complete_task(c)
+    db.create_task(pid, "New after the done one", after_id=b)
+    titles = [t["title"] for t in next(p for p in db.project_tree() if p["id"] == pid)["tasks"]]
+    assert titles == ["First", "Done in the middle", "New after the done one", "Also done", "Last"]
+
+
 def test_project_subtitle_is_stored_and_in_the_tree():
     pid = db.create_project("With a subtitle")
     assert next(p for p in db.project_tree() if p["id"] == pid)["subtitle"] == ""

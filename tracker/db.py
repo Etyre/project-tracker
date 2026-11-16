@@ -513,9 +513,11 @@ def _insert_position(project_id: int, parent_id: int | None, after_id: int | Non
         execute(f"UPDATE tasks SET position=position+1 WHERE {where}", args)
         return 0
     after = task(after_id) if after_id else None
-    if after and after["project_id"] == project_id and after["parent_id"] == parent_id and after["completed_at"] is None:
+    if after and after["project_id"] == project_id and after["parent_id"] == parent_id:
+        # `after` may be a finished line (Enter on a ticked-off task): finished lines keep their place in the
+        # outline, so every sibling below moves down, finished or not, and the new line lands exactly there.
         pos = int(after["position"]) + 1
-        execute(f"UPDATE tasks SET position=position+1 WHERE {where} AND position>=?", (*args, pos))
+        execute("UPDATE tasks SET position=position+1 WHERE project_id=? AND parent_id IS ? AND position>=?", (project_id, parent_id, pos))
         return pos
     return _next_position("tasks", where, args)
 

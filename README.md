@@ -33,7 +33,8 @@ on the lines: you navigate with the arrow keys and type.
   Project lines and completed tasks are only highlighted; a project is renamed only inside the opened project.
   Double-click a task to open its notes box and double-click a project to open just that project (Back button
   and breadcrumb at the top).
-- Enter opens a new line below (the first child when the line shows children); on a project line it opens the
+- Enter opens a new line below (the first child when the line shows children; always a sibling right below
+  when the line is ticked off); on a project line it opens the
   project's first task. Enter in the middle of a line splits it. Enter on an empty new line steps it out one
   level: out of a sub-task, then out of the project as a new project line beside it (so a top-level project is
   one Enter away from any list). Tab / Shift+Tab nest and un-nest, including a new line at a project's root,

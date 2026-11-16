@@ -1273,10 +1273,10 @@ async function toggleComplete(L) {
   if (L.done) {await api(`/tasks/${L.id}/uncomplete`, 'POST'); pushUndo('restore', () => api(`/tasks/${L.id}/complete`, 'POST')); toast('Restored');}
   else {const r = await api(`/tasks/${L.id}/complete`, 'POST'); pushUndo('complete', () => api(`/tasks/${L.id}/uncomplete`, 'POST')); toast(r.linear_error ? 'Completed locally; Linear: ' + esc(r.linear_error) : 'Completed', 4000);}
 }
-function newLineAfter(L, text) {   // Enter: the first child when the line shows its children, otherwise a sibling right below
+function newLineAfter(L, text) {   // Enter: the first child when the line shows its children, otherwise a sibling right below (always a sibling after a finished line)
   if (L.kind === 'task') {
     const kids = subListOf(L.row); const open = kids && kids.children.length && !kids.classList.contains('collapsed');
-    openInlineAdd(open ? {project_id: L.project_id, parent_id: L.id, after_id: 0, split: !!text} : {project_id: L.project_id, parent_id: L.parent_id, after_id: L.id, split: !!text}, text, 'start');
+    openInlineAdd(open && !L.done ? {project_id: L.project_id, parent_id: L.id, after_id: 0, split: !!text} : {project_id: L.project_id, parent_id: L.parent_id, after_id: L.id, split: !!text}, text, 'start');
   } else {   // a project line: its first task (unfolding it if needed)
     const a = {project_id: L.id, parent_id: null, after_id: 0, text, caret: 'start', split: !!text};
     if (collapsedProjects.has(L.id)) {collapsedProjects.delete(L.id); saveCollapsed(); pendingAdd = a; renderProjects();} else openInlineAdd(a, text, 'start');
@@ -1314,7 +1314,7 @@ async function outlineKey(e, el, save) {
   }
   if (mod || e.altKey) return false;
   if (k === 'Tab') {await run(() => L.kind === 'task' ? (e.shiftKey ? outdentTask(L.row) : indentTask(L.row)) : (e.shiftKey ? outdentProject(L.proj) : indentProject(L.proj))); return true;}
-  if (k === 'Enter') {if (L.done) return false; await run(() => {newLineAfter(L);}); return true;}
+  if (k === 'Enter') {await run(() => {newLineAfter(L);}); return true;}   // on a ticked-off line too: a new line right below it
   if (k === 'ArrowUp' || k === 'ArrowDown') {
     if (editing && document.activeElement?.tagName === 'TEXTAREA' && !caretAtEdge(document.activeElement, dir)) return false;
     const n = neighbourRow(el, dir); if (!n) return false;
