@@ -73,6 +73,12 @@ on the lines: you navigate with the arrow keys and type.
   `#onesitting`, and `#focus` or `#task` for the kind of work. `#nodue`, `#nosoft`, `#p0`,
   `#notblocking` and `#nokind` clear those again. They
   work in pasted outlines and the quick-add bar too; any other `#tag` stays in the text.
+- A tag is suggested while you type a task (a new line, a rename, the quick-add bar): a small hint under the
+  line offers `#reading`, `#writing` or `#task` from the words typed ("Read the paper", "Draft the intro",
+  "Email Sam"), or completes one you started ("#wr"). With the cursor at the end of the text, Enter takes the
+  tag and saves the line as usual; Option+Enter saves the line without it; Right Arrow or a click puts the tag
+  in the text and lets you keep typing. Nothing is offered for a task already marked that way. The rules are
+  a short word list in `TAG_WORDS` in `dashboard.html`, no model.
 - Shift+Up / Shift+Down (or Shift+click) select several lines; Cmd+C copies them, with everything under
   them, as an indented bulleted list that pastes back into the app or anywhere else. With several lines
   selected, typing `#` opens a small field whose tags (`#p2 #due:fri`) apply to every selected task at once,

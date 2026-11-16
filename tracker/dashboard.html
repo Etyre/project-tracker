@@ -200,6 +200,8 @@ a{color:var(--accent)}
 .treelink{display:inline-block;margin:14px 0 4px;font-size:17px;font-weight:400;color:var(--muted);text-decoration:underline dotted;text-underline-offset:2px;cursor:pointer}.treelink:hover{color:var(--ink)}
 table{border-collapse:collapse;width:100%}td,th{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;font-size:14px}
 .kbd{font-size:12px;color:var(--muted)}
+#taghint{position:fixed;display:none;z-index:40;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:2px 8px;font-size:12px;color:var(--ink);box-shadow:0 2px 8px rgba(0,0,0,.12);cursor:pointer;white-space:nowrap}
+#taghint span{color:var(--muted);margin-left:6px}
 </style>
 </head>
 <body>
@@ -414,6 +416,7 @@ function taskTrail(tid, nodes = tree) {
   return null;
 }
 // Enter in the quick-add box submits it (explicitly, so it never depends on the browser's implicit form submission)
+tagHint($('#quickText'));        // before the Enter handler below, so Enter files the text with the suggested tag
 $('#quickText').addEventListener('keydown', e => {if (e.key === 'Enter' && !e.isComposing) quickAdd(e);});
 Draft.bind($('#quickText'), 'quick');
 
@@ -586,6 +589,7 @@ function restoreEditor(k) {
   else if (k.kind === 'pname') editProjectName(k.pid, null, k.caret, k.text);
 }
 async function renderProjects() {
+  hideTagHint();
   const keep = (pendingAdd || pendingEdit || pendingProjectAdd !== undefined || pendingProjectEdit || pendingNotesEdit) ? null : captureEditor();
   const selKeep = multi ? selKeys() : [];
   const someday = view === 'someday';
@@ -1000,7 +1004,7 @@ function openInlineAdd(a, text, caret) {
   row.innerHTML = `<span class="handle" style="visibility:hidden">≡</span><span class="caret"></span>${view === 'someday' ? '<span class="bullet">•</span>' : '<input type="checkbox" disabled>'}<div class="body"><textarea class="inline" placeholder="${view === 'someday' ? 'New item' : 'New task'}"></textarea></div>`;
   if (!placeInlineRow(a, row)) return;
   const inp = attachFit(row.querySelector('.inline')); if (text) {inp.value = text; inp.fit();}
-  Draft.bind(inp, `add:${a.project_id}`, !!text);
+  Draft.bind(inp, `add:${a.project_id}`, !!text); if (view !== 'someday') tagHint(inp);
   let done = false;
   const commit = async (asProject, fromEnter, thenEdit, rest, fromBlur) => {
     if (done) return;
@@ -1117,6 +1121,58 @@ function attachFit(ta) {
   ta.rows = 1; ta.fit = fit; ta.addEventListener('input', fit); ta.addEventListener('keydown', e => {if (e.key === 'Enter') e.preventDefault();});
   requestAnimationFrame(fit); return ta;
 }
+// Tag suggestions while typing a task --------------------------------------
+// A small hint under the line offers #reading, #writing or #task: from the words typed ("Read the paper"), or as
+// the completion of a tag being typed ("#wr"). With the caret at the end of the text, Enter takes the tag and
+// saves the line as Enter always does; Option+Enter saves the line without it (Cmd+Enter is "complete" and
+// Shift+Enter is "notes", so neither was free); Right Arrow or a click puts the tag in the text and keeps typing.
+// Plain word rules, no model: Claude still judges the kind after the task is saved.
+const TAG_WORDS = [
+  ['task', /\b(e-?mail|reply|respond to|call|phone|slack|ping)\b/i],          // a note to someone is a task even if it says "write"
+  ['writing', /\b(write|writing|rewrite|draft|redraft|essay|blog ?post)\b/i],
+  ['reading', /\b(read|reading|re-?read|skim)\b/i],
+  ['task', /^\s*(buy|order|book|schedule|pay|renew|cancel|send|submit|sign|print|ask|remind|pick up|drop off|return|register|rsvp)\b/i],
+];
+function tagSuggestion(text, t) {
+  const typing = /(^|\s)#([a-z]*)$/i.exec(text);
+  if (typing) {const pre = typing[2].toLowerCase(), hit = pre && ['reading', 'writing', 'task'].find(x => x.startsWith(pre) && x !== pre); return hit ? {tag: hit, typed: pre.length + 1} : null;}
+  if (/(^|\s)#(not)?(reading|writing|task|focus|nokind)\b/i.test(text)) return null;      // already said
+  const has = {reading: t?.reading === 1, writing: t?.writing === 1, task: !!t?.work_kind};
+  const hit = TAG_WORDS.find(([tag, re]) => !has[tag] && re.test(text));
+  return hit ? {tag: hit[0], typed: 0} : null;
+}
+let tagHintFor = null;
+function hideTagHint() {tagHintFor = null; const h = $('#taghint'); if (h) h.style.display = 'none';}
+function tagHint(inp, task) {            // task: () => the task being renamed, for what it is already marked as
+  const atEnd = () => inp.selectionStart === inp.value.length && inp.selectionEnd === inp.value.length;
+  const take = () => {
+    const sg = tagHintFor?.inp === inp && tagHintFor.sg; if (!sg) return false;
+    inp.value = sg.typed ? inp.value.slice(0, -sg.typed) + '#' + sg.tag : inp.value.replace(/\s+$/, '') + ' #' + sg.tag;
+    inp.setSelectionRange(inp.value.length, inp.value.length); inp.dispatchEvent(new Event('input', {bubbles: true})); return true;
+  };
+  const update = () => {
+    const sg = document.activeElement === inp && atEnd() ? tagSuggestion(inp.value, task?.()) : null;
+    if (!sg) {if (tagHintFor?.inp === inp) hideTagHint(); return;}
+    let h = $('#taghint'); if (!h) {h = document.createElement('div'); h.id = 'taghint'; h.title = 'Enter adds this tag and saves the line; Option+Enter saves without it; Right Arrow or a click adds it and keeps typing'; document.body.appendChild(h); h.onmousedown = e => {e.preventDefault(); e.stopPropagation(); tagHintFor?.take();};}
+    const r = inp.getBoundingClientRect();
+    h.innerHTML = `#${sg.tag}<span>↵ adds · ⌥↵ without</span>`; h.style.left = r.left + 'px'; h.style.top = (r.bottom + 3) + 'px'; h.style.display = 'block';
+    tagHintFor = {inp, sg, take};
+  };
+  // registered before the editor's own key handler, so that one then sees the line with (or without) the tag
+  inp.addEventListener('keydown', e => {
+    if (tagHintFor?.inp !== inp || !atEnd() || e.isComposing || e.shiftKey || e.metaKey || e.ctrlKey) return;
+    if (e.key === 'ArrowRight' && !e.altKey) {if (take()) {e.preventDefault(); e.stopImmediatePropagation();}}
+    else if (e.key === 'Enter' && !e.altKey) take();
+    else if (e.key === 'Enter') {      // Option+Enter: a plain Enter, minus the tag
+      e.preventDefault(); e.stopImmediatePropagation(); hideTagHint();
+      inp.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true, cancelable: true}));
+    }
+  });
+  ['input', 'focus', 'keyup', 'click'].forEach(ev => inp.addEventListener(ev, update));
+  inp.addEventListener('blur', () => {if (tagHintFor?.inp === inp) hideTagHint();});
+  return inp;
+}
+document.addEventListener('scroll', hideTagHint, true);
 function inlineField(value, placeholder) {
   const ta = document.createElement('textarea'); ta.className = 'inline'; ta.value = value || ''; ta.placeholder = placeholder || ''; ta.spellcheck = true;
   return attachFit(ta);
@@ -1551,7 +1607,7 @@ function editTaskTitle(tid, append, caret, text) {
   const row = document.querySelector(`.task[data-tid="${tid}"]`); if (!row) return;
   const span = row.querySelector('.title'); const orig = findTask(tid)?.title ?? span.textContent;
   const inp = inlineField(text != null ? text : orig + (append || '')); inp.defaultValue = orig;
-  Draft.bind(inp, `title:${tid}`, text != null || append);
+  Draft.bind(inp, `title:${tid}`, text != null || append); if (view !== 'someday') tagHint(inp, () => findTask(tid));
   span.replaceChildren(inp); inp.fit();
   let done = false;
   const end = () => {done = true; if (titleEdit?.inp === inp) titleEdit = null; span.textContent = inp.value.trim() || orig;};
