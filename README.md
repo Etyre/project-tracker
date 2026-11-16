@@ -297,8 +297,8 @@ card takes its place. Above the deck, from `meeting_alert_minutes` (45) before a
 minutes when it is over an hour away). The card has Start (a Toggl timer tagged `task-tracker`, named after the
 task in the present participle), a completion checkbox (completes the task, pushes to Linear; ticks a routine in
 the sheet), and Next (not now: the card goes to the bottom of today's stack, its timer stops); at the bottom the
-alternatives: today's exercise and Journal. The card shows the task's expected length and, when it is longer than
-the gap but can be split, how long the gap is; a line under the deck says how many cards are in the stack, how
+alternatives: today's exercise and Journal. The card does not show the task's time estimate; when the task is longer than
+the gap but can be split, it says how long the gap is ("can be split: 25 min now"); a line under the deck says how many cards are in the stack, how
 long until the next meeting, and how many cards are waiting for a longer gap. When nothing fits the gap the deck
 says so and lists what is waiting. The agent's notes are not on the card at all, only on the Projects page. A task
 card's "open in tree" link opens the Projects page zoomed into the task's own project, with the task selected and

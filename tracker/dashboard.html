@@ -438,7 +438,8 @@ async function renderFeed() {
     const t = c.task;
     const project = c.kind === 'task' && c.path ? c.path.join(' / ') : c.kind === 'routine' ? 'Recurring' : '';
     const treeLink = t ? `<a class="treelink" onclick="openInTree(${t.id}, ${t.project_id})" title="Show this task in its project, with its notes open">open in tree</a>` : '';
-    const length = c.minutes ? `<div class="muted" style="margin-top:6px">${c.minutes} min${c.chunkable && g.minutes != null && c.minutes > g.minutes ? `, can be split: ${g.minutes} min now` : ''}</div>` : '';
+    // the estimate itself is not shown (Eli, 2026-11-16); only the note that the task is longer than the gap
+    const length = c.minutes && c.chunkable && g.minutes != null && c.minutes > g.minutes ? `<div class="muted" style="margin-top:6px">can be split: ${g.minutes} min now</div>` : '';
     let body = `<div class="head"><div class="kind">${esc(project) || '&nbsp;'}</div><div class="big">${mdLine(t ? t.title : c.title).html}${t && t.work_kind ? ' ' + kindChip(t) : ''}</div>${length}${treeLink}`;
     if (c.suggest) {           // the daily reading / writing card: what to read or write, from the projects, else the fallback
       const st = c.suggest.task, sg = c.suggest;
