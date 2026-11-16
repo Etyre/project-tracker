@@ -6,6 +6,11 @@
 The bundle's executable is a tiny native launcher that runs the venv's Python with `-m tracker app` and
 restarts it if it crashes (logged to ~/Library/Application Support/TaskTracker/launcher.log). The bundle
 references this directory - move the project and rebuild.
+
+Python runs inside a second executable in the bundle (ProjectTrackerApp, which embeds the interpreter), not as
+the venv's `python`: macOS names an app after the bundle its executable sits in, and the venv's python sits in
+Homebrew's Python.app, so the window belonged to an app called "Python" (org.python.python) and the Dock's
+"Assign To: Desktop N" for Project Tracker never applied to it.
 """
 from __future__ import annotations
 
@@ -14,6 +19,7 @@ import plistlib
 import shutil
 import subprocess
 import sys
+import sysconfig
 import time
 from pathlib import Path
 
@@ -72,10 +78,11 @@ int main(int argc, char **argv) {
     time_t restarts[MAX_RESTARTS] = {0};
     int n = 0;
     for (;;) {
+        if (n > 0) setenv("TRACKER_RESTARTED", "1", 1);   /* the app then comes back without taking the screen */
         child = fork();
         if (child == 0) {
-            char *args[] = {"%(python)s", "-m", "tracker", "app", NULL};
-            execv("%(python)s", args);
+            char *args[] = {"%(runner)s", "-m", "tracker", "app", NULL};
+            execv("%(runner)s", args);
             perror("execv"); _exit(1);
         }
         if (child < 0) { logline("fork failed: %%s", strerror(errno)); return 1; }
@@ -95,6 +102,19 @@ int main(int argc, char **argv) {
         logline("restarting in 3 s");
         sleep(3);
     }
+}
+"""
+
+
+# The interpreter, embedded: the same as running the venv's python (which __PYVENV_LAUNCHER__ names, so the venv's
+# packages are found), but the process's executable is inside this bundle.
+RUNNER_C = r"""
+#include <Python.h>
+#include <stdlib.h>
+
+int main(int argc, char **argv) {
+    setenv("__PYVENV_LAUNCHER__", "%(python)s", 1);
+    return Py_BytesMain(argc, argv);
 }
 """
 
@@ -135,8 +155,12 @@ def main() -> None:
     (APP / "Contents/MacOS").mkdir(parents=True)
     (APP / "Contents/Resources").mkdir(parents=True)
     src = DIST / "launcher.c"
-    src.write_text(LAUNCHER_C % {"root": ROOT, "python": PYTHON})
+    runner = APP / "Contents/MacOS/ProjectTrackerApp"
+    src.write_text(LAUNCHER_C % {"root": ROOT, "runner": runner})
     subprocess.run(["clang", "-O2", "-o", str(APP / "Contents/MacOS/ProjectTracker"), str(src)], check=True)
+    src.write_text(RUNNER_C % {"python": PYTHON})
+    subprocess.run(["clang", "-O2", "-o", str(runner), str(src), "-I" + sysconfig.get_config_var("INCLUDEPY"),
+                    "-L" + sysconfig.get_config_var("LIBPL"), "-lpython" + sysconfig.get_config_var("LDVERSION")], check=True)
     src.unlink()
     draw_icon(APP / "Contents/Resources/AppIcon.icns")
     plist = {

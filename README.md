@@ -17,7 +17,11 @@ SQLite in `~/Library/Application Support/TaskTracker/`.
 **The app** - `python -m tracker app` starts a FastAPI server on 127.0.0.1:8791 and opens a native window (a
 WKWebView over it) plus a menu bar item. `dist/Project Tracker.app` is a tiny native launcher that runs this
 project's `.venv` Python with `-m tracker app` and restarts it if it crashes (logged to `launcher.log` in the data
-folder). The bundle references this project directory (its venv and `config.toml`), so rebuild after moving the
+folder). Python runs inside a second executable in the bundle, `ProjectTrackerApp`, which embeds the interpreter
+and uses the venv's packages, so macOS sees the window as Project Tracker's (`com.elityre.tasktracker`) and the
+Dock's *Options -> Assign To: Desktop N* places it. Opening the app yourself switches to that desktop; when the
+launcher brings Python back up (after an update or a crash) the window is put on its desktop without taking the
+screen. The bundle references this project directory (its venv and `config.toml`), so rebuild after moving the
 project. A background loop in the server (every minute) reconciles Toggl, syncs Linear, decides the day's exercise,
 prefetches the sheets at night, writes the daily snapshot and has Claude judge the kind of work of tasks nobody
 marked. Nothing in it plans the day: the feed is computed on each request. `python -m tracker web` serves the same UI to a browser instead
@@ -448,7 +452,7 @@ curl -s "$A/schedule/log?date=$(date +%F)" "${H[@]}" | jq '.[] | {at_local, even
 - **Logs**: `~/Library/Logs/project-tracker.log` (timestamped, rotated at 5 MB) for everything the Python side logs;
   `~/Library/Application Support/TaskTracker/launcher.log` for the native launcher (starts, crashes, restarts).
 - **Installed copy**: `dist/Project Tracker.app` in this folder (or wherever you dragged it, e.g. `/Applications`);
-  the bundle always runs `.venv/bin/python -m tracker app` from this folder.
+  the bundle always runs this folder's code with the `.venv` packages (as `ProjectTrackerApp -m tracker app`).
 - **Server**: `http://127.0.0.1:8791` (`[general] host`/`port`); the agent API at `/api/agent`, API docs at `/docs`.
 - **LLM inbox** (shared across projects): `~/Library/Application Support/LLMInbox/messages.jsonl`, log
   `~/Library/Logs/llm-inbox.log`.
@@ -472,7 +476,7 @@ open "dist/Project Tracker.app"         # or drag to /Applications; add to Login
 .venv/bin/python -m tracker open        # bring the running app's window to the front (starts it if needed)
 
 # stop / restart the running app (never pkill by name: a silently failed pkill leaves the old code running)
-pgrep -fl "tracker app"                 # the python process; its parent is .../Project Tracker.app/Contents/MacOS/ProjectTracker
+pgrep -fl "tracker app"                 # the python process (.../MacOS/ProjectTrackerApp -m tracker app); its parent is .../MacOS/ProjectTracker
 kill <launcher pid> <python pid>        # quit both (killing only python makes the launcher restart it with the current code)
 open "dist/Project Tracker.app"
 
@@ -522,6 +526,17 @@ as above; `python -m tracker web --reload` in a browser is the quick way to see 
   local process may call `/api/agent`.
 
 ## Gotchas learned
+
+- macOS names an app after the bundle its executable sits in. The venv's `python` is really Homebrew's
+  `Python.app`, so while the launcher ran it directly the window belonged to an app called "Python"
+  (`org.python.python`; `lsappinfo list` shows it): the Dock's "Assign To: Desktop 1" for Project Tracker never
+  applied, and the window opened on whatever desktop was showing, which was Desktop 1 at login and somewhere else
+  after a restart for an update. Hence `ProjectTrackerApp` (2026-11-16). Two more things hang on that identity: the
+  web view's `localStorage` (drafts) lives in `~/Library/WebKit/<bundle id>/` and the window position in that
+  bundle id's defaults, so both were copied from `org.python.python` to `com.elityre.tasktracker` once, by hand.
+  Running `python -m tracker app` from a terminal is still "Python" and uses the old store.
+- A window with `NSWindowCollectionBehaviorMoveToActiveSpace` ignores the Dock's desktop assignment: it follows
+  the active desktop. The main window sets no collection behaviour for that reason.
 
 - The WKWebView window has no `confirm()` or `alert()` (nothing implements the WKUIDelegate panels, and a blocking
   dialog would freeze the page), so anything that needs a yes from the user has to be a toast with a button or an

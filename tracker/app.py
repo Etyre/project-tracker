@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 import threading
 import time
@@ -69,7 +70,7 @@ class MainWindow:
         main.setSubmenu_forItem_(win, win_item)
         NSApp.setMainMenu_(main)
 
-    def show(self, fragment: str | None = None):
+    def show(self, fragment: str | None = None, activate: bool = True):
         if self.window is None:
             self._install_menus()
             rect = NSMakeRect(0, 0, 920, 760)
@@ -79,7 +80,6 @@ class MainWindow:
             self.window.setReleasedWhenClosed_(False)
             self.window.setFrameAutosaveName_("TaskTrackerMain")
             self.window.setRestorable_(False)
-            self.window.setCollectionBehavior_(1 << 1)      # open on the active Space
             self.window.setMinSize_((520, 420))
             if not self.window.setFrameUsingName_("TaskTrackerMain"):
                 self.window.center()
@@ -90,8 +90,14 @@ class MainWindow:
             self.webview.loadRequest_(NSURLRequest.requestWithURL_(NSURL.URLWithString_(f"{self.base_url}/#{fragment or 'projects'}")))
         elif fragment:
             self.webview.evaluateJavaScript_completionHandler_(f"location.hash='{fragment}'", None)
-        NSApp.activateIgnoringOtherApps_(True)
-        self.window.makeKeyAndOrderFront_(None)
+        # The window has no collection behaviour of its own, so the Dock's "Assign To: Desktop N" places it. Activating
+        # the app switches the screen to that desktop: right when Eli opens it, wrong when the app was restarted
+        # behind his back (an update, a crash), so then the window is only put in place.
+        if activate:
+            NSApp.activateIgnoringOtherApps_(True)
+            self.window.makeKeyAndOrderFront_(None)
+        else:
+            self.window.orderFront_(None)
 
     def is_open(self) -> bool:
         return self.window is not None and bool(self.window.isVisible())
@@ -170,7 +176,8 @@ class ProjectTrackerApp(rumps.App):
                 log.info("server up; opening window")
                 try:
                     self._nsapp._tracker = self
-                    self.main_window.show("projects")       # the projects page is the home page
+                    # the projects page is the home page; TRACKER_RESTARTED: the launcher brought Python back up
+                    self.main_window.show("projects", activate=not os.environ.get("TRACKER_RESTARTED"))
                 except Exception:
                     log.exception("opening the main window failed")
                 self.refresh(None)
