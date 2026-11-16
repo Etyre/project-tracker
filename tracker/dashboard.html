@@ -1801,23 +1801,54 @@ async function renderSettings() {
     <div class="card"><h3>Scheduling rules &amp; heuristics</h3><p class="muted" style="margin:0 0 10px;font-size:13px">Free text that Claude reads when it builds the day. Say how you like your days shaped.</p>
       <textarea id="rules" style="width:100%;min-height:220px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit">${esc(s.rules)}</textarea></div>
     <div class="card"><h3>Files</h3><p class="muted" style="margin:0;font-size:13px">Settings: <code>${esc(s.paths.config)}</code><br>Data and snapshots: <code>${esc(s.paths.data)}</code><br>Rules: <code>${esc(s.paths.rules)}</code></p></div>
-    <div class="savebar"><span class="muted" id="testout" style="flex:1;font-size:13px"></span><button class="btn" onclick="testIntegrations()">Test connections</button><button class="btn primary" onclick="saveSettings()">Save settings</button></div>
+    <div class="savebar"><span class="muted" id="testout" style="flex:1;font-size:13px"></span><span class="muted" id="setsaved" style="font-size:13px">Changes are saved as you make them</span><button class="btn" onclick="testIntegrations()">Test connections</button></div>
   </div>`;
-  // unsaved edits survive leaving the page, a restart or a crash: every text field keeps its draft until Save settings
+  // Every field saves itself (no Save button): a tick or a choice at once, typing after a short pause or on leaving
+  // the field. The drafts cover the moment in between: text typed just before a restart or a failed save comes back
+  // here and is saved then.
+  const asLoaded = JSON.stringify(settingsPayload());
   m.querySelectorAll('.settings input[name]:not([type=checkbox]), .settings textarea[name]').forEach(el => Draft.bind(el, 'settings:' + el.name));
   Draft.bind($('#rules'), 'settings:rules'); Draft.bind($('#exprompt'), 'settings:exercise_brief');
   // "All meetings today" makes the minutes box moot: grey it out while the box is ticked
   const allDay = m.querySelector('[name="general.meeting_alert_all_day"]'), lead = m.querySelector('[name="general.meeting_alert_minutes"]');
   if (allDay && lead) {const sync = () => lead.disabled = allDay.checked; allDay.addEventListener('change', sync); sync();}
+  const box = m.querySelector('.settings'), mine = e => e.target.name || e.target.id === 'rules' || e.target.id === 'exprompt';   // not the API key boxes
+  box.addEventListener('input', e => {if (mine(e)) settingsChanged(false);});
+  box.addEventListener('change', e => {if (mine(e)) settingsChanged(true, e.target.type === 'checkbox' || e.target.tagName === 'SELECT');});
+  if (JSON.stringify(settingsPayload()) !== asLoaded) settingsChanged(true);      // a draft came back: save it
 }
-async function saveSettings() {
+function settingsPayload() {
+  if (!document.querySelector('.settings')) return null;
   const cfg = {};
   document.querySelectorAll('.settings [name]').forEach(el => {
     const [sec, key] = el.name.split('.'); cfg[sec] = cfg[sec] || {};
     cfg[sec][key] = el.type === 'checkbox' ? el.checked : el.tagName === 'TEXTAREA' ? el.value.split('\n').map(x => x.trim()).filter(Boolean) : el.value;
   });
-  try {const r = await api('/settings', 'PUT', {config: cfg, rules: $('#rules').value, exercise_brief: $('#exprompt').value}); Draft.clearPrefix('settings:'); await refreshStatus(); toast(r.warnings?.length ? 'Settings saved. ' + esc(r.warnings.join('; ')) : 'Settings saved', r.warnings?.length ? 8000 : undefined); renderSettings();}
-  catch (e) {toast('Could not save: ' + esc(e.message), 6000);}
+  return {config: cfg, rules: $('#rules').value, exercise_brief: $('#exprompt').value};
+}
+// The values are collected when the change happens, not when the save is sent, so leaving the page inside the pause
+// still saves them. Saves go one after another, so an older one can never land on top of a newer one.
+let setPending = null, setTimer = null, setSeq = 0, setChain = Promise.resolve(), setSaved = '';
+function settingsChanged(now, redraw) {
+  const p = settingsPayload(); if (!p) return;
+  setPending = p; clearTimeout(setTimer);
+  if (now) flushSettings(redraw); else setTimer = setTimeout(flushSettings, 700);
+}
+function flushSettings(redraw) {
+  clearTimeout(setTimer); const p = setPending; if (!p) return; setPending = null;
+  const json = JSON.stringify(p); if (json === setSaved) return;      // leaving a field whose typing was already saved
+  const seq = ++setSeq, note = html => {const el = $('#setsaved'); if (el) el.innerHTML = html;};
+  setChain = setChain.then(async () => {
+    try {
+      const r = await api('/settings', 'PUT', p); setSaved = json;
+      const latest = seq === setSeq && !setPending;
+      if (latest) Draft.clearPrefix('settings:');          // anything typed since keeps its draft until its own save
+      await refreshStatus();
+      note('Saved ' + new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}) + (r.warnings?.length ? '. ' + esc(r.warnings.join('; ')) : ''));
+      // a tick or a choice can turn a card on or off: draw the page again for its chip, unless a field is in use
+      if (redraw && latest && !document.activeElement?.closest?.('.settings input:not([type=checkbox]), .settings textarea, .settings select')) renderSettings();
+    } catch (e) {note('<span style="color:var(--warn, #b45309)">Not saved: ' + esc(e.message) + '. Your text is kept; it is tried again on the next change.</span>');}
+  });
 }
 // Claude sorts every recurring card (checklist rows, exercise sessions, journaling) into a Toggl project once; the lines
 // land in the Recurring cards box for review and are saved with the rest of the settings.
@@ -1828,8 +1859,8 @@ async function suggestRoutineProjects(btn) {
     const r = await api('/toggl/suggest_routines', 'POST');
     const have = {}; ta.value.split('\n').map(l => l.trim()).filter(Boolean).forEach(l => have[l.split(':')[0].trim().toLowerCase()] = l);
     r.lines.forEach(l => have[l.split(':')[0].trim().toLowerCase()] = l);
-    ta.value = Object.values(have).join('\n'); Draft.set('settings:toggl.routine_projects', ta.value);
-    out.textContent = `${r.note || ''}${r.created.length ? ` Created in Toggl: ${r.created.join(', ')}.` : ''} Edit the lines as you like, then Save settings.`;
+    ta.value = Object.values(have).join('\n'); Draft.set('settings:toggl.routine_projects', ta.value); settingsChanged(true);
+    out.textContent = `${r.note || ''}${r.created.length ? ` Created in Toggl: ${r.created.join(', ')}.` : ''} Saved; edit the lines as you like.`;
   } catch (e) {out.textContent = 'Could not: ' + e.message;}
   btn.disabled = false;
 }

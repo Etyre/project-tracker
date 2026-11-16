@@ -997,6 +997,14 @@ def test_project_toggl_link_api_and_settings(monkeypatch):
         assert config.load()["toggl"]["routine_projects"][-1] == "squats: Palisade | exercise, strength"
         toggl.remember_routine("Squats", "Personal")                          # replaces, never duplicates
         assert [l for l in config.load()["toggl"]["routine_projects"] if l.startswith("squats")] == ["squats: Personal"]
+        # the page saves on every edit: the calendar is fetched again only when a calendar setting changed
+        from tracker import calendar_feed
+        calendar_feed._cache["u"] = (0.0, b"")
+        c.put("/api/settings", json={"config": cfg})
+        assert "u" in calendar_feed._cache
+        cfg["calendar"]["ignore_titles"] = ["Lunch"]
+        c.put("/api/settings", json={"config": cfg})
+        assert "u" not in calendar_feed._cache
         cfg["toggl"]["routine_projects"] = ["Anki review: Nowhere"]
         assert c.put("/api/settings", json={"config": cfg}).json()["warnings"] == ["no Toggl project called 'Nowhere' (for anki review)"]
     finally:

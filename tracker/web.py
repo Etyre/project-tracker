@@ -780,12 +780,14 @@ def create_app() -> FastAPI:
 
     @app.put("/api/settings")
     def put_settings(body: dict[str, Any]):
+        before = config.load().get("calendar")
         cfg = config.save(body.get("config") or {})
         if "rules" in body and isinstance(body["rules"], str):
             config.rules_path().write_text(body["rules"])
         if "exercise_brief" in body and isinstance(body["exercise_brief"], str):
             config.exercise_path().write_text(body["exercise_brief"])
-        calendar_feed._cache.clear()
+        if cfg.get("calendar") != before:      # the page saves on every edit: only a calendar change refetches the feeds
+            calendar_feed._cache.clear()
         warnings = []
         if toggl.enabled() and toggl.projects():          # a routine listed under a Toggl project that does not exist
             for label, entry in toggl.routine_map().items():

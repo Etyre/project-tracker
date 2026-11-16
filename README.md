@@ -130,10 +130,18 @@ on the lines: you navigate with the arrow keys and type.
   opens a small panel to show completed tasks and archived projects alongside the active ones.
 
 **Drafts are never lost** - every text field in the UI (the quick-add bar, a new or edited line, a notes box, the
-edit and bulk dialogs, the "what are you reading?" box on the feed, every field on the Settings page) saves what
+edit and bulk dialogs, the "what are you reading?" box on the feed) saves what
 you type, as you type, to the web view's `localStorage` under a key naming the field and the record it belongs to,
 and shows it again the next time that field opens, after a re-render, a crash or a restart, until it is saved or
 deliberately discarded (Escape, Cancel). Password fields (the API keys) are never kept.
+
+**Settings save themselves** - the Settings page has no Save button. A tick or a menu choice is saved at once, typing
+after a 0.7 s pause or on leaving the field; the line at the bottom says "Saved 14:03", or why a save failed. Each
+save sends the whole form (`PUT /api/settings`), collected at the moment of the change, so leaving the page inside
+the pause still saves. Text fields also keep a draft until their save succeeds: text typed just before a restart or
+a failed save comes back when Settings is next opened and is saved then. So restarting the app loses nothing typed
+there. The API keys are the exception: each has its own Save button, because a half-pasted key must not go to the
+Keychain. The calendar feeds are fetched again only when a calendar setting changed, not on every save.
 
 **Focus monitor** - through the work day the feed prompts "Review your focus monitor" at a random interval of
 `[focus_monitor] min_minutes` to `max_minutes` (60 to 120), with a macOS notification; Done on the feed starts the
