@@ -396,3 +396,32 @@ def test_the_agent_sets_hard_and_soft_deadlines():
     r = client.post(f"/api/agent/tasks/{tid}/move", json={"project_id": db.someday_root()}, headers=H)
     assert r.json()["deadline"] is None and r.json()["soft_deadline"] is None
     client.post(f"/api/agent/tasks/{tid}/move", json={"project_id": pid}, headers=H)
+
+
+def test_the_agent_sets_tags_and_the_rest_of_the_metadata():
+    pid = db.create_project("Meta")
+    tid = db.create_task(pid, "Read the survey", estimate_minutes=30)
+    r = client.patch(f"/api/agent/tasks/{tid}", json={"tags": "#p2 #due:tomorrow #blocking:Sam #reading onesitting", "why": "For Thursday."}, headers=H)
+    assert r.status_code == 200, r.text
+    t = r.json()
+    assert t["importance"] == 4 and t["deadline"] == (TODAY + dt.timedelta(days=1)).isoformat() and t["blocking_for"] == "Sam"
+    assert t["reading"] == 1 and t["chunkable"] == 0 and t["importance_by"] == "agent" and t["title"] == "Read the survey"
+    note = db.notes_for("task", tid)[-1]
+    assert note["author"] == "Ada" and "#reading" in note["body"] and note["body"].startswith("For Thursday.")
+    t = client.patch(f"/api/agent/tasks/{tid}", json={"tags": "#p1", "importance": 1}, headers=H).json()      # a named field wins over the tag
+    assert t["importance"] == 1
+    assert client.patch(f"/api/agent/tasks/{tid}", json={"tags": "#p1 #nonsense"}, headers=H).status_code == 400
+    assert db.task(tid)["importance"] == 1                                                                   # nothing half applied
+    t = client.patch(f"/api/agent/tasks/{tid}", json={"estimate_minutes": 45, "toggl_title": "Reading the survey"}, headers=H).json()
+    assert t["estimate_minutes"] == 45 and t["toggl_title"] == "Reading the survey"
+    t = client.patch(f"/api/agent/tasks/{tid}", json={"estimate_minutes": 0, "toggl_title": ""}, headers=H).json()   # handed back to the app
+    assert t["estimate_minutes"] is None and t["toggl_title"] is None
+    # a project's metadata, signed the same way
+    r = client.patch(f"/api/agent/projects/{pid}", json={"subtitle": "  Due   before the offsite ", "toggl_project": "Palisade", "why": "Sam asked."}, headers=H)
+    assert r.status_code == 200 and r.json()["subtitle"] == "Due before the offsite" and r.json()["toggl_project"] == "Palisade"
+    note = db.notes_for("project", pid)[-1]
+    assert note["author"] == "Ada" and "Sam asked." in note["body"] and "subtitle" in note["body"]
+    assert client.patch(f"/api/agent/projects/{pid}", json={"subtitle": "", "toggl_project": ""}, headers=H).json() == {
+        "id": pid, "path": ["Meta"], "name": "Meta", "subtitle": "", "toggl_project": None}
+    assert client.patch(f"/api/agent/projects/{pid}", json={"why": "nothing"}, headers=H).status_code == 400
+    assert client.patch("/api/agent/projects/999999", json={"subtitle": "x"}, headers=H).status_code == 404

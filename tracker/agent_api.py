@@ -108,8 +108,11 @@ class InstructionsIn(BaseModel):
 
 
 class TaskPriorityIn(BaseModel):
-    """What the agent knows about a task's priority and urgency; every field is optional. Each change is written as
-    a signed note on the task (with `why`), so the planner and the user both see where it came from."""
+    """What the agent knows about a task: its priority and urgency, and the rest of its metadata. Every field is
+    optional. Each change is written as a signed note on the task (with `why`), so the planner and the user both see
+    where it came from. The title and the user's own notes are not here: those stay the user's text."""
+    tags: str | None = None                # the tags the user types, in one string: "#p1 #due:fri #blocking:Sam #reading #onesitting"
+                                           # (a named field below wins over the same thing said as a tag)
     importance: int | None = None          # 1 (low) .. 5 (critical)
     deadline: str | None = None            # the hard deadline: YYYY-MM-DD or "fri", "tomorrow"; "" clears it
     soft_deadline: str | None = None       # the soft deadline (ideally by); "" clears it
@@ -119,6 +122,15 @@ class TaskPriorityIn(BaseModel):
     work_kind: str | None = None           # "task" | "focus"; "" hands it back to Claude
     reading: bool | None = None
     writing: bool | None = None
+    estimate_minutes: int | None = None    # expected length; 0 hands it back to the app's forecast
+    toggl_title: str | None = None         # the name its timers get in Toggl ("Responding to Sam"); "" hands it back
+    why: str = ""
+
+
+class ProjectMetaIn(BaseModel):
+    """A project's metadata; each change is written as a signed note on the project."""
+    subtitle: str | None = None            # the one line under its name; "" clears it
+    toggl_project: str | None = None       # the Toggl project its tasks' timers are filed under; "" unlinks (Claude decides again)
     why: str = ""
 
 
@@ -267,7 +279,8 @@ def ping(agent: str = Depends(identity)):
             "GET /api/agent/tree": "projects and open tasks with ids, paths and the notes you added",
             "GET /api/agent/tasks?q=&project_id=": "find open tasks",
             "GET /api/agent/tasks/{id}": "one task with its path, tracked time and notes",
-            "PATCH /api/agent/tasks/{id}": "set a task's priority and urgency (importance, deadline = hard, soft_deadline = ideally by, blocking, work_kind...) with `why`; recorded as your note on the task and used by every plan",
+            "PATCH /api/agent/tasks/{id}": "set a task's priority, urgency and other metadata: named fields (importance, deadline = hard, soft_deadline = ideally by, blocking, blocking_for, chunkable, work_kind, reading, writing, estimate_minutes, toggl_title) or `tags` as the user types them (\"#p1 #due:fri #reading\"), with `why`; recorded as your note on the task and used by every plan",
+            "PATCH /api/agent/projects/{id}": "set a project's subtitle or Toggl project, with `why`; recorded as your note on the project",
             "POST /api/agent/tasks/{id}/move": "move a task (with its sub-tasks) to another project (project_id | project_path) or under another task (parent_id); recorded as your note",
             "POST /api/agent/projects/{id}/move": "move a project (with everything in it) under another project (parent_id | parent_path) or to the top level; recorded as your note",
             "POST /api/agent/projects": "add a project (name, parent_id | parent_path, notes)",
@@ -325,6 +338,15 @@ def set_priority(tid: int, p: TaskPriorityIn, agent: str = Depends(identity)):
         raise HTTPException(404, "task not found")
     fields: dict[str, Any] = {}
     said: list[str] = []
+    if p.tags and p.tags.strip():
+        words = p.tags.split()
+        rest, tagged = tags.parse_tags("x " + " ".join(w if w.startswith("#") else "#" + w for w in words))
+        if rest != "x" or not tagged:      # a tag the app does not know stays in the text
+            raise HTTPException(400, f"could not read the tags '{p.tags}' (unknown: {rest.removeprefix('x').strip() or 'all'}); "
+                                     "the known ones: #p1..#p5 #p0 #due:fri #today #tomorrow #nodue #soft:fri #nosoft #blocking #blocking:Name "
+                                     "#notblocking #onesitting #focus #task #nokind #reading #notreading #writing #notwriting")
+        fields.update(tagged)
+        said.append("tags " + " ".join(w if w.startswith("#") else "#" + w for w in words))
     if p.importance is not None:
         fields["importance"] = max(1, min(5, int(p.importance)))
         said.append(f"importance {fields['importance']}")
@@ -362,6 +384,12 @@ def set_priority(tid: int, p: TaskPriorityIn, agent: str = Depends(identity)):
         if v is not None:
             fields[flag] = int(v)
             said.append(flag if v else f"not {flag}")
+    if p.estimate_minutes is not None:
+        fields["estimate_minutes"] = max(1, min(600, int(p.estimate_minutes))) if p.estimate_minutes > 0 else None
+        said.append(f"estimate {fields['estimate_minutes']} min" if fields["estimate_minutes"] else "estimate left to the forecast")
+    if p.toggl_title is not None:
+        fields["toggl_title"] = p.toggl_title.strip()[:200] or None
+        said.append(f"timer name '{fields['toggl_title']}'" if fields["toggl_title"] else "timer name left to Claude")
     if not fields and not p.why.strip():
         raise HTTPException(400, "nothing to set")
     if fields:
@@ -370,7 +398,31 @@ def set_priority(tid: int, p: TaskPriorityIn, agent: str = Depends(identity)):
     db.add_note("task", tid, body, agent)
     db.log_plan_event(db.today(), "task", f"{agent} set priority on '{t['title']}': {', '.join(said) or 'a note'}"
                       + (f"; {p.why.strip()[:200]}" if p.why.strip() else ""), {"task_id": tid, "fields": fields, "why": p.why}, actor=f"agent:{agent}")
+    if fields.get("estimate_minutes", 1) is None or ("toggl_title" in fields and not fields["toggl_title"]):
+        _forecast_later(tid)               # handed back: the app fills it in again
     return _task_out(db.task(tid))
+
+
+@router.patch("/projects/{pid}")
+def set_project_meta(pid: int, p: ProjectMetaIn, agent: str = Depends(identity)):
+    """A project's subtitle and Toggl project, from the agent; the change and its `why` become the agent's note on it."""
+    proj = db.row("SELECT * FROM projects WHERE id=?", (pid,))
+    if not proj:
+        raise HTTPException(404, "project not found")
+    fields: dict[str, Any] = {}
+    said: list[str] = []
+    if p.subtitle is not None:
+        fields["subtitle"] = " ".join(p.subtitle.split())[:300]
+        said.append(f"subtitle '{fields['subtitle']}'" if fields["subtitle"] else "no subtitle")
+    if p.toggl_project is not None:
+        fields["toggl_project"] = p.toggl_project.strip() or None
+        said.append(f"Toggl project '{fields['toggl_project']}'" if fields["toggl_project"] else "Toggl project left to Claude")
+    if not fields:
+        raise HTTPException(400, "nothing to set")
+    db.update_project(pid, **fields)
+    db.add_note("project", pid, (p.why.strip() + " " if p.why.strip() else "") + f"(set {', '.join(said)})", agent)
+    proj = db.row("SELECT * FROM projects WHERE id=?", (pid,))
+    return {"id": pid, "path": db.project_path(pid), "name": proj["name"], "subtitle": proj["subtitle"], "toggl_project": proj["toggl_project"]}
 
 
 @router.post("/tasks/{tid}/move")
