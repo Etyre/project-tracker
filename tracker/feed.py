@@ -72,12 +72,31 @@ def gap(now: dt.datetime | None = None, events: list[dict] | None = None) -> dic
 FOCUS_BLOCK_MINUTES = 45   # focused work is offered in pieces only when at least this long a stretch is free
 
 
+def min_gap(card: dict) -> int:
+    """The shortest gap in which this kind of work is started at all, whatever its length: writing wants an hour,
+    reading twenty minutes ([writing] / [reading] min_gap_minutes). Applies to tasks marked as mainly writing or
+    reading and to the daily writing and reading cards. 0 for everything else."""
+    cfg = config.load()
+    t = card.get("task") or {}
+    title = (card.get("title") or "").strip().lower()
+    need = 0
+    for flag in ("reading", "writing"):
+        row = (cfg[flag].get("routine") or "").strip().lower()
+        is_card = card.get("kind") == "routine" and row and (title == row or title.startswith(row) or row.startswith(title))
+        if t.get(flag) == 1 or is_card:
+            need = max(need, int(cfg[flag].get("min_gap_minutes") or 0))
+    return need
+
+
 def fits(card: dict, minutes: int | None) -> bool:
     """A card fits the gap when its expected length does, or when the work can be split and at least a short block
     fits. Focused work (work_kind "focus": needs a stretch of concentration) is split only into a stretch of at
-    least FOCUS_BLOCK_MINUTES; a quick task into any block of min_block_minutes."""
+    least FOCUS_BLOCK_MINUTES; a quick task into any block of min_block_minutes. Writing and reading also need
+    their own minimum gap (min_gap), even when the task itself is short."""
     if minutes is None:
         return True
+    if minutes < min_gap(card):
+        return False
     if card["minutes"] <= minutes:
         return True
     if not card.get("chunkable"):

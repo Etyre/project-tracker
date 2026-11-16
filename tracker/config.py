@@ -101,12 +101,14 @@ DEFAULTS: dict[str, Any] = {
         "minutes": 30,
         "fallback": "Read a book",            # what the card says when no reading task is queued in the projects
         "tag": "reading",                     # Toggl tag on every reading timer (the project varies with what is read)
+        "min_gap_minutes": 20,                # reading is offered only when at least this long is free before the next meeting
     },
     "writing": {
         "routine": "Writing - 40 minutes",    # the checklist row that is the daily writing; its card suggests what to write
         "minutes": 40,
         "fallback": "Free writing",           # what the card says when no writing task is queued in the projects
         "tag": "writing",                     # Toggl tag on every timer for a task that is mainly writing
+        "min_gap_minutes": 60,                # writing is started only with at least this long free, however short the task
     },
     "focus_monitor": {
         "enable": True,

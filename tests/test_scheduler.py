@@ -477,6 +477,14 @@ def test_the_feed_is_a_stack_filtered_by_the_gap_before_the_next_meeting(monkeyp
     assert [c["key"] for c in st["stack"]] == ["routine:Anki review", f"task:{long_split}", f"task:{quick}"]      # fits: 20 split, 90 split, 10
     assert [c["key"] for c in st["waiting"]] == [f"task:{long_fixed}", f"task:{mid}", f"task:{deep}"]              # 60 in one sitting, 30, focus: no
     assert feed.fits(next(c for c in st["waiting"] if c["key"] == f"task:{deep}"), 45)                             # focused work: a 45-min stretch will do
+    # writing is started only with an hour free and reading only with twenty minutes, however short the task
+    card = lambda **task: {"kind": "task", "title": "x", "minutes": 10, "chunkable": True, "task": task}
+    assert not feed.fits(card(writing=1), 59) and feed.fits(card(writing=1), 60) and feed.fits(card(writing=1), None)
+    assert not feed.fits(card(reading=1), 19) and feed.fits(card(reading=1), 20)
+    assert not feed.fits(card(reading=1, writing=1), 30) and feed.fits(card(), 10)
+    daily = lambda title: {"kind": "routine", "title": title, "minutes": 40, "chunkable": True}
+    assert not feed.fits(daily(config.load()["writing"]["routine"]), 45) and feed.fits(daily(config.load()["writing"]["routine"]), 60)
+    assert not feed.fits(daily(config.load()["reading"]["routine"]), 15) and feed.fits(daily("Anki review"), 15)
     # in the meeting: the gap runs to the next one; after the last meeting, to the end of the work day
     st = feed.cards(dt.datetime.combine(dt.date.today(), dt.time(10, 20)), events)
     assert st["gap"]["meeting_now"]["title"] == "Standup" and st["gap"]["until"] == "Review" and st["gap"]["minutes"] == 220

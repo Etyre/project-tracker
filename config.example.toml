@@ -58,12 +58,14 @@ after_done = "zone 2 cardio"   # offered at the bottom of the feed once the day'
 [reading]
 routine = "Reading books or papers"   # the daily reading row; its feed card suggests the highest-priority reading task
 minutes = 30
+min_gap_minutes = 20     # reading is offered only with at least this long free before the next meeting
 fallback = "Read a book"
 tag = "reading"           # Toggl tag on every reading timer
 
 [writing]
 routine = "Writing - 40 minutes"   # the daily writing row; its card suggests the highest-priority writing task
 minutes = 40
+min_gap_minutes = 60      # writing is started only with at least this long free, however short the task
 fallback = "Free writing"
 tag = "writing"           # Toggl tag on timers for tasks that are mainly writing
 

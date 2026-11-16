@@ -11,6 +11,7 @@
 * Ideally start the day with whatever is most important to make progerss on.
 * Group small tasks (under 20 minutes) into one "admin" run rather than scattering them.
 * Keep at least 10 minutes between a focus block and a meeting.
+* Writing should only be started when at least an hour is free. Reading can be done with at least 20 minutes.
 * Exercise goes in the morning or early afternoon unless the calendar forces it elsewhere. Pick the kind the exercise based on the exercies prompt and the data from the exercise sheet.
 
 ### Estimates

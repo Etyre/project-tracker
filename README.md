@@ -200,7 +200,10 @@ is measured: the minutes until the next meeting on your calendar, or until the e
 is left (during a meeting, until the one after it; in the evening nothing bounds it). A card is offered only if it
 fits the gap: its length is within it, or the task can be split (`chunkable`, the default; `#onesitting` turns it
 off) and at least `min_block_minutes` are left; focused work (`#focus`, or judged so by Claude) is split only into
-a stretch of 45 minutes or more, since it needs a run of concentration. With 15 minutes before a meeting the top
+a stretch of 45 minutes or more, since it needs a run of concentration. Writing and reading have a floor of
+their own, whatever the task's length: writing (a task marked `#writing`, or the daily writing card) is started
+only with at least an hour free, reading (`#reading`, or the daily reading card) only with at least 20 minutes
+(`[writing] min_gap_minutes`, `[reading] min_gap_minutes`; Settings > Writing / Reading). With 15 minutes before a meeting the top
 card is the best task of 15 minutes or less, or the best quick task that can be done in pieces; the rest are
 "waiting for a longer gap" and come back when it opens. "Next" on a card moves it to the bottom of the stack for the rest of the day (undo brings it
 back); a card whose timer is running stays on top until it is stopped or done.
