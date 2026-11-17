@@ -1,7 +1,7 @@
-# The Project Tracker's server beside the executive-assistant agent. Reached by the agent on the shared Docker
-# network (http://tracker:8791) and by Eli's devices over Tailscale (`tailscale serve` hands the tailnet's port
-# 8791 to 127.0.0.1:8791). There is no login on the tracker's API, so it must never be published on a public
-# address: the port is bound to the machine itself (Docker bypasses ufw).
+# A read-only COPY of the Project Tracker beside the executive-assistant agent, so the agent can read tasks while
+# Eli's Mac (where the real tracker runs) is asleep. The agent reaches it on the shared Docker network
+# (http://tracker:8791). The copy is refreshed from the Mac by the agent project's sync-tracker-copy.sh. There is
+# no login on the tracker's API, so the port is bound to the machine itself and not offered to the tailnet.
 services:
   tracker:
     build:
@@ -13,8 +13,9 @@ services:
     init: true
     environment:
       TASK_TRACKER_HOST: 0.0.0.0
-      TASK_TRACKER_DATA: /data                     # tracker.sqlite3, env (secrets), snapshots/, the two documents
-      TASK_TRACKER_CONFIG: /data/config.toml       # edited from the Settings page, so it lives with the data
+      TASK_TRACKER_REPLICA: "1"                    # refuses writes, runs no background loop; no API keys are given to it
+      TASK_TRACKER_DATA: /data                     # tracker.sqlite3, config.toml and the two documents, copied from the Mac
+      TASK_TRACKER_CONFIG: /data/config.toml
       AGENT_CODING_SHARED: /app/shared
       TZ: ${TRACKER_TZ:-America/Los_Angeles}       # every time in the tracker is this zone's local time
       HOME: /home/tracker

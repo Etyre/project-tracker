@@ -2,6 +2,7 @@
 (Toggl reconciliation, Linear sync, automatic plan build at the start of the work day)."""
 from __future__ import annotations
 
+import os
 import sys
 import contextlib
 import datetime as dt
@@ -528,9 +529,32 @@ def _focus_monitor_done() -> dict:
     return {"ok": True, "next_in_minutes": int((nxt - time.time()) / 60), "sheet": sheet}
 
 
+REPLICA = bool(os.environ.get("TASK_TRACKER_REPLICA"))     # a read-only copy on another machine (README: "The copy on the server")
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="Project Tracker")
     app.include_router(agent_api.router)
+
+    if REPLICA:
+        # The copy is replaced by the next sync from the Mac, so a change made here would silently vanish: refuse
+        # every write and say where the real tracker is. Reads behave as on the Mac. No background loop either
+        # (_start_background), so the copy never talks to Toggl, Linear or Claude on its own.
+        @app.middleware("http")
+        async def read_only(request, call_next):
+            if request.method not in ("GET", "HEAD", "OPTIONS"):
+                return JSONResponse({"detail": "This is the read-only copy of the Project Tracker. Changes are made in the "
+                                               "app on Eli's Mac and reach this copy at the next sync."}, status_code=503)
+            return await call_next(request)
+
+    @app.get("/api/replica")
+    def replica():
+        """{replica, synced_at}: whether this is the read-only copy, and when it was last brought up to date (epoch seconds)."""
+        try:
+            at = float((config.APP_SUPPORT / "replica_synced_at").read_text().strip())
+        except (OSError, ValueError):
+            at = None
+        return {"replica": REPLICA, "synced_at": at}
 
     @app.post("/api/window")
     def show_window(fragment: str | None = None):
@@ -1232,7 +1256,7 @@ _bg_started = False
 
 def _start_background() -> None:
     global _bg_started
-    if _bg_started:
+    if _bg_started or REPLICA:
         return
     _bg_started = True
     threading.Thread(target=_loop, daemon=True, name="tracker-bg").start()

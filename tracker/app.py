@@ -1,7 +1,5 @@
 """The standalone macOS app: a native window (WKWebView over the local server on 127.0.0.1:8791) plus a menu bar
 item with the current card and quick actions. `python -m tracker app`, or the bundle from build_app.py.
-With TASK_TRACKER_SERVER set (data folder's env file) the server is on another machine and the local address is a
-relay to it (tracker/remote.py); this app then never opens the local database.
 Config: config.toml in the project folder + Keychain service "TaskTracker"; data: ~/Library/Application Support/
 TaskTracker/; log: ~/Library/Logs/project-tracker.log (see tracker/__main__.py)."""
 from __future__ import annotations
@@ -123,10 +121,6 @@ class ProjectTrackerApp(rumps.App):
         super().__init__(APP_NAME, title="✓", quit_button=None)
         cfg = config.load()["general"]
         self.base_url = f"http://{cfg['host']}:{cfg['port']}"
-        # TASK_TRACKER_SERVER (in the data folder's env file): the tracker's server runs elsewhere, and this app
-        # runs a relay to it on the local address instead of the server itself (tracker/remote.py).
-        self.server = (os.environ.get("TASK_TRACKER_SERVER") or "").rstrip("/")
-        self._fm_notified = False
         self.main_window = MainWindow(self.base_url)
         self._refreshing = threading.Lock()
         self.card_item = rumps.MenuItem("Starting…", callback=lambda _: self.main_window.show("feed"))
@@ -148,23 +142,15 @@ class ProjectTrackerApp(rumps.App):
             rumps.MenuItem("Set Linear API Key…", callback=lambda _: self._set_secret("linear", "Linear personal API key", "lin_api_…")),
             rumps.MenuItem("Set Sheets Token…", callback=lambda _: self._set_secret("sheets", "Apps Script SHEET_TOKEN", "")),
             rumps.MenuItem("Set Agent API Token…", callback=lambda _: self._set_secret("agent", "Token your assistant agent sends as a bearer token", "")),
-            *([rumps.MenuItem("Settings (config, rules; kept on the server)", callback=lambda _: self.main_window.show("settings"))]
-              if self.server else
-              [rumps.MenuItem("Open Config File", callback=lambda _: subprocess.run(["open", str(config.CONFIG_PATH)])),
-               rumps.MenuItem("Open Rules & Heuristics", callback=lambda _: subprocess.run(["open", str(config.rules_path())])),
-               rumps.MenuItem("Open Data Folder", callback=lambda _: subprocess.run(["open", str(config.APP_SUPPORT)]))]),
+            rumps.MenuItem("Open Config File", callback=lambda _: subprocess.run(["open", str(config.CONFIG_PATH)])),
+            rumps.MenuItem("Open Rules & Heuristics", callback=lambda _: subprocess.run(["open", str(config.rules_path())])),
+            rumps.MenuItem("Open Data Folder", callback=lambda _: subprocess.run(["open", str(config.APP_SUPPORT)])),
             None,
             rumps.MenuItem("Quit " + APP_NAME, callback=lambda _: rumps.quit_application()),
         ]
-        show = lambda fragment=None: AppHelper.callAfter(self.main_window.show, fragment)
-        if self.server:
-            from . import remote
-            remote.show_window_hook = show
-            log.info("the tracker's server is %s; this app relays to it", self.server)
-        else:
-            from . import web
-            web.show_window_hook = show
-            web.notify_hook = lambda title, message: AppHelper.callAfter(rumps.notification, APP_NAME, title, message)
+        from . import web
+        web.show_window_hook = lambda fragment=None: AppHelper.callAfter(self.main_window.show, fragment)
+        web.notify_hook = lambda title, message: AppHelper.callAfter(rumps.notification, APP_NAME, title, message)
         threading.Thread(target=self._serve, daemon=True, name="web").start()
         rumps.Timer(self.refresh, 30).start()
         self._open_when_ready()
@@ -172,13 +158,9 @@ class ProjectTrackerApp(rumps.App):
     # -- server -----------------------------------------------------------
     def _serve(self):
         import uvicorn
-        if self.server:
-            from .remote import create_relay
-            app = create_relay(self.server)
-        else:
-            from .web import create_app
-            app = create_app()
-        uvicorn.run(app, host=config.load()["general"]["host"], port=config.load()["general"]["port"], log_level="warning")
+        from .web import create_app
+        uvicorn.run(create_app(), host=config.load()["general"]["host"], port=config.load()["general"]["port"],
+                    log_level="warning")
 
     def _open_when_ready(self):
         deadline = time.time() + 30
@@ -186,8 +168,6 @@ class ProjectTrackerApp(rumps.App):
         def poll(timer):
             try:
                 urllib.request.urlopen(self.base_url + "/api/status", timeout=1).close()
-            except urllib.error.HTTPError:
-                pass                      # the relay is up and the server behind it is not: show the window, it explains
             except Exception:
                 if time.time() < deadline:
                     return
@@ -270,7 +250,7 @@ class ProjectTrackerApp(rumps.App):
     def _set_secret(self, account: str, title: str, placeholder: str):
         alert = NSAlert.alloc().init()
         alert.setMessageText_(title)
-        alert.setInformativeText_("Stored on the tracker's server." if self.server else 'Stored in your login Keychain (service "TaskTracker").')
+        alert.setInformativeText_('Stored in your login Keychain (service "TaskTracker").')
         field = NSSecureTextField.alloc().initWithFrame_(NSMakeRect(0, 0, 360, 24))
         field.setPlaceholderString_(placeholder)
         alert.setAccessoryView_(field)
@@ -282,9 +262,6 @@ class ProjectTrackerApp(rumps.App):
             return
         value = str(field.stringValue()).strip()
         if not value:
-            return
-        if self.server:                       # the server keeps its own secrets; its Settings route stores this one
-            self._post("/api/settings/secret", {"name": account, "value": value})
             return
         config.keychain_set(account, value)
         from . import llm, toggl
@@ -304,7 +281,7 @@ class ProjectTrackerApp(rumps.App):
             try:
                 f = self._get("/api/feed")
             except Exception:
-                AppHelper.callAfter(self._apply, "Server not reachable" if self.server else "Server not responding", "Start timer", "✓")
+                AppHelper.callAfter(self._apply, "Server not responding", "Start timer", "✓")
                 return
         # Feed cards have a title and no times (the feed is a stack, not a timed plan, since 2026-11); reading
         # c['start'] here raised KeyError whenever there was a current card and left the menu stale.
@@ -313,13 +290,6 @@ class ProjectTrackerApp(rumps.App):
             card = f"Now: {str(c.get('title', ''))[:60]}"
         else:
             card = "Nothing on the stack" if f.get("outside_hours") is None else "Outside work hours"
-        # With the server elsewhere its notify hook has nobody to tell, so the focus-monitor prompt is raised here:
-        # once each time it comes due.
-        due = bool((f.get("focus_monitor") or {}).get("due"))
-        if self.server and due and not self._fm_notified:
-            AppHelper.callAfter(rumps.notification, APP_NAME, "Review your focus monitor",
-                                "Then press Done on the feed; the next prompt is 1-2 hours away.")
-        self._fm_notified = due
         timer = f"Stop timer ({f['timer']['label'][:30]})" if f["timer"]["running"] else "Start timer on current card"
         title = "▶" if f["timer"]["running"] else "✓"
         AppHelper.callAfter(self._apply, card, timer, title)
