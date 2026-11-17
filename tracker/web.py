@@ -2,6 +2,7 @@
 (Toggl reconciliation, Linear sync, automatic plan build at the start of the work day)."""
 from __future__ import annotations
 
+import sys
 import contextlib
 import datetime as dt
 import logging
@@ -1176,7 +1177,9 @@ def create_app() -> FastAPI:
     @app.post("/api/journal/start")
     def journal_start():
         res = _start_timer("journal", "Journaling", None, ["journal"], context="journaling")
-        err = journal.open_notes_app()
+        # Opening the notes app is a thing for the Mac in front of Eli; when this server is elsewhere, the Mac app's
+        # relay (tracker/remote.py) does it after this call returns.
+        err = journal.open_notes_app() if sys.platform == "darwin" else None
         return {"ok": True, **res, "open_error": err}
 
     @app.get("/api/checklist")

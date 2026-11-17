@@ -12,8 +12,9 @@ log = logging.getLogger("journal")
 KEYCODES = {1: 18, 2: 19, 3: 20, 4: 21, 5: 23, 6: 22, 7: 26, 8: 28, 9: 25}
 
 
-def open_notes_app() -> str | None:
-    cfg = config.load()["journal"]
+def open_notes_app(cfg: dict | None = None) -> str | None:
+    """`cfg`: the [journal] settings; given by the Mac app when the tracker's server (and its config) is elsewhere."""
+    cfg = cfg or config.load()["journal"]
     app = cfg.get("app") or "Logseq"
     desktop = int(cfg.get("desktop") or 0)
     errors = []

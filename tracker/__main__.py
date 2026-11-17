@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import threading
 import webbrowser
@@ -46,11 +47,13 @@ def main(argv=None) -> int:
     if cmd == "web":
         import uvicorn
         cfg = config.load()["general"]
-        url = f"http://{cfg['host']}:{cfg['port']}"
+        # TASK_TRACKER_HOST / _PORT: where to listen, without touching config.toml (a container listens on 0.0.0.0)
+        host, port = os.environ.get("TASK_TRACKER_HOST") or cfg["host"], int(os.environ.get("TASK_TRACKER_PORT") or cfg["port"])
+        url = f"http://{host}:{port}"
         if not a.no_open:
             threading.Timer(1.0, lambda: webbrowser.open(url)).start()
         print(f"Project Tracker at {url}")
-        uvicorn.run("tracker.web:create_app", factory=True, host=cfg["host"], port=cfg["port"],
+        uvicorn.run("tracker.web:create_app", factory=True, host=host, port=port,
                     reload=a.reload, log_level="info")
         return 0
     if cmd == "plan":

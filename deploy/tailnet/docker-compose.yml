@@ -1,0 +1,36 @@
+# The Project Tracker's server beside the executive-assistant agent. Reached by the agent on the shared Docker
+# network (http://tracker:8791) and by Eli's devices over Tailscale (`tailscale serve` hands the tailnet's port
+# 8791 to 127.0.0.1:8791). There is no login on the tracker's API, so it must never be published on a public
+# address: the port is bound to the machine itself (Docker bypasses ufw).
+services:
+  tracker:
+    build:
+      context: ../..
+      dockerfile: deploy/tailnet/Dockerfile
+    image: project-tracker
+    container_name: tracker
+    restart: unless-stopped
+    init: true
+    environment:
+      TASK_TRACKER_HOST: 0.0.0.0
+      TASK_TRACKER_DATA: /data                     # tracker.sqlite3, env (secrets), snapshots/, the two documents
+      TASK_TRACKER_CONFIG: /data/config.toml       # edited from the Settings page, so it lives with the data
+      AGENT_CODING_SHARED: /app/shared
+      TZ: ${TRACKER_TZ:-America/Los_Angeles}       # every time in the tracker is this zone's local time
+      HOME: /home/tracker
+    volumes:
+      - ${TRACKER_ROOT:-/opt/tracker}/app:/app:ro
+      - ${TRACKER_ROOT:-/opt/tracker}/data:/data
+      - ${TRACKER_ROOT:-/opt/tracker}/logs:/home/tracker/Library/Logs
+      # Only the LLM inbox is shared with the agent, so a message from Claude to Eli is relayed to the Mac with the rest.
+      - ${ATLAS_INBOX:-/opt/atlas/data/home/Library/Application Support/LLMInbox}:/home/tracker/Library/Application Support/LLMInbox
+    ports:
+      - "127.0.0.1:8791:8791"
+    networks: [atlas]
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+networks:
+  atlas:
+    name: ${ATLAS_NETWORK:-deploy_default}
+    external: true

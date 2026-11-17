@@ -1,0 +1,8 @@
+# What the server needs (python -m tracker web), without the macOS app's packages. Used by deploy/tailnet/Dockerfile.
+anthropic>=1.0
+fastapi
+uvicorn[standard]
+pydantic>=2
+icalendar>=6
+recurring-ical-events>=3
+python-dateutil

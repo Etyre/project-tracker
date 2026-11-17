@@ -21,7 +21,8 @@ import anthropic
 
 from . import config
 
-sys.path.insert(0, "/Users/elityre/Documents/agent-coding/shared")
+# AGENT_CODING_SHARED: where shared/ is on a machine that is not Eli's Mac (the server image copies it to /app/shared)
+sys.path.insert(0, os.environ.get("AGENT_CODING_SHARED") or "/Users/elityre/Documents/agent-coding/shared")
 import llm_contact  # noqa: E402  (shared/llm_contact.py: system_prompt(), CONTACT_TOOL, check())
 
 log = logging.getLogger("llm")

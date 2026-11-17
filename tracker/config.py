@@ -6,6 +6,7 @@ import logging.handlers
 import os
 import pathlib
 import subprocess
+import sys
 import tomllib
 from functools import lru_cache
 from typing import Any
@@ -158,6 +159,15 @@ def _load_env_file() -> None:
                 os.environ.setdefault(k.strip(), v.strip().strip('"'))
 
 
+def set_env_file(name: str, value: str) -> None:
+    """Set NAME=value in the env file (replacing an earlier line for NAME), mode 600."""
+    lines = [ln for ln in (ENV_FILE.read_text().splitlines() if ENV_FILE.exists() else []) if not ln.startswith(name + "=")]
+    APP_SUPPORT.mkdir(parents=True, exist_ok=True)
+    ENV_FILE.touch(mode=0o600, exist_ok=True)
+    ENV_FILE.write_text("\n".join(lines + [f"{name}={value}"]) + "\n")
+    ENV_FILE.chmod(0o600)
+
+
 _load_env_file()
 
 
@@ -225,11 +235,15 @@ def exercise_text() -> str:
 
 def keychain_set(account: str, value: str) -> None:
     """Store a secret in the login Keychain (service "TaskTracker") and make it live for this process."""
-    subprocess.run(["security", "add-generic-password", "-U", "-s", "TaskTracker", "-a", account, "-w", value],
-                   capture_output=True)
     env_names = {"toggl": "TOGGL_API_TOKEN", "linear": "LINEAR_API_KEY", "anthropic": "ANTHROPIC_API_KEY",
                  "sheets": "SHEETS_TOKEN", "agent": "AGENT_API_TOKEN"}
-    os.environ[env_names.get(account, account.upper())] = value
+    name = env_names.get(account, account.upper())
+    if sys.platform == "darwin":
+        subprocess.run(["security", "add-generic-password", "-U", "-s", "TaskTracker", "-a", account, "-w", value],
+                       capture_output=True)
+    else:                         # no Keychain (the server): the env file in the data folder, readable by us only
+        set_env_file(name, value)
+    os.environ[name] = value
     secret.cache_clear()
 
 
