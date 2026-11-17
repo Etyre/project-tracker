@@ -410,6 +410,18 @@ curl -s -X POST $A/projects/7/move "${H[@]}" -d '{"parent_path": ["Palisade Proj
 curl -s "$A/schedule/log?date=$(date +%F)" "${H[@]}" | jq '.[] | {at_local, event, actor, summary}'
 ```
 
+### The copy on the server (since 2026-11-17)
+
+The tracker runs on this Mac and that does not change. So that the assistant agent (which runs on a server) can
+still read tasks while the Mac is asleep, the server keeps a **read-only copy**: the same server code in a Docker
+container named `tracker`, started with `TASK_TRACKER_REPLICA=1`, which refuses every write (503) and runs no
+background loop, and is given no API keys, so it never talks to Toggl, Linear or Claude. Every five minutes the
+server asks the Mac (through the agent's bridge, `GET /tracker-copy`) for a snapshot of the database, `config.toml`
+and the two documents, and swaps them in when they changed (`executive-assistant-agent/deploy/server/
+sync-tracker-copy.sh`). `GET /api/replica` says when the copy was last confirmed current. The agent talks to the
+real tracker on the Mac whenever the Mac is awake; with the Mac asleep it reads the copy and holds its changes
+until the Mac wakes. Only the agent can reach the copy (it is not offered to the tailnet).
+
 ## Files
 
 | File | Purpose |
@@ -434,6 +446,8 @@ curl -s "$A/schedule/log?date=$(date +%F)" "${H[@]}" | jq '.[] | {at_local, even
 | `tracker/journal.py` | the Journal button: open the app, switch desktop, start the timer |
 | `tracker/snapshot.py` | the daily Markdown snapshot of the outline |
 | `apps_script/Code.gs`, `apps_script/appsscript.json` | the Google Apps Script web app deployed on the checklist spreadsheet, and its manifest (current-spreadsheet-only scope) |
+| `deploy/tailnet/` | the read-only copy on the server: `Dockerfile`, `docker-compose.yml`, `server.sh` (deploy, status, remove) |
+| `requirements-server.txt` | what the server needs, without the macOS app's packages |
 | `build_app.py` | builds `dist/Project Tracker.app` (native launcher in C, icon, Info.plist, codesign) |
 | `tests/` | pytest suite: scheduler, agent API, LLM-inbox wiring (no network, temp database) |
 | `config.toml` | your settings (untracked: it holds the calendar's secret address); written by the Settings page |
@@ -465,6 +479,12 @@ curl -s "$A/schedule/log?date=$(date +%F)" "${H[@]}" | jq '.[] | {at_local, even
   `~/Library/Logs/llm-inbox.log`.
 
 ## Common tasks
+
+```bash
+deploy/tailnet/server.sh deploy     # after changing the tracker's code: ship HEAD to the server's read-only copy
+deploy/tailnet/server.sh status     # is the copy running, on which commit, and when it was last synced
+deploy/tailnet/server.sh remove     # stop the copy and delete its data from the server
+```
 
 ```bash
 cd ~/Documents/agent-coding/project-tracker-and-organizer
@@ -533,6 +553,13 @@ as above; `python -m tracker web --reload` in a browser is the quick way to see 
   local process may call `/api/agent`.
 
 ## Gotchas learned
+
+- **Ship the copy after a schema change** (`deploy/tailnet/server.sh deploy`): the copy reads a database written by
+  this Mac's code, and an older copy would not know a new column.
+- **The menu bar's card line was stale for weeks**: it read `start`/`end` from a feed card, which cards no longer
+  have, so the refresh thread died with KeyError whenever there was a current card (fixed 2026-11-17).
+- A relay mode (the Mac app as a window onto a tracker running on the server) was built and removed on 2026-11-17:
+  Eli wants the tracker local. It is in git history (`67d59b0`) if that ever changes.
 
 - macOS names an app after the bundle its executable sits in. The venv's `python` is really Homebrew's
   `Python.app`, so while the launcher ran it directly the window belonged to an app called "Python"
