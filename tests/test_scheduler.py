@@ -485,15 +485,15 @@ def test_the_feed_is_a_stack_filtered_by_the_gap_before_the_next_meeting(monkeyp
     daily = lambda title: {"kind": "routine", "title": title, "minutes": 40, "chunkable": True}
     assert not feed.fits(daily(config.load()["writing"]["routine"]), 45) and feed.fits(daily(config.load()["writing"]["routine"]), 60)
     assert not feed.fits(daily(config.load()["reading"]["routine"]), 15) and feed.fits(daily("Anki review"), 15)
-    # in the meeting: the gap runs to the next one; after the last meeting, to the end of the work day
+    # in the meeting: the gap runs to the next one; after the last meeting nothing bounds it, whatever the work hours
     st = feed.cards(dt.datetime.combine(dt.date.today(), dt.time(10, 20)), events)
     assert st["gap"]["meeting_now"]["title"] == "Standup" and st["gap"]["until"] == "Review" and st["gap"]["minutes"] == 220
     assert [c["key"] for c in st["stack"]][:3] == ["routine:Anki review", f"task:{long_fixed}", f"task:{long_split}"]   # by priority
     we = scheduler.parse_hm(config.load()["general"]["work_end"])
     late = dt.datetime.combine(dt.date.today(), dt.time(0, 0)) + dt.timedelta(minutes=we - 20)
     st = feed.cards(late, events)
-    assert st["gap"]["kind"] == "end of day" and st["gap"]["minutes"] == 20
-    assert feed.cards(dt.datetime.combine(dt.date.today(), dt.time(23, 30)), events)["gap"]["minutes"] is None   # evening: nothing bounds it
+    assert st["gap"]["kind"] is None and st["gap"]["minutes"] is None and not st["waiting"]      # the end of the work day is no boundary
+    assert feed.gap(dt.datetime.combine(dt.date.today(), dt.time(6, 0)), events)["until"] == "Standup"           # nor is its start
     # the API, with the real clock: a meeting 15 minutes from now
     monkeypatch.setattr(calendar_feed, "events_for", lambda day: [mk(now_min + 15, 30, "Standup")])
     c = TestClient(web.create_app())
@@ -1175,6 +1175,8 @@ def test_hard_and_soft_deadlines():
 
 
 def test_moving_a_line_in_the_priority_list_sets_its_priority():
+    for t in db.open_tasks():           # the rule looks at both neighbours, so other tests' tasks must not sit between these
+        db.complete_task(t["id"])
     pid = db.create_project("Priority list")
     a = db.create_task(pid, "A", importance=5); b = db.create_task(pid, "B", importance=5); d = db.create_task(pid, "D", importance=3)
     c = db.create_task(pid, "C"); u = db.create_task(pid, "U")
@@ -1182,27 +1184,42 @@ def test_moving_a_line_in_the_priority_list_sets_its_priority():
     assert mine() == [a, b, d, c, u]                                  # highest first, no priority last
     was = db.priority_move(c, b)                                      # between A and B (both priority 1): priority 1
     assert mine() == [a, c, b, d, u] and db.task(c)["importance"] == 5 and db.task(c)["importance_by"] == "user"
-    assert was == {"importance": None, "before_id": u}
+    assert was == {"importance": None, "before_id": u, "stayed": False}
     db.priority_move(c, was["before_id"], importance=was["importance"])       # undo puts it back as it was
     assert mine() == [a, b, d, c, u] and db.task(c)["importance"] is None
-    db.priority_move(c, d)                                            # between B (1) and D (3): the lowest that fits, 3
+    db.priority_move(c, d)                                            # no priority, between B (P1) and D (P3): the lowest that fits
     assert mine() == [a, b, c, d, u] and db.task(c)["importance"] == 3
-    db.priority_move(a, u)                                            # above a line with no priority: none, but it keeps its place
-    assert db.task(a)["importance"] is None and mine() == [b, c, d, a, u]
-    db.priority_move(b, None)                                         # the very end
-    assert db.task(b)["importance"] is None and mine()[-1] == b
-    db.priority_move(u, c)                                            # to the top: the priority of the line below
-    assert db.task(u)["importance"] == 3 and mine()[0] == u
-    db.priority_move(d, c)                                            # reordering inside a level changes no priority and sticks
-    assert mine()[:3] == [u, d, c] and db.task(d)["importance"] == 3
+    db.update_task(c, importance=4)
+    db.priority_move(c, b)                                            # P2 between two P1s: the nearest that fits is P1
+    assert mine() == [a, c, b, d, u] and db.task(c)["importance"] == 5
+    db.update_task(c, importance=4); db.priority_move(c, d)           # P2 between P1 and P3 already fits: unchanged
+    assert mine() == [a, b, c, d, u] and db.task(c)["importance"] == 4
+    db.priority_move(a, u)                                            # P1 between P3 and a line with none: P3, the nearest
+    assert db.task(a)["importance"] == 3 and mine() == [b, c, d, a, u]
+    was = db.priority_move(b, None)                                   # under a line with no priority nothing fits: it stays
+    assert was["stayed"] and db.task(b)["importance"] == 5 and mine() == [b, c, d, a, u]
+    u2 = db.create_task(pid, "U2")
+    db.priority_move(u2, u)                                           # no priority, above the unprioritised block: P5
+    assert db.task(u2)["importance"] == 1
+    u3 = db.create_task(pid, "U3")
+    assert [t["id"] for t in db.priority_list() if t["id"] in (u, u3)] == [u, u3]
+    db.priority_move(u, None)                                         # inside the unprioritised block: order only
+    assert db.task(u)["importance"] is None and [t["id"] for t in db.priority_list() if t["id"] in (u, u3)] == [u3, u]
+    db.priority_move(u3, b)                                           # to the top: the priority of the line below
+    assert db.task(u3)["importance"] == 5
+    db.priority_move(d, c)                                            # P3 above a P2: the nearest that fits is P2
+    assert db.task(d)["importance"] == 4
     import pytest
     with pytest.raises(ValueError):
         db.priority_move(a, a)
     from fastapi.testclient import TestClient
     from tracker import web
     cl = TestClient(web.create_app())
-    r = cl.post("/api/priority/move", json={"id": a, "before_id": u}).json()
-    assert r["task"]["importance"] == 3 and r["was"]["importance"] is None and [t["id"] for t in r["tasks"] if t["id"] in (a, u)] == [a, u]
+    r = cl.post("/api/priority/move", json={"id": u, "before_id": a}).json()
+    assert r["task"]["importance"] == 3 and r["was"]["importance"] is None and [t["id"] for t in r["tasks"] if t["id"] in (a, u)] == [u, a]
+    db.create_task(pid, "N")
+    assert cl.post("/api/priority/move", json={"id": a, "before_id": None}).json()["was"]["stayed"]
+    assert db.task(a)["importance"] == 3
     assert r["tasks"][0]["path"] and cl.post("/api/priority/move", json={"id": 999999, "before_id": None}).status_code == 400
     done = db.create_task(pid, "Done one", importance=5); db.complete_task(done)
     assert done not in [t["id"] for t in cl.get("/api/priority").json()]

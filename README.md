@@ -141,10 +141,13 @@ on the lines: you navigate with the arrow keys and type.
 
 **Priorities** (its own page) is every open task in one flat list: highest priority first (P1 is `#p1`), tasks
 with no priority at the bottom, each with its project, deadlines and who it blocks. Moving a line sets its priority:
-drag it by the handle, or focus it and press Cmd+Shift+Up / Down. The line takes the priority of the line it now
-sits above, which is the lowest priority that keeps the list in order: dropped between two P1 lines it is P1,
-between a P1 and a P3 it is P3, and above a line with no priority, or at the very end, it has none. So moving a
-line down past the last line of its level drops it straight to the next level present, or to none. The order
+drag it by the handle, or focus it and press Cmd+Shift+Up / Down. A line that has a priority changes it only as
+far as it must: it takes the priority nearest its own that keeps the list in order (a P2 dropped between a P1 and a
+P3 stays P2; dropped between two P4 lines it becomes P4). A line with no priority takes the lowest that fits: the
+priority of the line below it, or P5 when that line has none. Having no priority is not a level a move can give,
+so under a line with no priority nothing fits: a line with a priority dropped there goes back where it was,
+unchanged, and a line without one stays without. (So the first place in the unprioritised block cannot be reached
+by a move: landing there makes the line P5. Clearing a priority is done with the dates & priority dialog.) The order
 inside a level is kept (`tasks.priority_pos`, rewritten for the whole list on every move); a task never placed
 comes after the placed ones of its level, by deadline. Cmd+Z undoes a move, the checkbox (or Cmd+Enter) completes,
 a click on the title (or Enter) shows the task in its project. Tasks in archived projects and on the Someday list
@@ -225,8 +228,9 @@ today's recurring cards first (the checklist rows with a card, the daily reading
 task in a live project (a task with open sub-tasks is a container and stays out; Someday items stay out) ordered
 by priority score (blocking > hard deadline > soft deadline > importance > age). Each card has an expected length:
 the routine's minutes, or the task's estimate multiplied by your measured actual/estimate ratio. Then the **gap**
-is measured: the minutes until the next meeting on your calendar, or until the end of the work day when no meeting
-is left (during a meeting, until the one after it; in the evening nothing bounds it). A card is offered only if it
+is measured: the minutes until the next meeting on your calendar (during a meeting, until the one after it). Only
+calendar events count: the work day's start and end in Settings do not bound it, so once no meeting is left today
+nothing does and every card fits. A card is offered only if it
 fits the gap: its length is within it, or the task can be split (`chunkable`, the default; `#onesitting` turns it
 off) and at least `min_block_minutes` are left; focused work (`#focus`, or judged so by Claude) is split only into
 a stretch of 45 minutes or more, since it needs a run of concentration. Writing and reading have a floor of

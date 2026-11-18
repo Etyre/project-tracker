@@ -1,8 +1,8 @@
 """The feed's stack: what to do now, without a schedule.
 
 The feed is a stack of cards ordered roughly by priority, computed afresh on every request from the open tasks and
-today's recurring cards, and filtered by how much time there is before the next meeting (or the end of the work
-day): a card is offered only if its expected length fits that gap, or the work can be split so a piece of it does.
+today's recurring cards, and filtered by how much time there is before the next meeting (the work day's hours
+play no part): a card is offered only if its expected length fits that gap, or the work can be split so a piece of it does.
 Nothing is planned ahead; "next" simply moves the top card to the bottom for the rest of the day.
 
 Order: today's recurring cards first (the checklist rows with a card, the daily reading and writing), then tasks by
@@ -44,8 +44,8 @@ def meetings_today(day: dt.date) -> list[dict]:
 
 def gap(now: dt.datetime | None = None, events: list[dict] | None = None) -> dict:
     """How long the user has before the next thing on the calendar: {minutes: int | None, until: str | None,
-    kind: "meeting" | "end of day" | None, meeting_now: {title, start, end} | None}. `minutes` is None when
-    nothing bounds the gap (outside the work day with no meeting still to come)."""
+    kind: "meeting" | None, meeting_now: {title, start, end} | None}. Only calendar events bound the gap: the work
+    day's start and end do not, so `minutes` is None once no meeting is left today."""
     now = now or dt.datetime.now()
     events = meetings_today(now.date()) if events is None else events
     now_min = now.hour * 60 + now.minute
@@ -58,12 +58,6 @@ def gap(now: dt.datetime | None = None, events: list[dict] | None = None) -> dic
             meeting_now = {"title": e["title"], "start": scheduler.hm(s), "end": scheduler.hm(en)}
         elif s > now_min and nxt is None:
             nxt = {"title": e["title"], "start": scheduler.hm(s), "end": scheduler.hm(en), "start_min": s}
-    cfg = config.load()["general"]
-    we = scheduler.parse_hm(cfg["work_end"])
-    if nxt and (now_min < we and nxt["start_min"] < we or now_min >= we):
-        return {"minutes": nxt["start_min"] - now_min, "until": nxt["title"], "at": nxt["start"], "kind": "meeting", "meeting_now": meeting_now}
-    if now_min < we and scheduler.parse_hm(cfg["work_start"]) <= now_min:
-        return {"minutes": we - now_min, "until": "the end of the work day", "at": scheduler.hm(we), "kind": "end of day", "meeting_now": meeting_now}
     if nxt:
         return {"minutes": nxt["start_min"] - now_min, "until": nxt["title"], "at": nxt["start"], "kind": "meeting", "meeting_now": meeting_now}
     return {"minutes": None, "until": None, "at": None, "kind": None, "meeting_now": meeting_now}
