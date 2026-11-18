@@ -779,6 +779,27 @@ def create_app() -> FastAPI:
         err = linear.safe_push(tid) if fields else None
         return {**db.task(tid), "linear_error": err}
 
+    # ------------------------------------------------ the Priorities page: one list, dragging sets the priority
+    def _priority_rows() -> list[dict]:
+        paths: dict[int, list[str]] = {}
+        return [{**t, "path": paths.setdefault(t["project_id"], db.project_path(t["project_id"]))} for t in db.priority_list()]
+
+    @app.get("/api/priority")
+    def priority_list():
+        return _priority_rows()
+
+    @app.post("/api/priority/move")
+    def priority_move(body: dict[str, Any]):
+        """{id, before_id (null: the end), importance (only when undoing)}"""
+        try:
+            kw = {"importance": body["importance"]} if "importance" in body else {}
+            was = db.priority_move(int(body["id"]), None if body.get("before_id") is None else int(body["before_id"]), **kw)
+        except (KeyError, TypeError, ValueError) as e:
+            raise HTTPException(400, str(e))
+        tid = int(body["id"])
+        changed = db.task(tid)["importance"] != was["importance"]
+        return {"was": was, "task": db.task(tid), "linear_error": linear.safe_push(tid) if changed else None, "tasks": _priority_rows()}
+
     @app.post("/api/tasks/{tid}/complete")
     def complete_task(tid: int):
         db.complete_task(tid)

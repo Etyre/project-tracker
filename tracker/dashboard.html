@@ -68,6 +68,13 @@ button{font:inherit;cursor:pointer}
 .tasks.sub{margin:0;padding:0 0 0 26px;min-height:0}
 .tasks.sub:empty{display:none}
 .task.dragging,.tasks.dragging,.proj.dragging{opacity:.35}
+.prow{display:flex;align-items:flex-start;gap:8px;padding:5px 6px;border-radius:8px}
+.prow:focus{outline:none;background:var(--hover);box-shadow:inset 2px 0 0 var(--accent)}
+.prow.dragging{opacity:.35}
+.prow .plevel{flex:none;width:24px;font-size:12px;font-weight:600;color:var(--muted);padding-top:2px}
+.prow .body{flex:1;min-width:0}
+.prow .title{cursor:pointer}
+.prow .ppath{font-size:12px;color:var(--muted);margin:0 6px}
 textarea.inline{display:block;width:100%;padding:2px 4px;margin:0;border:0;border-bottom:1px solid var(--accent);background:transparent;color:var(--ink);font:inherit;line-height:inherit;outline:none;resize:none;overflow:hidden;min-height:1.45em}
 .caret{cursor:pointer;color:var(--muted);width:14px;text-align:center;font-size:12px}
 .task .notes{margin:6px 0 2px;padding:8px 10px;background:var(--card);border:1px solid var(--line);border-radius:3px;white-space:pre-wrap;font-size:14px;cursor:text;min-height:20px;line-height:1.45;color:var(--ink)}
@@ -209,6 +216,7 @@ table{border-collapse:collapse;width:100%}td,th{padding:6px 8px;border-bottom:1p
   <div class="brand">Project Tracker</div>
   <nav>
     <button data-view="projects">Projects</button>
+    <button data-view="priority" title="Every open task in one list, highest priority first; drag a line to change its priority">Priorities</button>
     <button data-view="someday" title="A separate list for ideas you are not committing to: no projects, no deadlines, no priorities, nothing scheduled">Someday / maybe</button>
     <button data-view="feed">Feed</button>
     <button data-view="stats">Stats</button>
@@ -355,6 +363,7 @@ async function render() {
   try {
     if (view === 'feed') await renderFeed();
     else if (view === 'projects' || view === 'someday') await renderProjects();   // the Someday / maybe list is the same outline, kept apart
+    else if (view === 'priority') await renderPriority();
     else if (view === 'plan') await renderPlan();
     else if (view === 'stats') await renderStats();
     else if (view === 'snapshots') await renderSnapshots();
@@ -1818,6 +1827,77 @@ async function renderPlan() {
     ${p.raw?.exercise_note ? `<p class="muted">${esc(p.raw.exercise_note)}</p>` : ''}
     <ul class="timeline" style="list-style:none;padding:0;margin:0">${p.items.map(i => `<li class="${i.status}"><span>${i.start}–${i.end}</span><span class="k">${i.kind}</span><span>${mdLine(i.title).html}${i.note ? ` <span class="muted">— ${esc(i.note)}</span>` : ''}</span>
       <span></span></li>`).join('')}</ul></div>`;
+}
+
+// ------------------------------------------------------------------ priorities
+// Every open task in one flat list, highest priority first, tasks with none at the bottom. Moving a line (drag its
+// handle, or Cmd+Shift+Up/Down) sets its priority: it takes the priority of the line it now sits above, the lowest
+// one that keeps the list in order, and none when it lands above a line without one or at the very end. The server
+// keeps the order inside each level (tasks.priority_pos).
+const pLabel = n => n ? 'P' + (6 - n) : '';
+let prioDrag = null;
+async function renderPriority(list, focusId) {
+  const ts = list || await api('/priority'), m = $('#main');
+  m.innerHTML = `<div class="prio">${ts.length ? '' : '<div class="card muted">No open tasks.</div>'}${ts.map(t => `<div class="prow" tabindex="0" data-tid="${t.id}" data-imp="${t.importance || ''}">
+      <span class="handle" draggable="true" title="Drag to change its priority">≡</span><span class="plevel" title="${t.importance ? 'Priority ' + (6 - t.importance) + ' (#p' + (6 - t.importance) + ')' : 'No priority'}">${pLabel(t.importance)}</span>
+      <input type="checkbox" title="Complete" onchange="prioComplete(${t.id}, this)">
+      <div class="body"><span class="title" onclick="openInTree(${t.id}, ${t.project_id})" title="Show this task in its project">${mdLine(t.title).html}</span><span class="ppath">${esc(t.path.map(n => mdHeading(n).text).join(' / '))}</span><span class="chips">${deadlineChip(t.deadline)}${deadlineChip(t.soft_deadline, true)}${t.blocking ? `<span class="chip bad">blocking${t.blocking_for ? ': ' + esc(t.blocking_for) : ''}</span>` : ''}</span></div>
+    </div>`).join('')}</div>`;
+  const box = m.querySelector('.prio'), rowOf = id => box.querySelector(`.prow[data-tid="${id}"]`);
+  if (focusId) rowOf(focusId)?.focus();
+  const move = async (id, before_id) => {
+    const t = ts.find(x => x.id === id);
+    try {
+      const r = await api('/priority/move', 'POST', {id, before_id});
+      pushUndo(`move of "${t.title}"`, () => api('/priority/move', 'POST', {id, before_id: r.was.before_id, importance: r.was.importance}));
+      if (r.linear_error) toast('Saved; Linear: ' + esc(r.linear_error), 6000);
+      else if ((r.task.importance || null) !== (t.importance || null)) toast(`${pLabel(t.importance) || 'No priority'} → ${pLabel(r.task.importance) || 'no priority'}`);
+      await renderPriority(r.tasks, id);
+    } catch (e) {toast(esc(e.message), 5000); renderPriority(null, id);}
+  };
+  // while a line is dragged it sits where it would land and already shows the priority it would get
+  box.querySelectorAll('.handle').forEach(h => {
+    const el = h.closest('.prow');
+    h.addEventListener('dragstart', e => {
+      prioDrag = {el, id: +el.dataset.tid, next: el.nextElementSibling, dropped: false};
+      e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', el.dataset.tid);
+      try {e.dataTransfer.setDragImage(el, 24, 14);} catch {}
+      setTimeout(() => el.classList.add('dragging'), 0);
+    });
+    h.addEventListener('dragend', () => {if (prioDrag && !prioDrag.dropped) renderPriority(); prioDrag = null;});
+  });
+  box.addEventListener('dragover', e => {
+    if (!prioDrag) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move';
+    const row = e.target.closest?.('.prow'), d = prioDrag.el;
+    if (row && row !== d) {const r = row.getBoundingClientRect(); e.clientY < r.top + r.height / 2 ? row.before(d) : row.after(d);}
+    d.querySelector('.plevel').textContent = pLabel(+(d.nextElementSibling?.dataset.imp || 0));
+  });
+  box.addEventListener('drop', async e => {
+    e.preventDefault(); if (!prioDrag) return; prioDrag.dropped = true;
+    const d = prioDrag, next = d.el.nextElementSibling; prioDrag = null;
+    if (next === d.next) {renderPriority(ts, d.id); return;}      // put back where it was
+    await move(d.id, next ? +next.dataset.tid : null);
+  });
+  box.addEventListener('keydown', e => {
+    const el = e.target.closest('.prow'); if (!el || e.target !== el) return;
+    const up = e.key === 'ArrowUp', down = e.key === 'ArrowDown', mod = e.metaKey || e.ctrlKey, id = +el.dataset.tid;
+    if ((up || down) && mod && e.shiftKey) {
+      e.preventDefault(); const prev = el.previousElementSibling, next = el.nextElementSibling;
+      if (up && prev) move(id, +prev.dataset.tid); else if (down && next) move(id, next.nextElementSibling ? +next.nextElementSibling.dataset.tid : null);
+    }
+    else if ((up || down) && !mod && !e.shiftKey && !e.altKey) {e.preventDefault(); (up ? el.previousElementSibling : el.nextElementSibling)?.focus();}
+    else if (e.key === 'Enter' && mod) {e.preventDefault(); prioComplete(id, el.querySelector('input'));}
+    else if (e.key === 'Enter') {e.preventDefault(); openInTree(id, ts.find(x => x.id === id).project_id);}
+  });
+}
+async function prioComplete(id, box) {
+  box.disabled = true; const next = box.closest('.prow').nextElementSibling?.dataset.tid;
+  try {
+    const r = await api(`/tasks/${id}/complete`, 'POST');
+    pushUndo('complete', () => api(`/tasks/${id}/uncomplete`, 'POST'));
+    toast(r.linear_error ? 'Completed locally; Linear: ' + esc(r.linear_error) : `Completed. <button class="btn small" onclick="uncomplete(${id})">Undo</button>`, 5000);
+  } catch (e) {toast(esc(e.message), 5000);}
+  renderPriority(null, next && +next);
 }
 
 // ------------------------------------------------------------------ settings

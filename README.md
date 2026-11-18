@@ -139,6 +139,17 @@ on the lines: you navigate with the arrow keys and type.
   sub-projects and open tasks with it (restore brings them back). The Filters button (hidden by default)
   opens a small panel to show completed tasks and archived projects alongside the active ones.
 
+**Priorities** (its own page) is every open task in one flat list: highest priority first (P1 is `#p1`), tasks
+with no priority at the bottom, each with its project, deadlines and who it blocks. Moving a line sets its priority:
+drag it by the handle, or focus it and press Cmd+Shift+Up / Down. The line takes the priority of the line it now
+sits above, which is the lowest priority that keeps the list in order: dropped between two P1 lines it is P1,
+between a P1 and a P3 it is P3, and above a line with no priority, or at the very end, it has none. So moving a
+line down past the last line of its level drops it straight to the next level present, or to none. The order
+inside a level is kept (`tasks.priority_pos`, rewritten for the whole list on every move); a task never placed
+comes after the placed ones of its level, by deadline. Cmd+Z undoes a move, the checkbox (or Cmd+Enter) completes,
+a click on the title (or Enter) shows the task in its project. Tasks in archived projects and on the Someday list
+are not listed. `GET /api/priority` returns the list, `POST /api/priority/move {id, before_id}` moves a line.
+
 **Drafts are never lost** - every text field in the UI (the quick-add bar, a new or edited line, a notes box, the
 edit and bulk dialogs, the "what are you reading?" box on the feed) saves what
 you type, as you type, to the web view's `localStorage` under a key naming the field and the record it belongs to,

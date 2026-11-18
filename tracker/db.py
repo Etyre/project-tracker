@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     writing INTEGER,                                 -- 1 = the task is mainly writing; NULL = not judged yet
     importance_by TEXT,                              -- who last set (or cleared) the priority: user | agent | claude | linear; NULL = before this was tracked
     importance_at REAL,                              -- when they did
+    priority_pos REAL,                               -- place in the Priorities list within its priority level; NULL = never placed
     toggl_title TEXT,                                -- the title as a gerund ("Responding to Sam"): the Toggl entry's description; NULL = not phrased yet
     position INTEGER NOT NULL DEFAULT 0,
     created_at REAL NOT NULL,
@@ -163,6 +164,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
         cols = {r["name"]: r for r in conn.execute("PRAGMA table_info(tasks)")}
     if "archived_at" not in cols:
         conn.execute("ALTER TABLE tasks ADD COLUMN archived_at REAL")
+        conn.commit()
+    if "priority_pos" not in cols:        # the task's place in the Priorities list, within its priority level
+        conn.execute("ALTER TABLE tasks ADD COLUMN priority_pos REAL")
         conn.commit()
     if "importance_by" not in cols:
         conn.execute("ALTER TABLE tasks ADD COLUMN importance_by TEXT")
@@ -587,6 +591,41 @@ def update_task(tid: int, **fields) -> None:
 
 def task(tid: int) -> dict | None:
     return row("SELECT * FROM tasks WHERE id=?", (tid,))
+
+
+# ---------------------------------------------------------------- the Priorities list
+def priority_list() -> list[dict]:
+    """Every open task in one list: highest priority first, tasks with no priority last. Inside a level the order is
+    the one the user dragged them into (`priority_pos`); a task never placed comes after those, by deadline."""
+    out = open_tasks(schedulable_only=True)
+    out.sort(key=lambda t: (-(t["importance"] or 0), t["priority_pos"] is None, t["priority_pos"] or 0, t["deadline"] or "9999", t["id"]))
+    return out
+
+
+_KEEP = object()
+
+
+def priority_move(tid: int, before_id: int | None, importance: Any = _KEEP) -> dict:
+    """Put a task right before `before_id` in the Priorities list (None: at the very end). It takes the priority of
+    the task it now sits before, which is the lowest priority that keeps the list in order; at the end, or before a
+    task with none, it has none. `importance` overrides that (undo). The whole list's order is then written down, so
+    it stays exactly as shown. Returns what the task was, for undoing."""
+    order = priority_list()
+    by = {t["id"]: t for t in order}
+    if tid not in by:
+        raise ValueError("not an open task")
+    if before_id is not None and (before_id not in by or before_id == tid):
+        raise ValueError("cannot be placed there")
+    ids = [t["id"] for t in order]
+    was_before = ids[ids.index(tid) + 1] if ids.index(tid) + 1 < len(ids) else None
+    ids.remove(tid)
+    ids.insert(ids.index(before_id) if before_id is not None else len(ids), tid)
+    new = (by[before_id]["importance"] if before_id is not None else None) if importance is _KEEP else importance
+    update_task(tid, importance=new)
+    with _write_lock:
+        connect().executemany("UPDATE tasks SET priority_pos=? WHERE id=?", [(n, i) for n, i in enumerate(ids)])
+        connect().commit()
+    return {"importance": by[tid]["importance"], "before_id": was_before}
 
 
 WORK_KINDS = ("task", "focus")

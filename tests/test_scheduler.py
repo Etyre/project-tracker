@@ -868,6 +868,8 @@ def test_reading_card_offers_highest_priority_reading_task(monkeypatch):
     from fastapi.testclient import TestClient
     from tracker import web, tags, sheets
     monkeypatch.setattr(sheets, "writable", lambda: False)
+    from tracker import feed
+    monkeypatch.setattr(feed, "min_gap", lambda card: 0)   # this runs at the real time of day: near the end of the work day the hour writing needs is not there
     assert tags.parse_tags("Read the RSI bill #reading")[1] == {"reading": 1}
     c = TestClient(web.create_app())
     pid = db.create_project("Reading list")
@@ -1170,3 +1172,37 @@ def test_hard_and_soft_deadlines():
     assert t["deadline"] == "2026-12-01" and t["soft_deadline"] == "2026-11-20"
     from tracker import snapshot
     assert "#due:2026-12-01" in snapshot._tags(t) and "#soft:2026-11-20" in snapshot._tags(t)
+
+
+def test_moving_a_line_in_the_priority_list_sets_its_priority():
+    pid = db.create_project("Priority list")
+    a = db.create_task(pid, "A", importance=5); b = db.create_task(pid, "B", importance=5); d = db.create_task(pid, "D", importance=3)
+    c = db.create_task(pid, "C"); u = db.create_task(pid, "U")
+    mine = lambda: [t["id"] for t in db.priority_list() if t["id"] in (a, b, c, d, u)]
+    assert mine() == [a, b, d, c, u]                                  # highest first, no priority last
+    was = db.priority_move(c, b)                                      # between A and B (both priority 1): priority 1
+    assert mine() == [a, c, b, d, u] and db.task(c)["importance"] == 5 and db.task(c)["importance_by"] == "user"
+    assert was == {"importance": None, "before_id": u}
+    db.priority_move(c, was["before_id"], importance=was["importance"])       # undo puts it back as it was
+    assert mine() == [a, b, d, c, u] and db.task(c)["importance"] is None
+    db.priority_move(c, d)                                            # between B (1) and D (3): the lowest that fits, 3
+    assert mine() == [a, b, c, d, u] and db.task(c)["importance"] == 3
+    db.priority_move(a, u)                                            # above a line with no priority: none, but it keeps its place
+    assert db.task(a)["importance"] is None and mine() == [b, c, d, a, u]
+    db.priority_move(b, None)                                         # the very end
+    assert db.task(b)["importance"] is None and mine()[-1] == b
+    db.priority_move(u, c)                                            # to the top: the priority of the line below
+    assert db.task(u)["importance"] == 3 and mine()[0] == u
+    db.priority_move(d, c)                                            # reordering inside a level changes no priority and sticks
+    assert mine()[:3] == [u, d, c] and db.task(d)["importance"] == 3
+    import pytest
+    with pytest.raises(ValueError):
+        db.priority_move(a, a)
+    from fastapi.testclient import TestClient
+    from tracker import web
+    cl = TestClient(web.create_app())
+    r = cl.post("/api/priority/move", json={"id": a, "before_id": u}).json()
+    assert r["task"]["importance"] == 3 and r["was"]["importance"] is None and [t["id"] for t in r["tasks"] if t["id"] in (a, u)] == [a, u]
+    assert r["tasks"][0]["path"] and cl.post("/api/priority/move", json={"id": 999999, "before_id": None}).status_code == 400
+    done = db.create_task(pid, "Done one", importance=5); db.complete_task(done)
+    assert done not in [t["id"] for t in cl.get("/api/priority").json()]
