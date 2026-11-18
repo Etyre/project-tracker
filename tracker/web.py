@@ -790,15 +790,17 @@ def create_app() -> FastAPI:
 
     @app.post("/api/priority/move")
     def priority_move(body: dict[str, Any]):
-        """{id, before_id (null: the end), importance (only when undoing)}"""
+        """{id, before_id (null: the end); when undoing also importance and clear (ids whose priority to remove)}"""
         try:
-            kw = {"importance": body["importance"]} if "importance" in body else {}
-            was = db.priority_move(int(body["id"]), None if body.get("before_id") is None else int(body["before_id"]), **kw)
+            kw: dict[str, Any] = {"importance": body["importance"]} if "importance" in body else {}
+            clear = tuple(int(i) for i in body.get("clear") or ())
+            was = db.priority_move(int(body["id"]), None if body.get("before_id") is None else int(body["before_id"]), clear=clear, **kw)
         except (KeyError, TypeError, ValueError) as e:
             raise HTTPException(400, str(e))
         tid = int(body["id"])
-        changed = db.task(tid)["importance"] != was["importance"]      # also false when the task had to stay where it was
-        return {"was": was, "task": db.task(tid), "linear_error": linear.safe_push(tid) if changed else None, "tasks": _priority_rows()}
+        push = ([tid] if db.task(tid)["importance"] != was["importance"] else []) + was["raised"] + list(clear)
+        errs = [e for e in (linear.safe_push(i) for i in push) if e]
+        return {"was": was, "task": db.task(tid), "linear_error": errs[0] if errs else None, "tasks": _priority_rows()}
 
     @app.post("/api/tasks/{tid}/complete")
     def complete_task(tid: int):

@@ -144,14 +144,15 @@ with no priority at the bottom, each with its project, deadlines and who it bloc
 drag it by the handle, or focus it and press Cmd+Shift+Up / Down. A line that has a priority changes it only as
 far as it must: it takes the priority nearest its own that keeps the list in order (a P2 dropped between a P1 and a
 P3 stays P2; dropped between two P4 lines it becomes P4). A line with no priority takes the lowest that fits: the
-priority of the line below it, or P5 when that line has none. Having no priority is not a level a move can give,
-so under a line with no priority nothing fits: a line with a priority dropped there goes back where it was,
-unchanged, and a line without one stays without. (So the first place in the unprioritised block cannot be reached
-by a move: landing there makes the line P5. Clearing a priority is done with the dates & priority dialog.) The order
+priority of the line below it, or P5 when that line has none. A line with a priority dropped below
+unprioritised lines keeps its priority, and every unprioritised line above it takes that priority (if prioritised
+lines of a lower level sit above them, the moved line and those lines take that lower level, so the list stays in
+order). Unprioritised lines moved among themselves only change place. A move never clears a priority; the dates &
+priority dialog does. Undo restores the moved line and clears the lines it raised. The order
 inside a level is kept (`tasks.priority_pos`, rewritten for the whole list on every move); a task never placed
 comes after the placed ones of its level, by deadline. Cmd+Z undoes a move, the checkbox (or Cmd+Enter) completes,
 a click on the title (or Enter) shows the task in its project. Tasks in archived projects and on the Someday list
-are not listed. `GET /api/priority` returns the list, `POST /api/priority/move {id, before_id}` moves a line.
+are not listed. `GET /api/priority` returns the list, `POST /api/priority/move {id, before_id}` moves a line (`was.raised` lists the lines that took its priority).
 
 **Drafts are never lost** - every text field in the UI (the quick-add bar, a new or edited line, a notes box, the
 edit and bulk dialogs, the "what are you reading?" box on the feed) saves what

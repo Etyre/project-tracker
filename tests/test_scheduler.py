@@ -1184,7 +1184,7 @@ def test_moving_a_line_in_the_priority_list_sets_its_priority():
     assert mine() == [a, b, d, c, u]                                  # highest first, no priority last
     was = db.priority_move(c, b)                                      # between A and B (both priority 1): priority 1
     assert mine() == [a, c, b, d, u] and db.task(c)["importance"] == 5 and db.task(c)["importance_by"] == "user"
-    assert was == {"importance": None, "before_id": u, "stayed": False}
+    assert was == {"importance": None, "before_id": u, "raised": []}
     db.priority_move(c, was["before_id"], importance=was["importance"])       # undo puts it back as it was
     assert mine() == [a, b, d, c, u] and db.task(c)["importance"] is None
     db.priority_move(c, d)                                            # no priority, between B (P1) and D (P3): the lowest that fits
@@ -1196,8 +1196,10 @@ def test_moving_a_line_in_the_priority_list_sets_its_priority():
     assert mine() == [a, b, c, d, u] and db.task(c)["importance"] == 4
     db.priority_move(a, u)                                            # P1 between P3 and a line with none: P3, the nearest
     assert db.task(a)["importance"] == 3 and mine() == [b, c, d, a, u]
-    was = db.priority_move(b, None)                                   # under a line with no priority nothing fits: it stays
-    assert was["stayed"] and db.task(b)["importance"] == 5 and mine() == [b, c, d, a, u]
+    was = db.priority_move(c, None)                                   # P2 under a line with none: P3 because of D and A above, and U takes it
+    assert was["raised"] == [u] and db.task(c)["importance"] == 3 and db.task(u)["importance"] == 3 and mine() == [b, d, a, u, c]
+    db.priority_move(c, was["before_id"], importance=was["importance"], clear=tuple(was["raised"]))      # undo clears U again
+    assert db.task(c)["importance"] == 4 and db.task(u)["importance"] is None and mine() == [b, c, d, a, u]
     u2 = db.create_task(pid, "U2")
     db.priority_move(u2, u)                                           # no priority, above the unprioritised block: P5
     assert db.task(u2)["importance"] == 1
@@ -1217,9 +1219,9 @@ def test_moving_a_line_in_the_priority_list_sets_its_priority():
     cl = TestClient(web.create_app())
     r = cl.post("/api/priority/move", json={"id": u, "before_id": a}).json()
     assert r["task"]["importance"] == 3 and r["was"]["importance"] is None and [t["id"] for t in r["tasks"] if t["id"] in (a, u)] == [u, a]
-    db.create_task(pid, "N")
-    assert cl.post("/api/priority/move", json={"id": a, "before_id": None}).json()["was"]["stayed"]
-    assert db.task(a)["importance"] == 3
+    n = db.create_task(pid, "N")
+    r = cl.post("/api/priority/move", json={"id": b, "before_id": None}).json()            # the lowest line above is U2 (P5)
+    assert r["was"]["raised"] == [n] and db.task(b)["importance"] == 1 and db.task(n)["importance"] == 1
     assert r["tasks"][0]["path"] and cl.post("/api/priority/move", json={"id": 999999, "before_id": None}).status_code == 400
     done = db.create_task(pid, "Done one", importance=5); db.complete_task(done)
     assert done not in [t["id"] for t in cl.get("/api/priority").json()]

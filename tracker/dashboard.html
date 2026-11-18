@@ -71,7 +71,6 @@ button{font:inherit;cursor:pointer}
 .prow{display:flex;align-items:flex-start;gap:8px;padding:5px 6px;border-radius:8px}
 .prow:focus{outline:none;background:var(--hover);box-shadow:inset 2px 0 0 var(--accent)}
 .prow.dragging{opacity:.35}
-.prow.nofit .plevel{text-decoration:line-through}
 .prow .plevel{flex:none;width:24px;font-size:12px;font-weight:600;color:var(--muted);padding-top:2px}
 .prow .body{flex:1;min-width:0}
 .prow .title{cursor:pointer}
@@ -1832,16 +1831,17 @@ async function renderPlan() {
 
 // ------------------------------------------------------------------ priorities
 // Every open task in one flat list, highest priority first, tasks with none at the bottom. Moving a line (drag its
-// handle, or Cmd+Shift+Up/Down) sets its priority by db.priority_fit: the nearest
-// priority to its own that keeps the list in order, the lowest that fits when it has none, and no change where
-// nothing fits (under a line with no priority). The server
+// handle, or Cmd+Shift+Up/Down) sets its priority by db.priority_move: the nearest
+// priority to its own that keeps the list in order, the lowest that fits when it has none; a prioritised
+// line dropped under unprioritised ones gives them its priority. The server
 // keeps the order inside each level (tasks.priority_pos).
 const pLabel = n => n ? 'P' + (6 - n) : '';
-// the same rule as db.priority_fit, for the preview while dragging: importance the line would get between the rows
-// `prev` and `next`, or undefined where it may not go
+// the same rule as db.priority_move, for the preview while dragging: the importance the line would get between the
+// rows `prev` and `next`
 const prioFit = (cur, prev, next) => {
-  if (prev && !+prev.dataset.imp) return cur ? undefined : 0;
-  const hi = prev ? +prev.dataset.imp : 5, lo = +(next?.dataset.imp || 0) || 1;
+  let hi = 5; for (let r = prev; r; r = r.previousElementSibling) if (+r.dataset.imp) {hi = +r.dataset.imp; break;}
+  if (prev && !+prev.dataset.imp) return cur ? Math.min(cur, hi) : 0;      // under unprioritised lines: those take its priority
+  const lo = +(next?.dataset.imp || 0) || 1;
   return cur ? Math.min(Math.max(cur, lo), hi) : lo;
 };
 let prioDrag = null;
@@ -1858,10 +1858,10 @@ async function renderPriority(list, focusId) {
     const t = ts.find(x => x.id === id);
     try {
       const r = await api('/priority/move', 'POST', {id, before_id});
-      if (r.was.stayed) {toast(`Stays ${pLabel(t.importance)}: the lines above there have no priority`, 5000); await renderPriority(r.tasks, id); return;}
-      pushUndo(`move of "${t.title}"`, () => api('/priority/move', 'POST', {id, before_id: r.was.before_id, importance: r.was.importance}));
-      if (r.linear_error) toast('Saved; Linear: ' + esc(r.linear_error), 6000);
-      else if ((r.task.importance || null) !== (t.importance || null)) toast(`${pLabel(t.importance) || 'No priority'} → ${pLabel(r.task.importance) || 'no priority'}`);
+      pushUndo(`move of "${t.title}"`, () => api('/priority/move', 'POST', {id, before_id: r.was.before_id, importance: r.was.importance, clear: r.was.raised}));
+      const said = [(r.task.importance || null) !== (t.importance || null) ? `${pLabel(t.importance) || 'No priority'} → ${pLabel(r.task.importance) || 'no priority'}` : '',
+        r.was.raised.length ? `${r.was.raised.length} ${r.was.raised.length === 1 ? 'line' : 'lines'} above it now ${pLabel(r.task.importance)}` : ''].filter(Boolean).join('; ');
+      if (r.linear_error) toast('Saved; Linear: ' + esc(r.linear_error), 6000); else if (said) toast(said, 5000);
       await renderPriority(r.tasks, id);
     } catch (e) {toast(esc(e.message), 5000); renderPriority(null, id);}
   };
@@ -1881,7 +1881,10 @@ async function renderPriority(list, focusId) {
     const row = e.target.closest?.('.prow'), d = prioDrag.el;
     if (row && row !== d) {const r = row.getBoundingClientRect(); e.clientY < r.top + r.height / 2 ? row.before(d) : row.after(d);}
     const fit = prioFit(+d.dataset.imp || 0, d.previousElementSibling, d.nextElementSibling);
-    d.querySelector('.plevel').textContent = pLabel(fit === undefined ? +d.dataset.imp : fit); d.classList.toggle('nofit', fit === undefined);
+    d.querySelector('.plevel').textContent = pLabel(fit);
+    // unprioritised lines above a prioritised one would take its priority: show that too
+    box.querySelectorAll('.prow[data-imp=""]').forEach(r => {if (r !== d) r.querySelector('.plevel').textContent = '';});
+    if (+d.dataset.imp) for (let r = d.previousElementSibling; r; r = r.previousElementSibling) if (!+r.dataset.imp) r.querySelector('.plevel').textContent = pLabel(fit);
   });
   box.addEventListener('drop', async e => {
     e.preventDefault(); if (!prioDrag) return; prioDrag.dropped = true;

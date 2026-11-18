@@ -605,24 +605,16 @@ def priority_list() -> list[dict]:
 _KEEP = object()
 
 
-def priority_fit(current: int | None, above: dict | None, below: dict | None) -> tuple[bool, int | None]:
-    """The importance a task takes when it lands between `above` and `below` in the Priorities list (None: the list
-    starts / ends there). A task with a priority keeps the nearest one that leaves the list in order, so it changes
-    only as far as it must; a task without one takes the lowest that fits. Having no priority is not a level a move
-    can give: under a line without one nothing fits, so a task with a priority may not go there (False) and a task
-    without one stays without."""
-    if above is not None and not above["importance"]:
-        return (not current, current)
-    hi = above["importance"] if above else 5
-    lo = (below["importance"] if below else None) or 1
-    return (True, min(max(current, lo), hi) if current else lo)
-
-
-def priority_move(tid: int, before_id: int | None, importance: Any = _KEEP) -> dict:
-    """Put a task right before `before_id` in the Priorities list (None: at the very end) and give it the priority
-    `priority_fit` allows there. Where nothing fits the task stays as and where it was (`stayed`). `importance`
-    overrides the rule (undo). The whole list's order is then written down, so it stays exactly as shown. Returns
-    what the task was, for undoing."""
+def priority_move(tid: int, before_id: int | None, importance: Any = _KEEP, clear: tuple = ()) -> dict:
+    """Put a task right before `before_id` in the Priorities list (None: at the very end) and set what the new place
+    demands, changing as little as possible:
+    - a task with a priority keeps the nearest one that leaves the list in order (clamped between its neighbours);
+    - a task without one takes the lowest that fits: the priority of the task below, or P5 above the unprioritised
+      block; among unprioritised tasks it only changes place;
+    - a task with a priority dropped below unprioritised tasks keeps its priority (lowered only as far as the last
+      prioritised task above requires) and every unprioritised task above it takes that priority (`raised`).
+    `importance` and `clear` override the rule (undo: the task's old priority, and the raised tasks to clear again).
+    The whole list's order is then written down, so it stays exactly as shown. Returns what was, for undoing."""
     order = priority_list()
     by = {t["id"]: t for t in order}
     if tid not in by:
@@ -630,16 +622,26 @@ def priority_move(tid: int, before_id: int | None, importance: Any = _KEEP) -> d
     if before_id is not None and (before_id not in by or before_id == tid):
         raise ValueError("cannot be placed there")
     ids = [t["id"] for t in order]
-    was = {"importance": by[tid]["importance"], "before_id": ids[ids.index(tid) + 1] if ids.index(tid) + 1 < len(ids) else None, "stayed": False}
+    was = {"importance": by[tid]["importance"], "before_id": ids[ids.index(tid) + 1] if ids.index(tid) + 1 < len(ids) else None, "raised": []}
     ids.remove(tid)
     at = ids.index(before_id) if before_id is not None else len(ids)
-    new = importance
+    new, cur = importance, by[tid]["importance"]
     if importance is _KEEP:
-        ok, new = priority_fit(by[tid]["importance"], by[ids[at - 1]] if at else None, by[ids[at]] if at < len(ids) else None)
-        if not ok:
-            return {**was, "stayed": True}
+        above = [by[i]["importance"] for i in ids[:at]]
+        hi = min([n for n in above if n], default=5)                 # the last prioritised task above
+        lo = (by[ids[at]]["importance"] if at < len(ids) else None) or 1
+        if above and not above[-1]:                                  # landing under unprioritised tasks
+            new = min(cur, hi) if cur else None
+            was["raised"] = [i for i in ids[:at] if not by[i]["importance"]] if cur else []
+        else:
+            new = min(max(cur, lo), hi) if cur else lo
     ids.insert(at, tid)
     update_task(tid, importance=new)
+    for i in was["raised"]:
+        update_task(i, importance=new)
+    for i in clear:
+        if i in by:
+            update_task(int(i), importance=None)
     with _write_lock:
         connect().executemany("UPDATE tasks SET priority_pos=? WHERE id=?", [(n, i) for n, i in enumerate(ids)])
         connect().commit()
