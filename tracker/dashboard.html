@@ -207,6 +207,12 @@ a{color:var(--accent)}
 .treelink{display:inline-block;margin:14px 0 4px;font-size:17px;font-weight:400;color:var(--muted);text-decoration:underline dotted;text-underline-offset:2px;cursor:pointer}.treelink:hover{color:var(--ink)}
 table{border-collapse:collapse;width:100%}td,th{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;font-size:14px}
 .kbd{font-size:12px;color:var(--muted)}
+#findbar{position:fixed;top:10px;right:16px;z-index:60;display:none;align-items:center;gap:6px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:6px 8px;box-shadow:0 4px 16px rgba(0,0,0,.16)}
+#findbar.open{display:flex}
+#findbar input{width:200px}
+#findcount{font-size:12px;color:var(--muted);min-width:52px;text-align:right}
+::highlight(find){background:rgba(255,214,10,.45)}
+::highlight(findcur){background:rgba(255,149,0,.85);color:#000}
 #taghint{position:fixed;display:none;z-index:40;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:2px 8px;font-size:12px;color:var(--ink);box-shadow:0 2px 8px rgba(0,0,0,.12);cursor:pointer;white-space:nowrap}
 #taghint span{color:var(--muted);margin-left:6px}
 </style>
@@ -236,6 +242,7 @@ table{border-collapse:collapse;width:100%}td,th{padding:6px 8px;border-bottom:1p
 <main id="main"></main>
 </div>
 <div id="toast"></div>
+<div id="findbar"><input id="findtext" type="text" placeholder="Find on this page" spellcheck="false" autocomplete="off"><span id="findcount"></span><button class="btn small" id="findprev" title="Previous (Shift+Enter)">‹</button><button class="btn small" id="findnext" title="Next (Enter)">›</button><button class="btn small" id="findclose" title="Close (Esc)">×</button></div>
 
 <script>
 // ------------------------------------------------------------------ utils
@@ -1828,6 +1835,61 @@ async function renderPlan() {
     <ul class="timeline" style="list-style:none;padding:0;margin:0">${p.items.map(i => `<li class="${i.status}"><span>${i.start}–${i.end}</span><span class="k">${i.kind}</span><span>${mdLine(i.title).html}${i.note ? ` <span class="muted">— ${esc(i.note)}</span>` : ''}</span>
       <span></span></li>`).join('')}</ul></div>`;
 }
+
+// ------------------------------------------------------------------ find on the page (Cmd+F)
+// The window is a WKWebView, which has no find bar of its own, so the page provides one. It searches the text that
+// is on the page right now (folded projects and other pages are not there to be found) and marks the matches with
+// the CSS Custom Highlight API, which draws over ranges without touching the DOM, so re-renders are not disturbed;
+// when the page is redrawn while the bar is open the search simply runs again.
+const Find = {ranges: [], at: -1, timer: null, seen: null};
+function findRun(keep) {
+  const q = $('#findtext').value.toLowerCase(), was = keep ? Find.at : -1;
+  Find.ranges = []; Find.at = -1;
+  if (q) {
+    const w = document.createTreeWalker($('#main'), NodeFilter.SHOW_TEXT);
+    for (let n; (n = w.nextNode());) {
+      const txt = n.nodeValue.toLowerCase(); let i = txt.indexOf(q);
+      if (i < 0 || !n.parentElement?.getClientRects().length) continue;            // not shown (folded, hidden)
+      for (; i >= 0; i = txt.indexOf(q, i + q.length)) {const r = new Range(); r.setStart(n, i); r.setEnd(n, i + q.length); Find.ranges.push(r);}
+    }
+  }
+  if (Find.ranges.length) Find.at = Math.min(Math.max(was, 0), Find.ranges.length - 1);
+  findShow(!keep);
+}
+function findShow(scroll) {
+  const cur = Find.ranges[Find.at];
+  if (window.Highlight && CSS.highlights) {
+    CSS.highlights.set('find', new Highlight(...Find.ranges.filter(r => r !== cur)));
+    cur ? CSS.highlights.set('findcur', new Highlight(cur)) : CSS.highlights.delete('findcur');
+  }
+  $('#findcount').textContent = $('#findtext').value ? (Find.ranges.length ? `${Find.at + 1} of ${Find.ranges.length}` : 'none') : '';
+  if (cur && scroll) cur.startContainer.parentElement.scrollIntoView({block: 'center'});
+}
+function findStep(d) {if (Find.ranges.length) {Find.at = (Find.at + d + Find.ranges.length) % Find.ranges.length; findShow(true);}}
+function findOpen() {
+  const inp = Draft.bind($('#findtext'), 'find');
+  $('#findbar').classList.add('open'); inp.focus(); inp.select(); findRun();
+  Find.seen ||= new MutationObserver(() => {clearTimeout(Find.timer); Find.timer = setTimeout(() => $('#findbar').classList.contains('open') && findRun(true), 150);});
+  Find.seen.observe($('#main'), {childList: true, subtree: true, characterData: true});
+}
+function findClose() {
+  const cur = Find.ranges[Find.at]?.startContainer.parentElement;
+  $('#findbar').classList.remove('open'); Find.seen?.disconnect(); clearTimeout(Find.timer); Find.ranges = []; Find.at = -1;
+  if (window.Highlight && CSS.highlights) {CSS.highlights.delete('find'); CSS.highlights.delete('findcur');}
+  $('#findtext').blur(); cur?.closest('[tabindex]')?.focus();      // carry on from the line that was found
+}
+$('#findtext').addEventListener('input', () => findRun());
+$('#findtext').addEventListener('keydown', e => {
+  if (e.key === 'Enter') {e.preventDefault(); findStep(e.shiftKey ? -1 : 1);}
+  else if (e.key === 'Escape') {e.preventDefault(); e.stopPropagation(); findClose();}
+  else if (!((e.metaKey || e.ctrlKey) && 'fFgG'.includes(e.key))) e.stopPropagation();      // the page's own shortcuts stay out of the box
+});
+$('#findprev').onclick = () => findStep(-1); $('#findnext').onclick = () => findStep(1); $('#findclose').onclick = findClose;
+document.addEventListener('keydown', e => {
+  if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+  if (e.key === 'f' && !e.shiftKey) {e.preventDefault(); e.stopPropagation(); findOpen();}
+  else if (e.key.toLowerCase() === 'g' && $('#findbar').classList.contains('open')) {e.preventDefault(); e.stopPropagation(); findStep(e.shiftKey ? -1 : 1);}
+}, true);
 
 // ------------------------------------------------------------------ priorities
 // Every open task in one flat list, highest priority first, tasks with none at the bottom. Moving a line (drag its

@@ -87,6 +87,10 @@ on the lines: you navigate with the arrow keys and type.
   where you drop it, in their original order; the lines stay selected afterwards, and Cmd+Z puts them all back.
   "Edit multiple" at the top switches to a selection mode where clicking any lines (not only a run) adds and
   removes them; the Tags… and Dates & priority… buttons beside the count apply to them, Done or Escape leaves.
+- Cmd+F opens a find bar at the top right of any page. It searches the text shown on the page as you type and marks
+  every match; Enter / Shift+Enter (or Cmd+G / Cmd+Shift+G) step through them, Esc closes it and puts the focus on
+  the line of the current match. It only sees what is on the page: tasks inside a folded project or task, and
+  other pages, are not found. The bar is the page's own (`find*` in `dashboard.html`), because a WKWebView has none.
 - Cmd+Z undoes the last change on the page, as many steps back as you like. The feed has its own history:
   there Cmd+Z reverses the last completion, skip, "done for now" or checklist tick.
 - Paste a bulleted or indented list into any line and it lands in the outline with its nesting: the first
