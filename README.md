@@ -574,6 +574,10 @@ as above; `python -m tracker web --reload` in a browser is the quick way to see 
 
 ## Gotchas learned
 
+- The find bar's two CSS highlights are created once and emptied and refilled (`findPaint`). Registering a new
+  `Highlight` under the same name for each search left the previous search's marks painted in the WKWebView
+  (seen 2026-11-19), so `findPaint` also forces the page to repaint. The stale marks cannot be reproduced outside
+  the real window: headless Chromium does not have the fault and a WKWebView snapshot repaints everything.
 - **Ship the copy after a schema change** (`deploy/tailnet/server.sh deploy`): the copy reads a database written by
   this Mac's code, and an older copy would not know a new column.
 - **The menu bar's card line was stale for weeks**: it read `start`/`end` from a feed card, which cards no longer

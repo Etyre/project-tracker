@@ -1841,7 +1841,19 @@ async function renderPlan() {
 // is on the page right now (folded projects and other pages are not there to be found) and marks the matches with
 // the CSS Custom Highlight API, which draws over ranges without touching the DOM, so re-renders are not disturbed;
 // when the page is redrawn while the bar is open the search simply runs again.
-const Find = {ranges: [], at: -1, timer: null, seen: null};
+const Find = {ranges: [], at: -1, timer: null, seen: null, hl: null};
+// The two highlights are made once and emptied and refilled. Registering a fresh Highlight for every search left the
+// previous search's marks painted in the app's WebKit view (2026-11-19: typing "china" kept the marks for "c", "ch"…).
+// Which of the two measures below cures it is not known: the stale paint shows only in the real window, not in a
+// snapshot of a WKWebView (a snapshot repaints everything) and not in headless Chromium.
+function findPaint(all, cur) {
+  if (!window.Highlight || !CSS.highlights) return;
+  if (!Find.hl) {Find.hl = {all: new Highlight(), cur: new Highlight()}; CSS.highlights.set('find', Find.hl.all); CSS.highlights.set('findcur', Find.hl.cur);}
+  Find.hl.all.clear(); Find.hl.cur.clear();
+  all.forEach(r => Find.hl.all.add(r)); if (cur) Find.hl.cur.add(cur);
+  // and the page is made to repaint whole: an opacity just under 1 moves it to its own layer for one frame
+  const m = $('#main'); m.style.opacity = '0.999'; requestAnimationFrame(() => {m.style.opacity = '';});
+}
 function findRun(keep) {
   const q = $('#findtext').value.toLowerCase(), was = keep ? Find.at : -1;
   Find.ranges = []; Find.at = -1;
@@ -1858,10 +1870,7 @@ function findRun(keep) {
 }
 function findShow(scroll) {
   const cur = Find.ranges[Find.at];
-  if (window.Highlight && CSS.highlights) {
-    CSS.highlights.set('find', new Highlight(...Find.ranges.filter(r => r !== cur)));
-    cur ? CSS.highlights.set('findcur', new Highlight(cur)) : CSS.highlights.delete('findcur');
-  }
+  findPaint(Find.ranges.filter(r => r !== cur), cur);
   $('#findcount').textContent = $('#findtext').value ? (Find.ranges.length ? `${Find.at + 1} of ${Find.ranges.length}` : 'none') : '';
   if (cur && scroll) cur.startContainer.parentElement.scrollIntoView({block: 'center'});
 }
@@ -1875,7 +1884,7 @@ function findOpen() {
 function findClose() {
   const cur = Find.ranges[Find.at]?.startContainer.parentElement;
   $('#findbar').classList.remove('open'); Find.seen?.disconnect(); clearTimeout(Find.timer); Find.ranges = []; Find.at = -1;
-  if (window.Highlight && CSS.highlights) {CSS.highlights.delete('find'); CSS.highlights.delete('findcur');}
+  findPaint([], null);
   $('#findtext').blur(); cur?.closest('[tabindex]')?.focus();      // carry on from the line that was found
 }
 $('#findtext').addEventListener('input', () => findRun());
