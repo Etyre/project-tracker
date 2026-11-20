@@ -13,26 +13,34 @@ from . import config
 
 log = logging.getLogger("calendar")
 _cache: dict[str, tuple[float, bytes]] = {}
+# A fetch that failed is not retried for a few minutes. Without this every feed poll retried at once, and Google
+# answered the bursts with HTTP 429 for hours (398 of them in the log by 2026-11-20). Same rule as sheets._get.
+_failed_at: dict[str, float] = {}
+RETRY_AFTER = 300
 
 
-def _fetch(url: str, max_age: float = 600) -> bytes | None:
+def _fetch(url: str, max_age: float = 600, force: bool = False) -> bytes | None:
     hit = _cache.get(url)
     if hit and time.time() - hit[0] < max_age:
         return hit[1]
+    if not force and time.time() - _failed_at.get(url, 0) < RETRY_AFTER:
+        return hit[1] if hit else None
     try:
         with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "task-tracker"}), timeout=30) as r:
             data = r.read()
         _cache[url] = (time.time(), data)
+        _failed_at.pop(url, None)
         return data
     except Exception as e:
         log.warning("calendar fetch failed (%s): %s", url[:60], e)
+        _failed_at[url] = time.time()
         return hit[1] if hit else None
 
 
 def prefetch() -> None:
     """Fetch every feed afresh now (see sheets.prefetch)."""
     for url in config.load()["calendar"].get("ics_urls", []):
-        _fetch(url, 0)
+        _fetch(url, 0, force=True)
 
 
 def events_for(day: dt.date) -> list[dict]:
@@ -96,6 +104,7 @@ def check_feeds(day: dt.date | None = None) -> list[dict]:
         try:
             n = len(recurring_ical_events.of(icalendar.Calendar.from_ical(data)).at(day))
             _cache[url] = (time.time(), data)
+            _failed_at.pop(url, None)
             out.append({"url": label, "ok": True, "events_today": n})
         except Exception as e:
             out.append({"url": label, "ok": False, "error": f"could not parse: {e}"})

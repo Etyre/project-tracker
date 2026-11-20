@@ -91,6 +91,7 @@ on the lines: you navigate with the arrow keys and type.
   every match; Enter / Shift+Enter (or Cmd+G / Cmd+Shift+G) step through them, Esc closes it and puts the focus on
   the line of the current match. It only sees what is on the page: tasks inside a folded project or task, and
   other pages, are not found. The bar is the page's own (`find*` in `dashboard.html`), because a WKWebView has none.
+- Escape closes any dialog, the same as a click outside it (what was typed stays as a draft; Cancel discards it).
 - Cmd+Z undoes the last change on the page, as many steps back as you like. The feed has its own history:
   there Cmd+Z reverses the last completion, skip, "done for now" or checklist tick.
 - Paste a bulleted or indented list into any line and it lands in the outline with its nesting: the first
@@ -580,6 +581,14 @@ as above; `python -m tracker web --reload` in a browser is the quick way to see 
 
 ## Gotchas learned
 
+- A failed calendar fetch must be remembered (`calendar_feed._failed_at`, five minutes), as the sheets already did.
+  Without it every feed poll retried at once and Google answered with HTTP 429 for hours.
+- A double-click on a task arrives on the title field, because the first click of the pair has already opened the
+  line for editing. `editTaskTitle` treats a double-click within 600 ms of the edit starting, with nothing typed,
+  as "open the notes"; later double-clicks select a word as usual.
+- A click inside a title field also reaches the `onclick` of the span around it. Those handlers must ignore clicks
+  whose target is a field, or the edit would be saved and restarted on every click (it was only spared by
+  `caretFromClick` throwing).
 - The find bar's two CSS highlights are created once and emptied and refilled (`findPaint`). Registering a new
   `Highlight` under the same name for each search left the previous search's marks painted in the WKWebView
   (seen 2026-11-19), so `findPaint` also forces the page to repaint. The stale marks cannot be reproduced outside

@@ -662,7 +662,7 @@ function projectDetailsHTML(p) {
     p.archived_at ? `archived ${fmtDay(p.archived_at)}` : '', p.linear_key ? `Linear ${esc(p.linear_key)}` : ''].filter(Boolean).join(' · ');
   return `<div class="pdetails">
     <div class="row" style="justify-content:space-between;align-items:flex-start">
-      <h2 class="${mdLine(p.name).level ? 'md-h' + mdLine(p.name).level : ''}" onclick="if (!selecting()) editProjectName(${p.id}, null, caretFromClick(event, this))" title="Click to edit the name">${mdLine(p.name).html}</h2>
+      <h2 class="${mdLine(p.name).level ? 'md-h' + mdLine(p.name).level : ''}" onclick="if (!selecting() && !event.target.closest('input, textarea')) editProjectName(${p.id}, null, caretFromClick(event, this))" title="Click to edit the name">${mdLine(p.name).html}</h2>
       <span class="tools" style="display:flex;gap:4px">${p.archived_at ? `<button class="btn small ghost" onclick="restoreProject(${p.id})">restore</button>` : `
         ${p.parent_id ? `<button class="btn small ghost" onclick="projectToTask(${p.id})" title="Turn this project into a task of its parent project">make task</button>` : ''}
         ${countDone(p.tasks) ? `<button class="btn small ghost" onclick="archiveDone(${p.id})">archive ${countDone(p.tasks)} done</button>` : ''}
@@ -750,7 +750,7 @@ function taskHTML(t) {
     <span class="caret" ${kids ? `onclick="event.stopPropagation(); toggleTaskFold(${t.id})" title="${folded ? 'Show' : 'Hide'} ${kids} sub-task${kids === 1 ? '' : 's'}"` : ''}>${kids ? (folded ? '▸' : '▾') : ''}</span>
     ${view === 'someday' ? '<span class="bullet">•</span>' : put ? '<span class="bullet">•</span>' : `<input type="checkbox" ${done ? 'checked' : ''} title="${done ? 'Restore' : 'Complete'}" onchange="${done ? `uncomplete(${t.id})` : `completeTask(${t.id}, this)`}">`}
     <div class="body" onmousedown="if (event.shiftKey) event.preventDefault()" onclick="if (event.shiftKey) {event.stopPropagation(); extendSelTo(this.closest('.task'));} else if (!event.target.closest('a') && !selecting()) {clearSel(); ${done ? "this.closest('.task').focus()" : `editTaskTitle(${t.id}, null, 1e9)`};}" ondblclick="if (!event.target.closest('a, input, textarea, .notes')) {event.preventDefault(); toggleTask(${t.id});}">
-<span class="title ${t.linear_id ? 'lin' : ''} ${mdLine(t.title).level ? 'md-h' + mdLine(t.title).level : ''}" onclick="event.stopPropagation(); if (!selecting()) editTaskTitle(${t.id}, null, caretFromClick(event, this))" title="Click to edit, double-click for notes" ondblclick="event.stopPropagation()">${mdLine(t.title).html}</span>
+<span class="title ${t.linear_id ? 'lin' : ''} ${mdLine(t.title).level ? 'md-h' + mdLine(t.title).level : ''}" onclick="event.stopPropagation(); if (!selecting() && !event.target.closest('input, textarea')) editTaskTitle(${t.id}, null, caretFromClick(event, this))" title="Click to edit, double-click for notes" ondblclick="event.stopPropagation()">${mdLine(t.title).html}</span>
       <span class="chips" style="margin-left:6px">${put ? `<span class="chip">archived ${fmtDay(t.archived_at)}</span>` : done ? `<span class="chip">completed ${fmtDay(t.completed_at)}</span>` : view === 'someday' ? '' : chips(t, open)}</span>
       ${open ? taskNotesHTML(t) : ''}
     </div>
@@ -1211,7 +1211,8 @@ function caretFromClick(e, el) {
   if (document.caretPositionFromPoint) {const p = document.caretPositionFromPoint(e.clientX, e.clientY); if (p) {node = p.offsetNode; off = p.offset;}}
   else if (document.caretRangeFromPoint) {const r = document.caretRangeFromPoint(e.clientX, e.clientY); if (r) {node = r.startContainer; off = r.startOffset;}}
   if (!node || !el.contains(node)) return null;
-  const range = document.createRange(); range.setStart(el, 0); range.setEnd(node, off); return range.toString().length;
+  // a click inside a field reports the field itself with an offset into its text, which is no DOM position
+  try {const range = document.createRange(); range.setStart(el, 0); range.setEnd(node, off); return range.toString().length;} catch {return null;}
 }
 function editRow(el, append, caret) {if (!el) return; isHead(el) ? editProjectName(rowPid(el), append, caret) : editTaskTitle(+el.dataset.tid, append, caret);}
 // selecting a task line (a click, Up / Down) opens it for editing with the caret at the end; project lines and completed
@@ -1569,6 +1570,11 @@ document.addEventListener('contextmenu', e => {
 });
 document.addEventListener('mousedown', e => {if (!e.target.closest('.ctx')) closeCtx();}, true);
 document.addEventListener('keydown', e => {if (e.key === 'Escape' && document.querySelector('.ctx')) {e.preventDefault(); closeCtx();}}, true);
+// Escape closes a dialog the way a click outside it does (what was typed in it is kept as a draft). No dialog had this.
+document.addEventListener('keydown', e => {
+  const m = [...document.querySelectorAll('.modal')].pop();
+  if (e.key === 'Escape' && m) {e.preventDefault(); e.stopPropagation(); m.dispatchEvent(new MouseEvent('click'));}
+}, true);
 window.addEventListener('scroll', closeCtx, true); window.addEventListener('blur', closeCtx);
 const countDesc = t => t ? t.children.reduce((n, c) => n + 1 + countDesc(c), 0) : 0;
 async function deleteTree(L) {   // a task with everything under it (undo recreates the subtree), or an empty project
@@ -1635,6 +1641,14 @@ function editTaskTitle(tid, append, caret, text) {
     return false;
   };
   titleEdit = {tid, row, span, orig, inp, save};
+  // Double-click opens the notes box. The first click of the pair has already started this edit, so the double-click
+  // arrives on the field: when it comes right after the edit began and nothing was typed, it is that gesture and not
+  // a word selection. (Until 2026-11-20 a double-click on an open task therefore never opened its notes.)
+  const began = Date.now(), first = inp.value;
+  inp.ondblclick = async e => {
+    if (text != null || append != null || Date.now() - began > 600 || inp.value !== first) return;
+    e.preventDefault(); e.stopPropagation(); await save(); toggleTask(tid);
+  };
   inp.onkeydown = async e => {
     if (e.key === 'Escape') {e.preventDefault(); inp.value = orig; Draft.clear(`title:${tid}`); end(); row.focus();}
     else if (e.key === 'Backspace' && !inp.value) {e.preventDefault();}   // an emptied line stays until you click elsewhere
