@@ -130,6 +130,10 @@ def pull() -> dict:
             linear_team_id=(iss.get("team") or {}).get("id"),
             linear_updated_at=iss["updatedAt"],
         )
+        # Linear has four levels and the tracker five, so P4 and P5 both go out as Linear's "low". Coming back, "low"
+        # must not turn a local P5 into P4: when the local priority already maps to the issue's, it is left alone.
+        if local and IMPORTANCE_TO_PRIORITY.get(local["importance"], 0) == (iss.get("priority") or 0):
+            fields.pop("importance"); fields.pop("importance_by")
         if iss.get("estimate") and not (local and local.get("estimate_minutes")):
             fields["estimate_minutes"] = int(iss["estimate"]) * 60   # points ~ hours, a crude but useful prior
         if local is None:

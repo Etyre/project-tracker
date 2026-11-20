@@ -1240,3 +1240,41 @@ def test_a_failed_calendar_fetch_is_not_retried_at_once(monkeypatch):
     assert calendar_feed._fetch("http://u", 0, force=True) == b"old" and len(calls) == 2                               # the nightly prefetch still tries
     calendar_feed._failed_at["http://u"] -= calendar_feed.RETRY_AFTER + 1
     calendar_feed._fetch("http://u"); assert len(calls) == 3                                                           # and so does the next poll after the wait
+
+
+def test_undo_paths_put_things_back_as_they_were():
+    from fastapi.testclient import TestClient
+    from tracker import web
+    cl = TestClient(web.create_app())
+    root = db.create_project("Undo root"); pid = db.create_project("Undo paths", root)
+    a = db.create_task(pid, "A"); b = db.create_task(pid, "B"); c = db.create_task(pid, "C", parent_id=b)
+    order = lambda: [t["id"] for t in db.rows("SELECT id FROM tasks WHERE project_id=? AND parent_id IS NULL ORDER BY position, id", (pid,))]
+    # unticking leaves the line where it was, also under a ticked parent
+    db.complete_task(a); db.uncomplete_task(a)
+    assert order() == [a, b]
+    db.complete_task(c); db.complete_task(b); db.uncomplete_task(c)
+    assert db.task(c)["parent_id"] == b
+    db.uncomplete_task(b)
+    # task -> project -> undo: fields, tracked time and the agent's note come back
+    t = db.create_task(pid, "Report", importance=5, deadline="2026-12-01", blocking=1, blocking_for="Sam", estimate_minutes=90)
+    db.add_note("task", t, "context from the agent", "Ada")
+    db.execute("INSERT INTO time_entries(task_id, label, started_at, stopped_at) VALUES(?,?,?,?)", (t, "Report", 1000.0, 4600.0))
+    r = cl.post(f"/api/tasks/{t}/to_project").json()
+    assert db.rows("SELECT 1 FROM notes WHERE target_kind='project' AND target_id=?", (r["project_id"],))      # the note went with it
+    t2 = cl.post(f"/api/projects/{r['project_id']}/to_task", json={"was": r["was"]}).json()["task_id"]
+    back = db.task(t2)
+    assert (back["importance"], back["deadline"], back["blocking"], back["blocking_for"], back["estimate_minutes"]) == (5, "2026-12-01", 1, "Sam", 90)
+    assert db.rows("SELECT 1 FROM time_entries WHERE task_id=?", (t2,)) and db.rows("SELECT 1 FROM notes WHERE target_kind='task' AND target_id=?", (t2,))
+    # delete with sub-items -> undo: archived state and notes come back
+    par = db.create_task(pid, "Parent"); kid = db.create_task(pid, "Kid", parent_id=par)
+    db.add_note("task", par, "keep me", "Ada"); db.execute("UPDATE tasks SET archived_at=? WHERE id=?", (5.0, kid))
+    out = cl.delete(f"/api/tasks/{par}?subtree=1").json()["outline"]
+    ids = cl.post("/api/tasks/bulk", json={"project_id": pid, "items": out}).json()["ids"]
+    assert db.task(ids[1])["archived_at"] == 5.0 and db.rows("SELECT 1 FROM notes WHERE target_kind='task' AND target_id=? AND body='keep me' AND author='Ada'", (ids[0],))
+    # a project that is gone: 404, not a crash; a project cannot go under its own child
+    assert cl.post("/api/tasks", json={"project_id": 987654, "title": "x"}).status_code == 404
+    assert cl.patch(f"/api/projects/{root}", json={"parent_id": pid}).status_code == 400
+    # "not judged" from the bulk dialog clears the kind so it is judged again
+    db.update_task(a, work_kind="focus")
+    cl.post("/api/tasks/apply", json={"ids": [a], "fields": {"work_kind": ""}})
+    assert db.task(a)["work_kind"] is None

@@ -293,6 +293,7 @@ def delete_empty_project(pid: int) -> None:
         raise ValueError("it has tasks; archive it instead")
     if row("SELECT 1 FROM projects WHERE parent_id=? LIMIT 1", (pid,)):
         raise ValueError("it has sub-projects; archive it instead")
+    execute("DELETE FROM notes WHERE target_kind='project' AND target_id=?", (pid,))      # ids are reused: a left-over note would show on the next project made
     execute("DELETE FROM projects WHERE id=?", (pid,))
 
 
@@ -748,18 +749,18 @@ def uncomplete_task(tid: int) -> None:
     t = task(tid)
     if not t:
         return
-    parent = task(t["parent_id"]) if t["parent_id"] else None
-    parent_id = t["parent_id"] if parent and parent["completed_at"] is None else None
-    pos = _next_position("tasks", *_sibling_where(t["project_id"], parent_id))
-    update_task(tid, completed_at=None, archived_at=None, position=pos, parent_id=parent_id)
+    # It stays where it is: ticking a line never moved it, so unticking must not either. (Until 2026-11-20 this
+    # sent the task to the end of its siblings, and out of its parent when the parent was ticked.)
+    update_task(tid, completed_at=None, archived_at=None)
 
 
-SUBTREE_FIELDS = ("description", "deadline", "soft_deadline", "blocking", "blocking_for", "importance", "importance_by", "estimate_minutes", "chunkable", "work_kind", "reading", "writing", "completed_at")
+SUBTREE_FIELDS = ("description", "deadline", "soft_deadline", "blocking", "blocking_for", "importance", "importance_by", "estimate_minutes", "chunkable", "work_kind", "reading", "writing", "toggl_title", "completed_at", "archived_at")
 
 
 def delete_task_tree(tid: int) -> list[dict]:
     """Delete a task with everything under it (right-click -> Delete). Returns the subtree as an outline of
-    {title, depth, fields} in document order, so an undo can recreate it with create_tasks_outline. Refused when
+    {title, depth, fields, notes} in document order, so an undo can recreate it with create_tasks_outline (and
+    restore_notes for the agent's notes). Refused when
     anything in it is mirrored from Linear or has tracked time."""
     t = task(tid)
     if not t:
@@ -772,7 +773,8 @@ def delete_task_tree(tid: int) -> list[dict]:
             raise ValueError(f'"{x["title"]}" is mirrored from Linear; complete it instead')
         if row("SELECT id FROM time_entries WHERE task_id=? LIMIT 1", (x["id"],)):
             raise ValueError(f'"{x["title"]}" has tracked time; complete it instead')
-        out.append({"title": x["title"], "depth": depth, "fields": {k: x[k] for k in SUBTREE_FIELDS}})
+        out.append({"title": x["title"], "depth": depth, "fields": {k: x[k] for k in SUBTREE_FIELDS},
+                    "notes": rows("SELECT author, source, body, created_at FROM notes WHERE target_kind='task' AND target_id=? ORDER BY id", (x["id"],))})
         ids.append(x["id"])
         for c in subtasks(x["id"], open_only=False):
             walk(c, depth + 1)
@@ -784,6 +786,14 @@ def delete_task_tree(tid: int) -> list[dict]:
         execute(f"DELETE FROM notes WHERE target_kind='task' AND target_id IN ({marks})", ids)
         execute(f"DELETE FROM tasks WHERE id IN ({marks})", ids)
     return out
+
+
+def restore_notes(target_kind: str, target_id: int, notes: list[dict]) -> None:
+    """Put back notes that were deleted with their task (undo), as they were: author, source and time."""
+    for n in notes or []:
+        if str(n.get("body") or "").strip():
+            execute("INSERT INTO notes(target_kind,target_id,author,source,body,created_at) VALUES(?,?,?,?,?,?)",
+                    (target_kind, target_id, str(n.get("author") or "agent"), str(n.get("source") or "agent"), str(n["body"]), float(n.get("created_at") or time.time())))
 
 
 def subtasks(tid: int, open_only: bool = True) -> list[dict]:
@@ -860,9 +870,14 @@ def delete_task(tid: int) -> None:
         execute("DELETE FROM tasks WHERE id=?", (tid,))
 
 
-def task_to_project(tid: int) -> int:
+# what a task loses when it becomes a project (a project has no such fields); kept so the undo can give it back
+TO_PROJECT_KEEPS = ("deadline", "soft_deadline", "blocking", "blocking_for", "importance", "importance_by", "estimate_minutes", "chunkable", "work_kind", "reading", "writing", "toggl_title", "completed_at", "archived_at")
+
+
+def task_to_project(tid: int, was: dict | None = None) -> int:
     """Turn a task into a sub-project of its project. Direct sub-tasks become the new project's tasks
-    (their own sub-tasks follow them). Time entries and plan items keep their label but lose the task link."""
+    (their own sub-tasks follow them). Time entries and plan items keep their label but lose the task link;
+    the agent's notes move to the project. `was` (a dict) is filled with what an undo needs to give back."""
     t = task(tid)
     if not t:
         raise ValueError("task not found")
@@ -875,15 +890,21 @@ def task_to_project(tid: int) -> int:
             execute("UPDATE tasks SET project_id=?, parent_id=NULL, position=?, updated_at=? WHERE id=?",
                     (pid, i, time.time(), c["id"]))
             _move_subtree_project(c["id"], pid)
+        if was is not None:
+            was.update(fields={k: t[k] for k in TO_PROJECT_KEEPS},
+                       time_entries=[r["id"] for r in rows("SELECT id FROM time_entries WHERE task_id=?", (tid,))],
+                       plan_items=[r["id"] for r in rows("SELECT id FROM plan_items WHERE task_id=?", (tid,))])
         execute("UPDATE time_entries SET task_id=NULL WHERE task_id=?", (tid,))
         execute("UPDATE plan_items SET task_id=NULL WHERE task_id=?", (tid,))
+        execute("UPDATE notes SET target_kind='project', target_id=? WHERE target_kind='task' AND target_id=?", (pid, tid))
         execute("DELETE FROM tasks WHERE id=?", (tid,))
     return pid
 
 
-def project_to_task(pid: int) -> int:
+def project_to_task(pid: int, was: dict | None = None) -> int:
     """Turn a project into a task of its parent project; its tasks become sub-tasks. Needs a parent project
-    and no live sub-projects (archived ones move up to the parent)."""
+    and no live sub-projects (archived ones move up to the parent). The agent's notes move to the task. `was` is
+    what task_to_project recorded when this undoes it: the task's fields, tracked time and plan blocks come back."""
     p = row("SELECT * FROM projects WHERE id=?", (pid,))
     if not p:
         raise ValueError("project not found")
@@ -900,7 +921,16 @@ def project_to_task(pid: int) -> int:
         # sub-tasks of those tasks kept their parent_id; only their project changes
         execute("UPDATE tasks SET project_id=? WHERE project_id=?", (p["parent_id"], pid))
         execute("UPDATE projects SET parent_id=? WHERE parent_id=?", (p["parent_id"], pid))
+        execute("UPDATE notes SET target_kind='task', target_id=? WHERE target_kind='project' AND target_id=?", (tid, pid))
         execute("DELETE FROM projects WHERE id=?", (pid,))
+        if was:
+            keep = {k: v for k, v in (was.get("fields") or {}).items() if k in TO_PROJECT_KEEPS}
+            if keep:
+                execute(f"UPDATE tasks SET {', '.join(k + '=?' for k in keep)} WHERE id=?", (*keep.values(), tid))
+            for table, key in (("time_entries", "time_entries"), ("plan_items", "plan_items")):
+                ids = [int(i) for i in was.get(key) or []]
+                if ids:      # only those still unlinked: nothing that was since given to another task
+                    execute(f"UPDATE {table} SET task_id=? WHERE task_id IS NULL AND id IN ({','.join('?' * len(ids))})", (tid, *ids))
     return tid
 
 

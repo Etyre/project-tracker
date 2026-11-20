@@ -99,6 +99,7 @@ class OutlineItem(BaseModel):
     title: str
     depth: int = 0
     fields: dict[str, Any] | None = None   # notes, dates etc. when a deleted subtree is recreated
+    notes: list[dict[str, Any]] | None = None      # the agent's notes it had, likewise
 
 
 class OutlineIn(BaseModel):
@@ -588,10 +589,17 @@ def create_app() -> FastAPI:
     def tree(active: bool = True, completed: bool = False, archived: bool = False, someday: bool = False):
         return db.project_tree(include_archived=archived, active=active, completed=completed, someday=someday)
 
+    def _need_project(pid: int | None) -> None:
+        """404 for a project that is gone (the page can still show one that was just turned into a task or deleted).
+        Without this the foreign key failed deeper down as an HTTP 500, after positions had already been shifted."""
+        if pid is not None and not db.row("SELECT id FROM projects WHERE id=?", (pid,)):
+            raise HTTPException(404, "that project no longer exists")
+
     @app.post("/api/projects")
     def create_project(p: ProjectIn):
         if not p.name.strip():
             raise HTTPException(400, "name required")
+        _need_project(p.parent_id)
         return {"id": db.create_project(p.name, p.parent_id, p.notes)}
 
     @app.get("/api/someday_root")
@@ -608,6 +616,10 @@ def create_app() -> FastAPI:
             fields["toggl_project"] = fields["toggl_project"].strip() or None
         if "subtitle" in fields:
             fields["subtitle"] = " ".join(fields["subtitle"].split())      # one line
+        if "parent_id" in fields:
+            _need_project(fields["parent_id"])
+            if fields["parent_id"] == pid or fields["parent_id"] in db.project_descendants(pid):
+                raise HTTPException(400, "cannot move a project under itself")      # both would vanish from the tree
         db.update_project(pid, **fields)
         return {"ok": True}
 
@@ -707,6 +719,7 @@ def create_app() -> FastAPI:
     def create_task(t: TaskIn):
         if not t.title.strip():
             raise HTTPException(400, "title required")
+        _need_project(t.project_id)
         d = t.model_dump()
         d["blocking"] = int(d["blocking"])
         d["chunkable"] = int(d["chunkable"])
@@ -767,6 +780,7 @@ def create_app() -> FastAPI:
         moving = ("parent_id" in p.model_fields_set or "after_id" in p.model_fields_set
                   or (d["project_id"] is not None and d["project_id"] != cur["project_id"]))
         if moving:
+            _need_project(d["project_id"])
             parent_id = d["parent_id"] if "parent_id" in p.model_fields_set else (
                 cur["parent_id"] if d["project_id"] in (None, cur["project_id"]) else None)
             try:
@@ -929,6 +943,8 @@ def create_app() -> FastAPI:
                 fields[k] = v
         if not fields:
             raise HTTPException(400, "No tags recognised" if a.text else "Nothing to change")
+        if "work_kind" in fields:
+            fields["work_kind"] = _work_kind(fields["work_kind"])      # "" means not judged: NULL, so Claude judges it again
         if fields.get("importance") is not None:
             fields["importance"] = max(1, min(5, int(fields["importance"])))
         for b in ("blocking", "chunkable"):
@@ -977,15 +993,18 @@ def create_app() -> FastAPI:
                 continue
             title, fields = (i.title, {}) if _someday(o.project_id) else tags.parse_tags(i.title)
             fields.update({k: v for k, v in (i.fields or {}).items() if k in db.SUBTREE_FIELDS})
-            items.append({"depth": i.depth, "title": title, "fields": fields})
+            items.append({"depth": i.depth, "title": title, "fields": fields, "notes": i.notes})
         if not items:
             raise HTTPException(400, "nothing to add")
         if o.parent_id and not db.task(o.parent_id):
             raise HTTPException(404, "parent task not found")
+        _need_project(o.project_id)
         try:
             ids = db.create_tasks_outline(o.project_id, o.parent_id, o.after_id, items)
         except ValueError as e:
             raise HTTPException(400, str(e))
+        for tid, it in zip(ids, items):
+            db.restore_notes("task", tid, it["notes"] or [])
         for tid in ids:
             _forecast_estimate_later(tid)
         return {"ids": ids}
@@ -1010,14 +1029,16 @@ def create_app() -> FastAPI:
     @app.post("/api/tasks/{tid}/to_project")
     def task_to_project(tid: int):
         try:
-            return {"project_id": db.task_to_project(tid)}
+            was: dict[str, Any] = {}
+            return {"project_id": db.task_to_project(tid, was), "was": was}
         except ValueError as e:
             raise HTTPException(400, str(e))
 
     @app.post("/api/projects/{pid}/to_task")
-    def project_to_task(pid: int):
+    def project_to_task(pid: int, body: dict[str, Any] | None = None):
+        """Body {was} (optional): what to_project returned, when this undoes it."""
         try:
-            return {"task_id": db.project_to_task(pid)}
+            return {"task_id": db.project_to_task(pid, (body or {}).get("was"))}
         except ValueError as e:
             raise HTTPException(400, str(e))
 

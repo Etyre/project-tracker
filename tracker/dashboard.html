@@ -962,7 +962,7 @@ async function archiveProject(id) {const p = findProject(id); const n = p ? coun
 async function taskToProject(id) {
   const row = document.querySelector(`.task[data-tid="${id}"]`); const slot = row ? slotOf(row) : null;   // so undo puts it back where it was
   try {const r = await api(`/tasks/${id}/to_project`, 'POST');
-    pushUndo('make project', async () => {const b = await api(`/projects/${r.project_id}/to_task`, 'POST'); if (slot) await api(`/tasks/${b.task_id}`, 'PATCH', slot);});
+    pushUndo('make project', async () => {const b = await api(`/projects/${r.project_id}/to_task`, 'POST', {was: r.was}); if (slot) await api(`/tasks/${b.task_id}`, 'PATCH', slot);});
     toast('Now a project'); renderProjects();} catch (e) {toast(esc(e.message));}
 }
 // Someday / maybe: a flat list of items outside the schedule, held by a hidden root project
