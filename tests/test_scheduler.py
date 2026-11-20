@@ -699,7 +699,7 @@ def test_nightly_prefetch_reads_every_source_afresh(monkeypatch):
     from tracker import sheets, calendar_feed
     got = []
     monkeypatch.setattr(sheets, "_get", lambda url, max_age: got.append(("sheet", max_age)) or "")
-    monkeypatch.setattr(calendar_feed, "_fetch", lambda url, max_age=600: got.append(("cal", max_age)) or b"")
+    monkeypatch.setattr(calendar_feed, "_fetch", lambda url, max_age=600, force=False: got.append(("cal", max_age)) or b"")
     monkeypatch.setitem(config.load()["sheets"], "exercise_script_url", "https://example.invalid/exec")
     monkeypatch.setitem(config.load()["sheets"], "daily_checklist_csv", "https://example.invalid/csv")
     monkeypatch.setitem(config.load()["calendar"], "ics_urls", ["https://example.invalid/a.ics"])
@@ -1225,3 +1225,18 @@ def test_moving_a_line_in_the_priority_list_sets_its_priority():
     assert r["tasks"][0]["path"] and cl.post("/api/priority/move", json={"id": 999999, "before_id": None}).status_code == 400
     done = db.create_task(pid, "Done one", importance=5); db.complete_task(done)
     assert done not in [t["id"] for t in cl.get("/api/priority").json()]
+
+
+def test_a_failed_calendar_fetch_is_not_retried_at_once(monkeypatch):
+    from tracker import calendar_feed
+    import urllib.request
+    calls = []
+    def boom(*a, **k):
+        calls.append(1); raise OSError("HTTP Error 429: Too Many Requests")
+    monkeypatch.setattr(urllib.request, "urlopen", boom)
+    monkeypatch.setattr(calendar_feed, "_cache", {"http://u": (0.0, b"old")})
+    monkeypatch.setattr(calendar_feed, "_failed_at", {})
+    assert calendar_feed._fetch("http://u") == b"old" and calendar_feed._fetch("http://u") == b"old" and len(calls) == 1      # the stale copy, one attempt
+    assert calendar_feed._fetch("http://u", 0, force=True) == b"old" and len(calls) == 2                               # the nightly prefetch still tries
+    calendar_feed._failed_at["http://u"] -= calendar_feed.RETRY_AFTER + 1
+    calendar_feed._fetch("http://u"); assert len(calls) == 3                                                           # and so does the next poll after the wait
