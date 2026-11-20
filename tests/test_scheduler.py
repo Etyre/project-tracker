@@ -1278,3 +1278,61 @@ def test_undo_paths_put_things_back_as_they_were():
     db.update_task(a, work_kind="focus")
     cl.post("/api/tasks/apply", json={"ids": [a], "fields": {"work_kind": ""}})
     assert db.task(a)["work_kind"] is None
+
+
+def test_calendar_days_are_local_days(monkeypatch):
+    from tracker import calendar_feed
+    day = dt.date(2026, 11, 19)
+    local = lambda d, h, m=0: dt.datetime.combine(d, dt.time(h, m)).astimezone()
+    utc = lambda t: t.astimezone(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    ev = lambda uid, title, s, e: f"BEGIN:VEVENT\r\nUID:{uid}\r\nSUMMARY:{title}\r\nDTSTART:{s}\r\nDTEND:{e}\r\nEND:VEVENT\r\n"
+    ics = ("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//t//t//EN\r\n"
+           + ev("a", "Late call", utc(local(day, 22)), utc(local(day, 23)))                  # in UTC this is another date wherever the Mac is not on UTC
+           + ev("b", "Early call", utc(local(day, 0, 30)), utc(local(day, 1)))
+           + ev("c", "Tomorrow", utc(local(day + dt.timedelta(days=1), 10)), utc(local(day + dt.timedelta(days=1), 11)))
+           + "BEGIN:VEVENT\r\nUID:d\r\nSUMMARY:Holiday\r\nDTSTART;VALUE=DATE:20261119\r\nDTEND;VALUE=DATE:20261120\r\nEND:VEVENT\r\n"
+           + "END:VCALENDAR\r\n").encode()
+    monkeypatch.setitem(config.load()["calendar"], "ics_urls", ["http://cal"])
+    monkeypatch.setitem(config.load()["calendar"], "ignore_titles", [])
+    monkeypatch.setattr(calendar_feed, "_cache", {"http://cal": (__import__("time").time(), ics)})
+    events_for = getattr(calendar_feed, "events_for_real", calendar_feed.events_for)      # test_agent_api stubs it out for the whole run
+    got = events_for(day)
+    assert [(e["title"], e["all_day"]) for e in got] == [("Early call", False), ("Late call", False), ("Holiday", True)]      # each once, none from tomorrow
+    assert got[1]["start"] == local(day, 22) and got[1]["start"].date() == day
+    nxt = events_for(day + dt.timedelta(days=1))
+    assert [e["title"] for e in nxt] == ["Tomorrow"]                                           # the late call does not spill into the next day
+
+
+def test_events_outside_the_work_day_and_across_midnight():
+    day = dt.date(2026, 11, 19)
+    at = lambda d, h, m=0: dt.datetime.combine(d, dt.time(h, m)).astimezone()
+    e = lambda title, s, en: {"title": title, "all_day": False, "start": s, "end": en}
+    # an evening event must not stretch the free time past the end of the work day
+    assert scheduler.free_windows(day, [e("Dinner", at(day, 19), at(day, 20))], 9 * 60, 18 * 60) == [(540, 1080)]
+    assert scheduler.event_span(e("Overnight", at(day, 16), at(day + dt.timedelta(days=1), 10)), day) == (960, 1440)
+    assert scheduler.event_span(e("From yesterday", at(day - dt.timedelta(days=1), 20), at(day, 10)), day) == (0, 600)
+
+
+def test_settings_with_an_emoji_can_be_read_back(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "config.toml")
+    config.load.cache_clear()
+    try:
+        cfg = config.save({"calendar": {"ignore_titles": ["🧠 deep work", "lunch"]}})
+        assert cfg["calendar"]["ignore_titles"] == ["🧠 deep work", "lunch"]
+    finally:
+        monkeypatch.undo(); config.load.cache_clear()
+
+
+def test_exercise_rule_with_ideal_below_its_gap_does_not_divide_by_zero():
+    from tracker import exercise
+    r = exercise.parse_rules("squats: at most every 4 days, ideally every 3 days")["required"][0]
+    assert r["ideal"] == (4, 4)
+
+
+def test_a_checklist_copy_from_another_day_does_not_tick_today(monkeypatch):
+    from tracker import sheets
+    payload = lambda day: {"ok": True, "today": day, "checklist": {"headers": ["Item"], "rows": [{"Item": "Anki review", "item": "Anki review", "done_today": True}]}}
+    monkeypatch.setattr(sheets, "_script_get", lambda: payload("2000-01-01"))
+    assert sheets.daily_checklist()["items"][0]["done_today"] is False
+    monkeypatch.setattr(sheets, "_script_get", lambda: payload(db.today()))
+    assert sheets.daily_checklist()["items"][0]["done_today"] is True

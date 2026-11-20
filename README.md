@@ -581,6 +581,22 @@ as above; `python -m tracker web --reload` in a browser is the quick way to see 
 
 ## Gotchas learned
 
+- **Calendar days are local days.** `recurring_ical_events.at(day)` matches in each event's own time zone, and Google
+  exports one-off events in UTC, so an evening event was missing on its day and then counted as "in a meeting until
+  24:00" the next day. `events_for` also asks for the local day as a span of instants and keeps only events that
+  overlap it; each time is converted with its own UTC offset, so days across a clock change are right too.
+- An event outside the work day must be skipped in `free_windows`, not clamped: clamped, a 19:00 dinner stretched
+  the last free window to 19:00.
+- The exercise decision for a date other than today is kept in its own setting (`exercise_decision:<date>`). In the
+  single slot, the agent asking about tomorrow replaced today's decision and today was then decided again.
+- `config.save` checks that the file it is about to write can be read back, and writes non-ASCII text as is: an
+  emoji written as a JSON surrogate pair made a `config.toml` that stopped the app from starting.
+- `config.secret` remembers only secrets it found. A Keychain that did not answer just after launch used to be
+  remembered as "no secret" until a restart: Toggl off, and the agent API accepting callers without a token.
+- A checklist copy fetched on another day (the 23:50 prefetch, used after midnight) carries that day's ticks; they
+  are ignored when its `today` is not today.
+- Row ids are reused by SQLite (no AUTOINCREMENT), so anything keyed by a task or project id (agent notes, drafts)
+  must be moved or deleted with the row.
 - A failed calendar fetch must be remembered (`calendar_feed._failed_at`, five minutes), as the sheets already did.
   Without it every feed poll retried at once and Google answered with HTTP 429 for hours.
 - A double-click on a task arrives on the title field, because the first click of the pair has already opened the

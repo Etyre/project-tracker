@@ -182,7 +182,9 @@ def _keychain(account: str) -> str | None:
         return None
 
 
-@lru_cache(maxsize=None)
+_secrets: dict[str, str] = {}
+
+
 def secret(name: str) -> str | None:
     """Secrets: env var first (TOGGL_API_TOKEN, LINEAR_API_KEY, ANTHROPIC_API_KEY), then Keychain
     (`security add-generic-password -s TaskTracker -a toggl -w`)."""
@@ -196,10 +198,17 @@ def secret(name: str) -> str | None:
     v = os.environ.get(env_names.get(name, name.upper()))
     if v:
         return v
+    if name in _secrets:
+        return _secrets[name]
     v = _keychain(name)
     if v and name == "anthropic":
         os.environ.setdefault("ANTHROPIC_API_KEY", v)
+    if v:        # only a found secret is remembered: the Keychain may not answer just after launch, and a remembered
+        _secrets[name] = v       # None left Toggl off, and the agent API open to callers without a token, until a restart
     return v
+
+
+secret.cache_clear = _secrets.clear      # type: ignore[attr-defined]
 
 
 def _user_doc(name: str) -> pathlib.Path:
@@ -260,7 +269,8 @@ def _toml_value(v: Any) -> str:
         return str(v)
     if isinstance(v, (list, tuple)):
         return "[" + ", ".join(_toml_value(x) for x in v) + "]"
-    return json.dumps("" if v is None else str(v))
+    # as written, not \u-escaped: json writes an emoji as a surrogate pair, which TOML refuses to read back
+    return json.dumps("" if v is None else str(v), ensure_ascii=False).replace("\x7f", "\\u007f")
 
 
 def save(data: dict[str, Any]) -> dict[str, Any]:
@@ -287,6 +297,10 @@ def save(data: dict[str, Any]) -> dict[str, Any]:
             lines.append(f"{k} = {_toml_value(v)}")
         lines.append("")
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        tomllib.loads("\n".join(lines))      # never write a file that cannot be read back: the app would not start again
+    except tomllib.TOMLDecodeError as e:
+        raise ValueError(f"settings not saved, they would not be readable: {e}")
     CONFIG_PATH.write_text("\n".join(lines))
     return reload()
 

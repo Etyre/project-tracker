@@ -52,13 +52,22 @@ def _deadline_urgency(date: str | None, today: dt.date, hard: bool) -> float:
     return urgency + 10 if hard else urgency * 0.6
 
 
+def event_span(e: dict, day: dt.date) -> tuple[int, int]:
+    """A timed event's minutes of `day`: one that began before the day starts at 0, one that runs past it ends at
+    24:00."""
+    s = e["start"].hour * 60 + e["start"].minute if e["start"].date() >= day else 0
+    en = e["end"].hour * 60 + e["end"].minute if e["end"].date() <= day else 24 * 60
+    return s, en
+
+
 def free_windows(day: dt.date, events: list[dict], start_min: int, end_min: int) -> list[tuple[int, int]]:
     busy = []
     for e in events:
         if e["all_day"]:
             continue
-        s = e["start"].hour * 60 + e["start"].minute if e["start"].date() == day else 0
-        en = e["end"].hour * 60 + e["end"].minute if e["end"].date() == day else 24 * 60
+        s, en = event_span(e, day)
+        if s >= end_min or en <= start_min:      # outside the work day: clamping it would stretch a window past the end
+            continue
         busy.append((max(s, start_min), min(en, end_min)))
     busy.sort()
     windows: list[tuple[int, int]] = []
@@ -286,8 +295,7 @@ def build(day: dt.date | None = None, from_now: bool = False, until: str | None 
                          "Configure ANTHROPIC_API_KEY for Claude-built plans.")
     for e in events:
         if not e["all_day"]:
-            s = e["start"].hour * 60 + e["start"].minute
-            en = e["end"].hour * 60 + e["end"].minute
+            s, en = event_span(e, day)
             if en > start_min and s < we:
                 items.append(dict(kind="meeting", task_id=None, title=e["title"], start=hm(s), end=hm(en),
                                   minutes=en - s, note="calendar"))
@@ -401,15 +409,23 @@ def set_plan(day: dt.date, items: list[dict], work_start: str | None = None, wor
     dropped: list[str] = []
     if validate_windows:
         windows = free_windows(day, events, ws, we)
-        before = {(b["title"], b["start"]) for b in blocks}
+        # by what the block is, not when it starts: a block that was only trimmed to fit has a new start but was kept
+        ident = lambda b: (b["kind"], b.get("task_id"), b["title"])
+        sent = [(ident(b), b["start"]) for b in blocks]
         blocks = validate(blocks, windows, {b["task_id"] for b in blocks if b["task_id"]})
-        dropped = sorted(f"{t} at {s}" for t, s in before - {(b["title"], b["start"]) for b in blocks})
+        left = [ident(b) for b in blocks]
+        for i, s in sent:
+            if i in left:
+                left.remove(i)
+            else:
+                dropped.append(f"{i[2]} at {s}")
+        dropped.sort()
     if merge_meetings:
         have = {(m["start"], m["title"]) for m in meetings}
         for e in events:
             if e["all_day"]:
                 continue
-            s_, e_ = e["start"].hour * 60 + e["start"].minute, e["end"].hour * 60 + e["end"].minute
+            s_, e_ = event_span(e, day)
             if e_ > ws and s_ < we and (hm(s_), e["title"]) not in have:
                 meetings.append(dict(kind="meeting", task_id=None, title=e["title"], start=hm(s_), end=hm(e_),
                                      minutes=e_ - s_, note="calendar"))

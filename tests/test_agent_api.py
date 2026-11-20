@@ -19,6 +19,7 @@ from tracker import agent_api, calendar_feed, db, llm, scheduler, web  # noqa: E
 
 llm._has_credentials = lambda: False
 llm.enabled = lambda: False
+calendar_feed.events_for_real = calendar_feed.events_for      # for the test of the real one (test_scheduler)
 calendar_feed.events_for = lambda day: []          # no real calendar in tests: the whole work window is free
 web._bg_started = True                             # no background loop under test
 agent_api.config.secret = lambda name: None        # no token configured (whatever the Keychain holds)

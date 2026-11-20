@@ -107,6 +107,10 @@ def daily_checklist() -> dict:
     data = _script_get()
     if data:
         cl = data["checklist"]
+        if data.get("today") and data["today"] != db.today():
+            # a copy read on another day (the 23:50 prefetch, used after midnight): its ticks are that day's, and
+            # trusting them hid today's recurring cards until the first fetch of the morning
+            cl = {**cl, "rows": [{**r, "done_today": False} for r in cl["rows"]]}
         headers = [h for h in cl["headers"] if h]
         return {"text": _to_csv(headers, cl["rows"]), "items": cl["rows"], "source": "apps_script",
                 "item_column": cl.get("item_column")}

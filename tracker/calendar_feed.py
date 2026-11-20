@@ -44,10 +44,17 @@ def prefetch() -> None:
 
 
 def events_for(day: dt.date) -> list[dict]:
-    """Timed events on `day` in local time: [{title, start: datetime, end: datetime, all_day}]."""
+    """Timed events on `day` in local time: [{title, start: datetime, end: datetime, all_day}].
+
+    The day is the local day. `.at(day)` alone matches in each event's own time zone, so an evening event that
+    Google exports in UTC (20:00 here is 01:00Z tomorrow) was missing today and then blocked all of tomorrow; so
+    the local day is also asked for as a span of instants, and timed events are kept only if they overlap it.
+    Each time is converted with its own offset, not today's, so dates across a clock change are right."""
     cfg = config.load()["calendar"]
     out: list[dict] = []
-    local_tz = dt.datetime.now().astimezone().tzinfo
+    day_start = dt.datetime.combine(day, dt.time()).astimezone()
+    day_end = dt.datetime.combine(day + dt.timedelta(days=1), dt.time()).astimezone()
+    seen: set = set()
     ignore = [s.lower() for s in cfg.get("ignore_titles", [])]
     for url in cfg.get("ics_urls", []):
         data = _fetch(url)
@@ -55,7 +62,8 @@ def events_for(day: dt.date) -> list[dict]:
             continue
         try:
             cal = icalendar.Calendar.from_ical(data)
-            evs = recurring_ical_events.of(cal).at(day)
+            q = recurring_ical_events.of(cal)
+            evs = list(q.at(day)) + list(q.between(day_start, day_end))
         except Exception as e:
             log.warning("calendar parse failed: %s", e)
             continue
@@ -71,17 +79,20 @@ def events_for(day: dt.date) -> list[dict]:
             end = ev.get("DTEND").dt if ev.get("DTEND") else start
             all_day = not isinstance(start, dt.datetime)
             if all_day:
+                last = end - dt.timedelta(days=1) if end > start else start       # DTEND of an all-day event is the day after
+                if not (start <= day <= last) or (str(ev.get("UID", "")), title, start) in seen:
+                    continue
+                seen.add((str(ev.get("UID", "")), title, start))
                 out.append({"title": title, "start": None, "end": None, "all_day": True})
                 continue
-            if start.tzinfo is None:
-                start = start.replace(tzinfo=local_tz)
-            if end.tzinfo is None:
-                end = end.replace(tzinfo=local_tz)
-            start, end = start.astimezone(local_tz), end.astimezone(local_tz)
+            start, end = start.astimezone(), end.astimezone()      # a time without a zone is local time
             if end <= start:
                 end = start + dt.timedelta(minutes=30)
+            if end <= day_start or start >= day_end or (str(ev.get("UID", "")), title, start) in seen:
+                continue
+            seen.add((str(ev.get("UID", "")), title, start))
             out.append({"title": title, "start": start, "end": end, "all_day": False})
-    out.sort(key=lambda e: (e["all_day"], e["start"] or dt.datetime.min.replace(tzinfo=local_tz)))
+    out.sort(key=lambda e: (e["all_day"], e["start"] or day_start))
     return out
 
 

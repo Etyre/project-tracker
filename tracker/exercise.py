@@ -122,7 +122,8 @@ def parse_rules(text: str) -> dict:
             period = (int(least.group(1)) if least.group(1) else 7) if least else None
             gap = (int(most.group(1)) if most.group(1) else 2) if most else 1
             lo, hi = (int(ideal.group(1)), int(ideal.group(2) or ideal.group(1))) if ideal else (gap, period or gap)
-            rules["required"].append({"name": name, "period": period, "gap": gap, "ideal": (max(lo, gap), max(hi, lo))})
+            lo = max(lo, gap)                       # the upper end from the raised lower end: (4, 3) divided by zero later
+            rules["required"].append({"name": name, "period": period, "gap": gap, "ideal": (lo, max(hi, lo))})
     return rules
 
 
@@ -267,7 +268,10 @@ def decide(date: str | None = None, force: bool = False) -> dict:
     log (any exercise of the same kind, else the last resort)."""
     date = date or db.today()
     rules = parse_rules(config.exercise_text())
-    cur = db.get_setting("exercise_decision")
+    # Today's decision has its own slot. Another date's (the agent asking about tomorrow) goes in a slot of that
+    # date: in the one slot it replaced today's, and today was then decided again, differently.
+    slot = "exercise_decision" if date == db.today() else f"exercise_decision:{date}"
+    cur = db.get_setting(slot)
     stored = None
     if cur and not force:
         try:
@@ -302,7 +306,7 @@ def decide(date: str | None = None, force: bool = False) -> dict:
     if sheets.exercise_log_failed:           # decided from an incomplete log: decided again once the log can be read
         decision["provisional"] = True
         log.warning("exercise log unreachable: today's pick (%s) is provisional", decision["title"])
-    db.set_setting("exercise_decision", json.dumps(decision))
+    db.set_setting(slot, json.dumps(decision))
     db.retitle_exercise_blocks(date, decision["title"])      # a plan built on an older decision shows the new one (never the agent's)
     log.info("exercise for %s: %s (%s min) - %s", date, decision["title"], decision["minutes"], decision["reason"])
     db.log_plan_event(date, "exercise", f"exercise decided: {decision['title']} ({decision['minutes']} min){' - provisional, the log was unreachable' if decision.get('provisional') else ''}; {decision['reason']}",
