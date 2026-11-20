@@ -581,6 +581,10 @@ as above; `python -m tracker web --reload` in a browser is the quick way to see 
 
 ## Gotchas learned
 
+- An `async` form `onsubmit` must call `preventDefault()` itself: it returns a promise, not `false`, so the browser
+  would submit the form and reload the page (losing the undo history) while the save is still in flight.
+- `renderFeed` returns without drawing when the user has left the feed, and the minute poll skips while a feed
+  field has the focus. Card actions finish after an animation and used to draw the feed over another page.
 - **Calendar days are local days.** `recurring_ical_events.at(day)` matches in each event's own time zone, and Google
   exports one-off events in UTC, so an evening event was missing on its day and then counted as "in a meeting until
   24:00" the next day. `events_for` also asks for the local day as a span of instants and keeps only events that

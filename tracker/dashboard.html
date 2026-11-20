@@ -405,7 +405,8 @@ async function quickAdd(e) {
     toast(r.created.map(t => `Filed <a onclick="revealTask(${t.id}, ${t.project_id})" title="Show it in the project tree"><b>${esc(t.title)}</b> in ${esc(t.path.join(' / '))}</a>${t.where ? ` <span class="muted">(${esc(t.where)})</span>` : ''}`).join('<br>') + (r.note ? `<br><span class="muted">${esc(r.note)}</span>` : ''), 8000);
     if (view === 'projects') renderProjects();
   } catch (err) {toast('Quick add failed: ' + esc(err.message), 6000);}
-  inp.disabled = false; btn.disabled = false; btn.textContent = 'Add'; inp.focus();
+  inp.disabled = false; btn.disabled = false; btn.textContent = 'Add';
+  if ([document.body, inp, btn, null].includes(document.activeElement)) inp.focus();      // not away from whatever the user went on to type in
   return false;
 }
 // "Open in tree" on a feed card, and a click on a "Filed … in …" line of the quick-add toast: the Projects page
@@ -441,6 +442,7 @@ const dayLine = () => new Date().toLocaleDateString([], {weekday: 'long', month:
 async function renderFeed() {
   const f = await api('/feed');
   timerState = f.timer; drawTimer();
+  if (view !== 'feed') return;      // the user has gone to another page since (a card action finishing must not draw the feed over it)
   const m = $('#main');
   const page = (inner, actions, extra) => `<div class="page"><div class="main">${inner}${actions || ''}${extra || ''}</div>${altButtons(f)}</div>`;
   const c = f.current;
@@ -851,8 +853,9 @@ document.addEventListener('focusin', e => {
 });
 function toggleProject(id) {collapsedProjects.has(id) ? collapsedProjects.delete(id) : collapsedProjects.add(id); localStorage.setItem('collapsed', JSON.stringify([...collapsedProjects])); renderProjects();}
 async function completeTask(id, box) {
-  box.disabled = true;
-  const r = await api(`/tasks/${id}/complete`, 'POST');
+  box.disabled = true; let r;
+  try {r = await api(`/tasks/${id}/complete`, 'POST');}
+  catch (e) {box.checked = false; box.disabled = false; toast('Not completed: ' + esc(e.message), 5000); return;}
   pushUndo('complete', () => api(`/tasks/${id}/uncomplete`, 'POST'));
   if (r.linear_error) toast('Completed locally; Linear: ' + esc(r.linear_error), 6000);
   else toast(`Completed. <button class="btn small" onclick="uncomplete(${id})">Undo</button>`, 5000);
@@ -869,11 +872,11 @@ function editProjectName(pid, append, caret, text) {
   const p = findProject(pid); const orig = p?.name ?? el.textContent.trim();
   const inp = inlineField(text != null ? text : orig + (append || '')); inp.defaultValue = orig;
   Draft.bind(inp, `pname:${pid}`, text != null || append);
-  el.replaceChildren(inp); inp.fit(); el.onclick = e => e.stopPropagation();
+  const click = el.onclick; el.replaceChildren(inp); inp.fit(); el.onclick = e => e.stopPropagation();
   let done = false;
   const save = async (saveIt = true) => {   // closes the editor; the caller re-renders
     if (done) return false; done = true; if (projectEdit?.inp === inp) projectEdit = null;
-    const v = inp.value.trim(); el.textContent = (saveIt && v) || orig;
+    const v = inp.value.trim(); el.innerHTML = mdLine((saveIt && v) || orig).html; el.onclick = click;      // rendered and clickable again
     if (saveIt && v && v !== orig) {await api(`/projects/${pid}`, 'PATCH', {name: v}); Draft.clear(`pname:${pid}`); if (p) p.name = v; pushUndo('rename', () => api(`/projects/${pid}`, 'PATCH', {name: orig})); return true;}
     Draft.clear(`pname:${pid}`);   // unchanged, or Escape: nothing to keep
     return false;
@@ -914,7 +917,7 @@ function openInlineProjectAdd(parent_id, after_pid, text, caret) {
   // draft), or deliberately dropped (Escape, or emptied and left)
   const close = () => {done = true; Draft.clear(draftKey); if (projectAdd?.row === row) projectAdd = null; row.remove(); if (after_pid) {pendingFocusProject = after_pid; renderProjects();}};
   const stepOut = () => {   // one level up, right after the parent project
-    if (!parent_id) return false;
+    if (!parent_id || parent_id === focusProject) return false;      // nowhere to go on this page: the level above the opened project is not shown
     const v = inp.value, par = findProject(parent_id); done = true; Draft.clear(draftKey); row.remove(); if (projectAdd?.row === row) projectAdd = null;
     openInlineProjectAdd(par?.parent_id || (focusProject && focusProject !== parent_id ? focusProject : null), parent_id, v); return !!projectAdd;
   };
@@ -1068,6 +1071,7 @@ function closeInlineAdd() {if (inlineAdd) {Draft.clear(`add:${inlineAdd.project_
 function prevTaskRow(row) {let n = row.previousElementSibling; while (n && !(n.classList.contains('task') && !n.classList.contains('editing') && !n.dataset.done)) n = n.previousElementSibling; return n;}
 function indentInline() {
   const prev = prevTaskRow(inlineAdd.row); if (!prev) return;
+  unfold(+prev.dataset.tid); subListOf(prev).classList.remove('collapsed');      // a folded parent would hide the line being typed
   const kids = [...subListOf(prev).querySelectorAll(':scope > .task:not(.editing)')];
   const a = {project_id: inlineAdd.project_id, parent_id: +prev.dataset.tid, after_id: kids.length ? +kids[kids.length - 1].dataset.tid : null};
   const inp = inlineAdd.row.querySelector('.inline'); const v = inp.value;
@@ -1320,15 +1324,20 @@ async function mergeIntoPrev(row, text, remove, mergeUndo) {
   renderProjects(); return true;
 }
 const atStart = inp => inp.value && inp.selectionStart === 0 && inp.selectionEnd === 0;
+// ids are reused, so a deleted task's kept drafts would show up in the next task made
+const dropTaskDrafts = id => {Draft.clear(`title:${id}`, `notes:${id}`, `tags:${id}`); Draft.clearPrefix(`edit:${id}:`);};
 async function deleteLine(L) {   // throws (with a readable message) when the line has something attached to it
   if (L.kind === 'task') {
     const old = findTask(L.id), slot = slotOf(L.row);
-    await api(`/tasks/${L.id}`, 'DELETE');
-    if (old) pushUndo(`delete "${old.title}"`, () => api('/tasks', 'POST', {...slot, title: old.title, description: old.description || '', deadline: old.deadline, soft_deadline: old.soft_deadline || null, blocking: !!old.blocking, blocking_for: old.blocking_for || '', importance: old.importance, chunkable: !!old.chunkable, work_kind: old.work_kind || null, reading: old.reading == null ? null : old.reading === 1, writing: old.writing == null ? null : old.writing === 1}));
+    await api(`/tasks/${L.id}`, 'DELETE'); dropTaskDrafts(L.id);
+    if (old) pushUndo(`delete "${old.title}"`, async () => {const r = await api('/tasks', 'POST', {...slot, title: old.title, description: old.description || '', deadline: old.deadline, soft_deadline: old.soft_deadline || null, blocking: !!old.blocking, blocking_for: old.blocking_for || '', importance: old.importance, chunkable: !!old.chunkable, work_kind: old.work_kind || null, reading: old.reading == null ? null : old.reading === 1, writing: old.writing == null ? null : old.writing === 1}); if (old.completed_at) await api(`/tasks/${r.id}/complete`, 'POST');});      // a ticked line comes back ticked
   } else {
     const p = findProject(L.id);
     await api(`/projects/${L.id}/delete_empty`, 'POST');
-    if (p) pushUndo(`delete project "${p.name}"`, () => api('/projects', 'POST', {name: p.name, parent_id: p.parent_id}));
+    if (p) pushUndo(`delete project "${p.name}"`, async () => {
+      const r = await api('/projects', 'POST', {name: p.name, parent_id: p.parent_id, notes: p.notes || ''});
+      if (p.subtitle || p.toggl_project) await api(`/projects/${r.id}`, 'PATCH', {subtitle: p.subtitle || '', toggl_project: p.toggl_project || ''});
+    });
   }
 }
 async function archiveTask(L) {   // a task with everything under it, finished or not; Cmd+Z brings it back
@@ -1490,8 +1499,8 @@ function openBulkTags(anchor) {
     e.stopPropagation();
     if (e.key === 'Escape') {e.preventDefault(); Draft.clear('bulk:tags'); close();}
     else if (e.key === 'Enter') {
-      e.preventDefault(); const text = inp.value.trim(); Draft.clear('bulk:tags'); close(); if (!text || text === '#') return;
-      try {await applyToSelection({text});} catch (err) {toast(esc(err.message), 5000);}
+      e.preventDefault(); const text = inp.value.trim(); close(); if (!text || text === '#') {Draft.clear('bulk:tags'); return;}
+      try {await applyToSelection({text}); Draft.clear('bulk:tags');} catch (err) {Draft.set('bulk:tags', text); toast(esc(err.message) + ' (press # to correct it)', 6000);}      // refused: the text is kept
     }
   };
   inp.onblur = () => setTimeout(() => {if (!done && document.activeElement !== inp) close();}, 0);
@@ -1515,7 +1524,8 @@ function openBulkModal() {
   document.body.appendChild(el); Draft.bindAll(el);
   const close = () => {el.remove(); reselect(keys);};
   el.querySelector('#cancel').onclick = () => {Draft.clear('bulk:blocking_for'); close();}; el.addEventListener('click', e => {if (e.target === el) close();});
-  el.querySelector('form').onsubmit = async () => {
+  el.querySelector('form').onsubmit = async ev => {
+    ev.preventDefault();      // an async handler returns a promise, not false: without this the form is submitted and the page reloads
     const f = new FormData(el.querySelector('form')), fields = {};
     if (f.get('nodeadline') === 'on') fields.deadline = null; else if (f.get('deadline')) fields.deadline = f.get('deadline');
     if (f.get('nosoft') === 'on') fields.soft_deadline = null; else if (f.get('soft_deadline')) fields.soft_deadline = f.get('soft_deadline');
@@ -1526,8 +1536,8 @@ function openBulkModal() {
     if (f.get('work_kind')) fields.work_kind = f.get('work_kind') === 'none' ? '' : f.get('work_kind');
     if (f.get('reading')) fields.reading = f.get('reading') === '1';
     if (f.get('writing')) fields.writing = f.get('writing') === '1';
-    Draft.clear('bulk:blocking_for'); close(); if (!Object.keys(fields).length) return false;
-    try {await applyToSelection({fields});} catch (e) {toast(esc(e.message), 5000);}
+    close(); if (!Object.keys(fields).length) {Draft.clear('bulk:blocking_for'); return false;}
+    try {await applyToSelection({fields}); Draft.clear('bulk:blocking_for');} catch (e) {toast(esc(e.message), 5000);}
     return false;
   };
   setTimeout(() => el.querySelector('[name=deadline]').focus(), 0);
@@ -1582,7 +1592,7 @@ async function deleteTree(L) {   // a task with everything under it (undo recrea
   if (L.kind === 'project' || !countDesc(findTask(L.id))) {await deleteLine(L);}
   else {
     const slot = slotOf(L.row), t = findTask(L.id);
-    const r = await api(`/tasks/${L.id}?subtree=1`, 'DELETE');
+    const r = await api(`/tasks/${L.id}?subtree=1`, 'DELETE'); dropTaskDrafts(L.id);
     pushUndo(`delete "${t.title}" and sub-items`, () => api('/tasks/bulk', 'POST', {...slot, items: r.outline}));
     toast(`Deleted with ${r.outline.length - 1} sub-item${r.outline.length === 2 ? '' : 's'}`);
   }
@@ -1632,7 +1642,7 @@ function editTaskTitle(tid, append, caret, text) {
   Draft.bind(inp, `title:${tid}`, text != null || append); if (view !== 'someday') tagHint(inp, () => findTask(tid));
   span.replaceChildren(inp); inp.fit();
   let done = false;
-  const end = () => {done = true; if (titleEdit?.inp === inp) titleEdit = null; span.textContent = inp.value.trim() || orig;};
+  const end = () => {done = true; if (titleEdit?.inp === inp) titleEdit = null; span.innerHTML = mdLine(inp.value.trim() || orig).html;};      // rendered again: the raw text shows only while editing
   const save = async () => {
     if (done) return false;
     const v = inp.value.trim(); end();
@@ -1794,7 +1804,7 @@ function flatProjects(nodes = tree, depth = 0, out = []) {for (const n of nodes)
 async function ensureTree() {if (!tree.length) tree = await api('/tree');}
 async function editTask(id) {await ensureTree(); const t = await api(`/tasks/${id}`); openTaskModal(t);}
 function openTaskModal(t) {
-  const opts = flatProjects().map(p => `<option value="${p.id}" ${p.id === t.project_id ? 'selected' : ''}>${p.label}</option>`).join('');
+  const opts = flatProjects().map(p => `<option value="${p.id}" ${p.id === t.project_id ? 'selected' : ''}>${esc(p.label)}</option>`).join('');
   const el = document.createElement('div'); el.className = 'modal';
   el.innerHTML = `<div class="card"><h3 style="margin-top:0">Edit task</h3>
     <form class="form" onsubmit="return false">
@@ -1816,14 +1826,19 @@ function openTaskModal(t) {
   const close = () => el.remove();
   el.querySelector('#cancel').onclick = () => {Draft.clearPrefix(`edit:${t.id}:`); close();};   // Cancel discards; a click outside only closes
   el.addEventListener('click', e => {if (e.target === el) close();});
-  el.querySelector('form').onsubmit = async () => {
+  el.querySelector('form').onsubmit = async ev => {
+    ev.preventDefault();      // an async handler returns a promise, not false: without this the form is submitted and the page reloads
     const f = new FormData(el.querySelector('form'));
     const body = {title: f.get('title'), project_id: +f.get('project_id'), description: f.get('description'),
       deadline: f.get('deadline') || null, soft_deadline: f.get('soft_deadline') || null, blocking: f.get('blocking') === 'on', blocking_for: f.get('blocking_for'),
-      importance: f.get('importance') ? +f.get('importance') : null, chunkable: f.get('chunkable') === 'on', work_kind: f.get('work_kind') || '', reading: f.get('reading') === 'on', writing: f.get('writing') === 'on'};
+      importance: f.get('importance') ? +f.get('importance') : null, chunkable: f.get('chunkable') === 'on', work_kind: f.get('work_kind') || ''};
+    // reading / writing are sent only when the box was changed: an untouched box on a task Claude has not judged yet
+    // must stay "not judged", not become "no"
+    for (const k of ['reading', 'writing']) if ((f.get(k) === 'on') !== (t[k] === 1)) body[k] = f.get(k) === 'on';
     try {
       const r = await api(`/tasks/${t.id}`, 'PATCH', body);
       const before = Object.fromEntries(Object.keys(body).map(k => [k, k === 'description' || k === 'blocking_for' || k === 'work_kind' ? (t[k] || '') : k === 'blocking' || k === 'chunkable' ? !!t[k] : k === 'reading' || k === 'writing' ? t[k] === 1 : k === 'deadline' || k === 'soft_deadline' ? (t[k] || null) : t[k]]));
+      if (body.project_id !== t.project_id) before.parent_id = t.parent_id;      // back under the parent it had
       pushUndo('edit', () => api(`/tasks/${t.id}`, 'PATCH', before));
       Draft.clearPrefix(`edit:${t.id}:`);
       if (r.linear_error) toast('Saved; Linear: ' + esc(r.linear_error), 6000);
@@ -2148,7 +2163,7 @@ async function renderStats() {
 
 refreshStatus().then(render);
 window.addEventListener('hashchange', () => {const v = location.hash.slice(1); if (v && v !== view) {view = v; render();}});
-setInterval(() => {if (view === 'feed' && !document.querySelector('.modal')) renderFeed().catch(() => {});}, 60000);
+setInterval(() => {if (view === 'feed' && !document.querySelector('.modal') && !document.activeElement?.matches?.('#main input, #main textarea')) renderFeed().catch(() => {});}, 60000);      // not from under a field being typed in
 </script>
 </body>
 </html>
