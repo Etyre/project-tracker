@@ -1,5 +1,6 @@
 """The LLM inbox wiring in tracker/llm.py, with a fake Anthropic client: every call carries the shared preamble and
-the contact_eli tool, and a response that reaches for Eli is recorded, stops the task and pauses Claude."""
+the contact_eli and note_to_eli tools, a response that reaches for Eli is recorded, stops the task and pauses Claude,
+and a note is recorded and answered while the task carries on."""
 import os
 import pathlib
 import tempfile
@@ -79,7 +80,7 @@ def test_every_call_starts_with_the_preamble_and_offers_contact_eli(monkeypatch,
     system_text = seen["system"][0]["text"]
     assert system_text.startswith(llm_contact.preamble())
     assert system_text.endswith("My instructions.")
-    assert llm_contact.CONTACT_TOOL in seen["tools"]
+    assert llm_contact.CONTACT_TOOL in seen["tools"] and llm_contact.NOTE_TOOL in seen["tools"]
     assert quiet_inbox == []            # nothing to report
     assert llm._contact is None
 
@@ -203,3 +204,61 @@ def test_confirm_question_failing_sends_the_original(monkeypatch, quiet_inbox, h
     assert len(calls) == 2 and "tool_choice" in calls[1]             # the question was asked and failed
     assert quiet_inbox[0]["message"] == "This note has no task in it." and quiet_inbox[0]["via"] == "tool"
     assert not llm_contact.UNCONFIRMED_PATH.exists()
+
+
+# ---- note_to_eli: the message is recorded, the call is answered, and the model is asked again; nothing stops
+_NOTE = [{"type": "tool_use", "id": "tu_n", "name": "note_to_eli", "input": {"message": "Two of these tasks look like duplicates."}}]
+
+
+def test_note_is_recorded_and_the_task_carries_on_without_a_pause(monkeypatch, quiet_inbox):
+    calls = []
+    script = [_Resp(_NOTE, "tool_use"), _Resp(_ANSWER, "end_turn")]
+    monkeypatch.setattr(llm, "client", lambda: _scripted_client(script, calls))
+    out = llm.structured("Rules.", "note", llm.ESTIMATE_SCHEMA, "low")
+    assert out["estimate_minutes"] == 25                              # the second response is the answer
+    assert [(r["via"], r["message"]) for r in quiet_inbox] == [("note", "Two of these tasks look like duplicates.")]
+    assert llm._contact is None and llm.paused() == ""                # a note never pauses Claude
+    first, again = calls
+    assert again["output_config"] == first["output_config"] and again["tools"] == first["tools"]
+    assert len(first["messages"]) == 1 and len(again["messages"]) == 3
+    assert again["messages"][1]["content"] == [dict(_NOTE[0])]
+    assert again["messages"][2]["content"] == [{"type": "tool_result", "tool_use_id": "tu_n", "content": llm_contact.NOTE_RESULT_TEXT}]
+
+
+def test_note_alongside_the_answer_is_not_taken_as_the_answer(monkeypatch, quiet_inbox):
+    calls = []
+    early = [{"type": "text", "text": '{"estimate_minutes": 5, "work_kind": "task", "reading": false, "writing": false}'}] + _NOTE
+    script = [_Resp(early, "tool_use"), _Resp(_ANSWER, "end_turn")]
+    monkeypatch.setattr(llm, "client", lambda: _scripted_client(script, calls))
+    assert llm.structured("Rules.", "note", llm.ESTIMATE_SCHEMA, "low")["estimate_minutes"] == 25
+    assert len(calls) == 2 and len(quiet_inbox) == 1 and llm._contact is None
+
+
+def test_note_with_contact_eli_in_one_response_still_stops_and_pauses(monkeypatch, quiet_inbox):
+    calls = []
+    monkeypatch.setattr(llm, "client", lambda: _scripted_client([_Resp(_NOTE + _CONTACT, "tool_use")], calls))
+    with pytest.raises(llm.LLMContact):
+        llm.structured("Rules.", "note", llm.ESTIMATE_SCHEMA, "low")
+    assert len(calls) == 1                                            # no second call once the model asked to stop
+    assert [r["via"] for r in quiet_inbox] == ["note", "tool"]
+    assert llm._contact is not None and llm._contact["via"] == "tool"
+
+
+def test_note_then_contact_eli_stops_on_the_second_response(monkeypatch, quiet_inbox):
+    calls = []
+    script = [_Resp(_NOTE, "tool_use"), _Resp(_CONTACT, "tool_use")]
+    monkeypatch.setattr(llm, "client", lambda: _scripted_client(script, calls))
+    with pytest.raises(llm.LLMContact):
+        llm.structured("Rules.", "note", llm.ESTIMATE_SCHEMA, "low")
+    assert len(calls) == 2 and [r["via"] for r in quiet_inbox] == ["note", "tool"]
+    assert llm._contact is not None
+
+
+def test_only_notes_and_never_an_answer_ends_as_an_error_not_a_pause(monkeypatch, quiet_inbox):
+    calls = []
+    script = [_Resp(_NOTE, "tool_use") for _ in range(4)]
+    monkeypatch.setattr(llm, "client", lambda: _scripted_client(script, calls))
+    with pytest.raises(llm.LLMError) as ex:
+        llm.structured("Rules.", "note", llm.ESTIMATE_SCHEMA, "low")
+    assert not isinstance(ex.value, llm.LLMContact) and llm._contact is None
+    assert len(calls) == 4 and len(quiet_inbox) == 4                  # with_notes asks again three times, then gives up

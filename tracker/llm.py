@@ -8,6 +8,8 @@ through the shared confirm step (llm_contact.with_confirm): one question, "send 
 about the task"; anything but an explicit "task remark" sends the original message. The step only runs for models in
 llm_contact.CONFIRM_MODELS (today claude-haiku-4-5), so with this app's default claude-opus-5-5 it is inactive: no
 question is asked and a contact_eli call is sent at once.
+The second shared tool, `note_to_eli`, leaves Eli a message without stopping anything: llm_contact.with_notes records
+it, answers the call and asks the model again for its JSON. A note never pauses Claude.
 """
 from __future__ import annotations
 
@@ -23,7 +25,7 @@ from . import config
 
 # AGENT_CODING_SHARED: where shared/ is on a machine that is not Eli's Mac (the server image copies it to /app/shared)
 sys.path.insert(0, os.environ.get("AGENT_CODING_SHARED") or "/Users/elityre/Documents/agent-coding/shared")
-import llm_contact  # noqa: E402  (shared/llm_contact.py: system_prompt(), CONTACT_TOOL, check())
+import llm_contact  # noqa: E402  (shared/llm_contact.py: system_prompt(), CONTACT_TOOLS, with_notes(), check())
 
 log = logging.getLogger("llm")
 APP_NAME = "project-tracker"
@@ -83,13 +85,14 @@ def client() -> anthropic.Anthropic:
 def structured(system: str, user: str, schema: dict, effort: str, max_tokens: int = 16000) -> dict:
     """One call, JSON-schema constrained output. The system prompt (shared preamble, then the rules doc etc.) is
     cached as a prefix. The contact_eli tool is on every call; a response that uses it (or says `@ELI:`) is
-    recorded in the LLM inbox and raises LLMContact, and Claude is paused for this app until resume()."""
+    recorded in the LLM inbox and raises LLMContact, and Claude is paused for this app until resume().
+    note_to_eli is on every call too: a note is recorded, acknowledged, and the model is asked again; no pause."""
     global _contact
     if _contact is not None:
         raise LLMContact(paused())
     cfg = config.load()["llm"]
     system_text = llm_contact.system_prompt(system)
-    tools = [llm_contact.CONTACT_TOOL]
+    tools = list(llm_contact.CONTACT_TOOLS)   # contact_eli (stops the task) and note_to_eli (task carries on)
     messages = [{"role": "user", "content": user}]
     kw = dict(
         model=cfg["model"],
@@ -115,6 +118,10 @@ def structured(system: str, user: str, schema: dict, effort: str, max_tokens: in
 
     try:
         resp = call(messages)
+        # A note_to_eli call is not an answer and not a stop: it is recorded in the inbox, answered with
+        # NOTE_RESULT_TEXT, and the same call is made again on the longer exchange for the JSON. A response that
+        # also reaches for Eli (contact_eli, @ELI:) comes back untouched for the steps below.
+        messages, resp = llm_contact.with_notes(APP_NAME, cfg["model"], system_text, messages, resp, call, tools)
     except anthropic.AuthenticationError as e:
         raise LLMError("Anthropic API key rejected") from e
     except anthropic.RateLimitError as e:

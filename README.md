@@ -292,6 +292,12 @@ is asked and a `contact_eli` call is sent at once. On a listed model a `contact_
 forced-choice question, "send to Eli and stop" or "it was a remark about the task, keep working". Only an explicit "task remark" continues: the model then
 answers in the normal format and what it had said is kept in `LLMInbox/unconfirmed.jsonl`. Send, an unclear answer or
 any error in the question sends the original message as above. An `@ELI:` line is never questioned.
+Every call also offers the second shared tool, `note_to_eli` (added 2026-11-20), which leaves Eli a message without
+stopping anything. `llm_contact.with_notes` runs before the confirm step: the note is recorded in the same inbox
+(marked `via: note`, `halts: false`, a quieter notification), the call is answered with "Delivered to Eli. Nothing has
+stopped", and the same request is made again on the longer exchange for the JSON (up to three times). A note is never
+read as the answer, stops no task and does **not** pause Claude; a response that carries both a note and a
+`contact_eli` call records both and stops as above. Each note costs one extra request.
 
 **Toggl entries are gerunds** - a task's timer is called "Responding to JDPressman" in Toggl, not "Respond to
 JDPressman". Claude phrases the title that way in the same call that forecasts the estimate when the task is created
@@ -622,6 +628,11 @@ as above; `python -m tracker web --reload` in a browser is the quick way to see 
   tab of the same spreadsheet or get its own copy of the script.
 - Quitting the Python process alone makes the native launcher restart it (that is its job); to stop the app kill the
   launcher too, or quit from the menu bar item. Never `pkill` by name without checking it worked.
+- `note_to_eli` had not been tried on a real model when it was wired in (2026-11-20, at night with the API blocked;
+  only the fake-client tests in `tests/test_llm_contact.py` have run). `../shared/README.md` (Gotchas) asks for a
+  measurement first: routine remarks should go to the note tool, and an objection or "I want to stop" must still go
+  to `contact_eli`. Unmeasured for `claude-opus-5-5` with this app's JSON `output_config`. A model that only ever
+  leaves notes and never answers ends as "no text in response" after four requests, not as a pause.
 - The LLM inbox's `@ELI:` marker is matched anywhere in a text block, so a task title containing `@ELI:` echoed back
   in Claude's JSON would be taken as a contact and pause Claude until Test connections. Unlikely, but known.
 - Quick add and the planner used to hold the model's answer only in memory; the task-kind backlog classifier runs

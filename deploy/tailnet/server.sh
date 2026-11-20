@@ -26,7 +26,7 @@ deploy)
   stage="$(mktemp -d)"
   git -C "$REPO" archive HEAD tracker deploy/tailnet requirements-server.txt '*.example.md' | tar -x -C "$stage"
   mkdir -p "$stage/shared"
-  cp "$SHARED/llm_contact.py" "$SHARED/llm-system-prompt-preamble.md" "$SHARED/contact_eli_tool.json" "$stage/shared/"
+  cp "$SHARED/llm_contact.py" "$SHARED/llm-system-prompt-preamble.md" "$SHARED/contact_eli_tool.json" "$SHARED/note_to_eli_tool.json" "$stage/shared/"
   git -C "$REPO" log -1 --format='%h %s' > "$stage/VERSION"
   r "mkdir -p $ROOT/app $ROOT/data $ROOT/logs '$INBOX' && chown 1000:1000 $ROOT/data $ROOT/logs && chmod 700 $ROOT/data && { [ -f $ROOT/env ] || echo TRACKER_TZ=$(mac_tz) > $ROOT/env; }"
   rsync -az --delete "$stage/" "$SERVER:$ROOT/app/"; rm -rf "$stage"
